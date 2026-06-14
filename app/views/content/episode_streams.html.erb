@@ -1,0 +1,19 @@
+<% if @streams.present? %>
+  <div class="space-y-1.5">
+    <% @streams.each do |stream| %>
+      <div class="flex items-center justify-between p-2 bg-sv-surface-hover rounded-lg">
+        <div class="min-w-0 flex-1">
+          <span class="badge badge-accent text-xs"><%= stream[:quality] %></span>
+          <span class="text-xs text-white ml-1.5 truncate"><%= stream[:title] || stream[:name] %></span>
+          <span class="text-xs text-sv-text-muted ml-1.5"><%= stream[:size] %></span>
+        </div>
+        <div class="flex items-center gap-3 shrink-0">
+          <span class="text-xs text-sv-text-muted">👤 <%= stream[:seeders] || 0 %></span>
+          <%= button_to "Watch", streaming_index_path, params: { imdb_id: @imdb_id, type: "show", season: @season, episode: @episode, title: "#{params[:show_title] || @imdb_id} #{@episode_title}" }, class: "btn-primary text-xs px-2 py-1", data: { turbo: false } %>
+        </div>
+      </div>
+    <% end %>
+  </div>
+<% else %>
+  <p class="text-sm text-sv-text-muted">No streams available for this episode.</p>
+<% end %>

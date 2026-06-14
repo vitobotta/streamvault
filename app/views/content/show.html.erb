@@ -34,40 +34,40 @@
       </div>
     </div>
 
-    <%# Streams %>
-    <% if @streams.present? %>
-      <h2 class="text-xl font-bold text-white mt-8 mb-4">Available Streams</h2>
-      <div class="space-y-2">
-        <% @streams.each do |stream| %>
-          <div class="flex items-center justify-between p-3 bg-sv-surface rounded-lg">
-            <div class="min-w-0 flex-1">
-              <span class="badge badge-accent"><%= stream[:quality] %></span>
-              <span class="text-sm text-white ml-2 truncate"><%= stream[:title] || stream[:name] %></span>
-              <span class="text-xs text-sv-text-muted ml-2"><%= stream[:size] %></span>
+    <%# MOVIES: show streams directly %>
+    <% if @type != "show" %>
+      <% if @streams.present? %>
+        <h2 class="text-xl font-bold text-white mt-8 mb-4">Available Streams</h2>
+        <div class="space-y-2">
+          <% @streams.each do |stream| %>
+            <div class="flex items-center justify-between p-3 bg-sv-surface rounded-lg">
+              <div class="min-w-0 flex-1">
+                <span class="badge badge-accent"><%= stream[:quality] %></span>
+                <span class="text-sm text-white ml-2 truncate"><%= stream[:title] || stream[:name] %></span>
+                <span class="text-xs text-sv-text-muted ml-2"><%= stream[:size] %></span>
+              </div>
+              <div class="flex items-center gap-4 shrink-0">
+                <span class="text-xs text-sv-text-muted">👤 <%= stream[:seeders] || 0 %></span>
+                <%= button_to "Watch", streaming_index_path, params: { imdb_id: @imdb_id, type: @type, title: @metadata[:title] }, class: "btn-primary text-sm", data: { turbo: false } %>
+              </div>
             </div>
-            <div class="flex items-center gap-4 shrink-0">
-              <span class="text-xs text-sv-text-muted">👤 <%= stream[:seeders] || 0 %></span>
-              <%= button_to "Watch", streaming_index_path, params: { imdb_id: @imdb_id, type: @type, season: params[:season], episode: params[:episode], title: @metadata[:title] }, class: "btn-primary text-sm", data: { turbo: false } %>
-            </div>
-          </div>
-        <% end %>
-      </div>
-    <% else %>
-      <div class="mt-8 p-4 bg-sv-surface rounded-lg border border-sv-border text-center">
-        <p class="text-sv-text-muted">No streams available for this selection.</p>
-        <% unless current_user.has_realdebrid_key? %>
-          <p class="text-sv-text-muted mt-1">Add your RealDebrid API key in <%= link_to "Settings", settings_path, class: "text-sv-accent" %> to enable streaming.</p>
-        <% end %>
-      </div>
+          <% end %>
+        </div>
+      <% else %>
+        <div class="mt-8 p-4 bg-sv-surface rounded-lg border border-sv-border text-center">
+          <p class="text-sv-text-muted">No streams available for this content.</p>
+          <% unless current_user.has_realdebrid_key? %>
+            <p class="text-sv-text-muted mt-1">Add your RealDebrid API key in <%= link_to "Settings", settings_path, class: "text-sv-accent" %> to enable streaming.</p>
+          <% end %>
+        </div>
+      <% end %>
     <% end %>
 
-    <%# Episodes for shows %>
+    <%# SHOWS: season tabs + episode list + streams drawer %>
     <% if @type == "show" && @metadata[:episodes].present? %>
-      <h2 class="text-xl font-bold text-white mt-8 mb-4">Episodes</h2>
-
       <%# Season tabs %>
       <% seasons = @metadata[:episodes].map { |e| e[:season] }.uniq.sort %>
-      <div class="flex gap-2 mb-4 overflow-x-auto">
+      <div class="flex gap-2 mt-8 mb-4 overflow-x-auto">
         <% seasons.each do |s| %>
           <%= link_to content_path(type: @type, imdb_id: @imdb_id, season: s), class: "px-3 py-1.5 rounded-full text-sm font-medium #{@selected_season == s ? 'bg-sv-accent text-white' : 'bg-sv-surface text-sv-text-muted hover:text-white'}" do %>
             Season <%= s %>
@@ -75,24 +75,44 @@
         <% end %>
       </div>
 
-      <%# Episode list %>
-      <div class="space-y-2">
+      <%# Episode list (loads streams into drawer on click) %>
+      <div class="space-y-2" data-controller="episode-picker"
+           data-episode-picker-url-value="<%= episode_streams_path(type: @type, imdb_id: @imdb_id) %>"
+           data-episode-picker-imdb-id-value="<%= @imdb_id %>"
+           data-episode-picker-show-title-value="<%= @metadata[:title] %>">
         <% @metadata[:episodes].select { |e| e[:season] == @selected_season }.each do |ep| %>
           <% progress = @episode_progress&.dig([ep[:season], ep[:episode]]) %>
-          <div class="flex items-center gap-4 p-3 bg-sv-surface rounded-lg hover:bg-sv-surface-hover transition-colors">
-            <div class="w-8 text-center text-sv-text-muted text-sm font-medium"><%= ep[:episode] %></div>
-            <div class="flex-1 min-w-0">
-              <h3 class="text-sm font-medium text-white truncate"><%= ep[:title] || "Episode #{ep[:episode]}" %></h3>
-              <% if ep[:released] %>
-                <p class="text-xs text-sv-text-muted"><%= ep[:released] %></p>
-              <% end %>
-              <% if progress %>
-                <div class="mt-1 h-1 bg-sv-border rounded-full overflow-hidden">
-                  <div class="h-full bg-sv-accent rounded-full" style="width: <%= progress.progress_percentage %>%"></div>
+          <div class="bg-sv-surface rounded-lg hover:bg-sv-surface-hover transition-colors"
+               data-episode-picker-target="episode">
+            <button class="flex items-center gap-4 p-3 w-full text-left"
+                    data-action="click->episode-picker#toggle"
+                    data-season="<%= ep[:season] %>"
+                    data-episode="<%= ep[:episode] %>"
+                    data-title="<%= ep[:title] %>">
+              <div class="w-8 text-center text-sv-text-muted text-sm font-medium shrink-0"><%= ep[:episode] %></div>
+              <div class="flex-1 min-w-0">
+                <h3 class="text-sm font-medium text-white truncate"><%= ep[:title] || "Episode #{ep[:episode]}" %></h3>
+                <% if ep[:released] %>
+                  <p class="text-xs text-sv-text-muted"><%= ep[:released] %></p>
+                <% end %>
+                <% if progress %>
+                  <div class="mt-1 h-1 bg-sv-border rounded-full overflow-hidden">
+                    <div class="h-full bg-sv-accent rounded-full" style="width: <%= progress.progress_percentage %>%"></div>
+                  </div>
+                <% end %>
+              </div>
+              <svg class="w-4 h-4 text-sv-text-muted shrink-0 transition-transform" data-episode-picker-target="chevron" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+            </button>
+
+            <%# Streams drawer (loaded via AJAX) %>
+            <div data-episode-picker-target="drawer" class="hidden border-t border-sv-border">
+              <div data-episode-picker-target="drawerContent" class="p-3">
+                <div class="flex items-center gap-2 text-sv-text-muted text-sm">
+                  <div class="w-4 h-4 border-2 border-sv-accent border-t-transparent rounded-full animate-spin"></div>
+                  Loading streams...
                 </div>
-              <% end %>
+              </div>
             </div>
-            <%= button_to "Play", streaming_index_path, params: { imdb_id: @imdb_id, type: "show", season: ep[:season], episode: ep[:episode], title: "#{@metadata[:title]} S#{ep[:season]}E#{ep[:episode]}" }, class: "btn-primary text-xs px-3 py-1", data: { turbo: false } %>
           </div>
         <% end %>
       </div>

@@ -1,7 +1,9 @@
 import { Controller } from "@hotwired/stimulus"
 
 export default class extends Controller {
-  static targets = ["loading", "error", "errorMessage", "status", "playerWrapper", "video"]
+  static targets = ["loading", "error", "errorMessage", "status", "playerWrapper", "video",
+                     "sourceInfo", "sourceToggle", "sourceDetails", "sourceUrl", "sourceFilename",
+                     "backButton"]
   static values = { url: String, imdbId: String, type: String, season: String, episode: String }
 
   connect() {
@@ -9,15 +11,17 @@ export default class extends Controller {
     this.progressInterval = null
     this.pollAttempts = 0
     this.maxPollAttempts = 120
+    this.uiHideTimer = null
+    this.mouseMoveHandler = this.onMouseMove.bind(this)
     this.startPolling()
   }
 
   disconnect() {
     this.stopPolling()
     this.stopProgressTracking()
-    if (this.player) {
-      this.player.destroy()
-    }
+    this.clearUiHideTimer()
+    if (this.player) this.player.destroy()
+    this.element.removeEventListener("mousemove", this.mouseMoveHandler)
   }
 
   startPolling() {
@@ -42,9 +46,7 @@ export default class extends Controller {
     }
 
     try {
-      const response = await fetch(this.urlValue, {
-        headers: { "Accept": "application/json" }
-      })
+      const response = await fetch(this.urlValue, { headers: { "Accept": "application/json" } })
 
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}))
@@ -59,7 +61,7 @@ export default class extends Controller {
 
       if (data.status === "ready" && data.streaming_url) {
         this.stopPolling()
-        this.showPlayer(data.streaming_url)
+        this.showPlayer(data.streaming_url, data.filename)
       } else if (data.error) {
         this.stopPolling()
         this.showError(data.error)
@@ -77,7 +79,6 @@ export default class extends Controller {
     const progress = data.progress || 0
     const speed = data.speed ? this.formatSpeed(data.speed) : ""
 
-    // Terminal error states — stop polling and show error
     const errorStates = ["infringing_file", "magnet_error", "error", "virus"]
     if (errorStates.includes(status)) {
       const messages = {
@@ -104,9 +105,16 @@ export default class extends Controller {
     statusEl.textContent = messages[status] || `Preparing... (${status})`
   }
 
-  showPlayer(url) {
+  showPlayer(url, filename) {
     this.loadingTarget.classList.add("hidden")
     this.playerWrapperTarget.classList.remove("hidden")
+
+    // Show overlay UI (back button + source info)
+    this.sourceInfoTarget.classList.remove("hidden")
+    this.sourceUrlTarget.textContent = url
+    this.sourceFilenameTarget.textContent = filename || "Unknown"
+    this.showOverlayUi()
+    this.element.addEventListener("mousemove", this.mouseMoveHandler)
 
     const video = this.videoTarget
     video.src = url
@@ -117,15 +125,52 @@ export default class extends Controller {
       keyboard: { focused: true, global: true }
     })
 
-    this.player.on("ready", () => {
-      this.player.play()
-    })
-
-    this.player.on("ended", () => {
-      this.onVideoEnded()
-    })
+    this.player.on("ready", () => this.player.play())
+    this.player.on("ended", () => this.onVideoEnded())
 
     this.startProgressTracking()
+  }
+
+  // Overlay UI (back button + source info) auto-hide after 4s idle
+  showOverlayUi() {
+    this.backButtonTarget.style.opacity = "1"
+    this.sourceInfoTarget.style.opacity = "1"
+    this.scheduleUiHide()
+  }
+
+  hideOverlayUi() {
+    this.backButtonTarget.style.opacity = "0"
+    this.sourceInfoTarget.style.opacity = "0"
+  }
+
+  scheduleUiHide() {
+    this.clearUiHideTimer()
+    this.uiHideTimer = setTimeout(() => this.hideOverlayUi(), 4000)
+  }
+
+  clearUiHideTimer() {
+    if (this.uiHideTimer) {
+      clearTimeout(this.uiHideTimer)
+      this.uiHideTimer = null
+    }
+  }
+
+  onMouseMove() {
+    this.backButtonTarget.style.opacity = "1"
+    this.sourceInfoTarget.style.opacity = "1"
+    this.scheduleUiHide()
+  }
+
+  toggleSourceInfo() {
+    this.sourceDetailsTarget.classList.toggle("hidden")
+    this.clearUiHideTimer()
+    if (!this.sourceDetailsTarget.classList.contains("hidden")) {
+      // Details open — keep everything visible
+      this.backButtonTarget.style.opacity = "1"
+      this.sourceInfoTarget.style.opacity = "1"
+    } else {
+      this.scheduleUiHide()
+    }
   }
 
   showError(message) {
@@ -136,9 +181,7 @@ export default class extends Controller {
 
   startProgressTracking() {
     this.progressInterval = setInterval(() => {
-      if (this.player && !this.player.paused) {
-        this.saveProgress()
-      }
+      if (this.player && !this.player.paused) this.saveProgress()
     }, 10000)
   }
 
@@ -163,10 +206,7 @@ export default class extends Controller {
 
       await fetch(`/streaming/${torrentId}/progress`, {
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          "X-CSRF-Token": csrfToken
-        },
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
         body: JSON.stringify({
           imdb_id: this.imdbIdValue,
           progress_seconds: progressSeconds,

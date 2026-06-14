@@ -8,8 +8,8 @@
      data-video-player-season-value="<%= @season %>"
      data-video-player-episode-value="<%= @episode %>">
 
-  <%# Back button %>
-  <div class="absolute top-4 left-4 z-10">
+  <%# Back button (auto-hides like source info) %>
+  <div class="absolute top-4 left-4 z-10 opacity-100 transition-opacity duration-500" data-video-player-target="backButton">
     <%= link_to content_path(type: @type, imdb_id: @imdb_id), class: "flex items-center gap-2 px-3 py-2 bg-black/60 rounded-lg text-white hover:bg-black/80 transition-colors" do %>
       <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
       <span class="text-sm"><%= @title %></span>
@@ -28,6 +28,17 @@
     <svg class="w-16 h-16 text-sv-danger" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"/></svg>
     <p data-video-player-target="errorMessage" class="text-sv-text-muted"></p>
     <%= link_to "Back to content", content_path(type: @type, imdb_id: @imdb_id), class: "btn-primary" %>
+  </div>
+
+  <%# Source info (top right, auto-hides after 3s, reappears on mousemove) %>
+  <div data-video-player-target="sourceInfo" class="hidden absolute top-4 right-4 z-10 max-w-lg opacity-100 transition-opacity duration-500">
+    <button data-action="click->video-player#toggleSourceInfo" data-video-player-target="sourceToggle" class="px-2 py-1 bg-black/60 rounded text-xs text-sv-text-muted hover:text-white transition-colors">
+      Stream info
+    </button>
+    <div data-video-player-target="sourceDetails" class="hidden mt-2 p-3 bg-black/80 rounded-lg text-xs text-sv-text-muted space-y-1 break-all">
+      <p><span class="text-sv-text">Source:</span> <span data-video-player-target="sourceUrl"></span></p>
+      <p><span class="text-sv-text">File:</span> <span data-video-player-target="sourceFilename"></span></p>
+    </div>
   </div>
 
   <%# Video player %>
