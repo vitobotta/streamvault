@@ -141,9 +141,9 @@ RSpec.describe TorrentioService do
               "genres" => ["Crime", "Drama"],
               "imdbRating" => "9.5",
               "videos" => [
-                { "season" => 1, "episode" => 1, "title" => "Pilot", "released" => "2008-01-20" },
-                { "season" => 1, "episode" => 2, "title" => "Cat's in the Bag...", "released" => "2008-01-27" },
-                { "season" => 2, "episode" => 1, "title" => "Seven Thirty-Seven", "released" => "2009-03-08" }
+                { "season" => 1, "episode" => 1, "name" => "Pilot", "released" => "2008-01-20" },
+                { "season" => 1, "episode" => 2, "name" => "Cat's in the Bag...", "released" => "2008-01-27" },
+                { "season" => 2, "episode" => 1, "name" => "Seven Thirty-Seven", "released" => "2009-03-08" }
               ]
             }
           }.to_json,

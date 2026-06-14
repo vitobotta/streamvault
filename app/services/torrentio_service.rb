@@ -48,7 +48,8 @@ class TorrentioService
 
     if response.success? && response.body.is_a?(Hash) && response.body["streams"]
       parsed = parse_streams(response.body["streams"])
-      parsed = rd_plus_first(parsed) if title.present?
+      parsed = rd_plus_first(parsed)
+      parsed = filter_streams_by_title(parsed, title) if title.present?
       ServiceResult.success(parsed)
     elsif response.status == 404
       ServiceResult.success([])
@@ -82,10 +83,24 @@ class TorrentioService
 
   private
 
+  STOP_WORDS = %w[the a an of in on at to for is it and or but not with by from]
+
   def rd_plus_first(streams)
     rd_plus = streams.select { |s| s[:rd_plus] }
     others = streams.reject { |s| s[:rd_plus] }
     rd_plus + others
+  end
+
+  def filter_streams_by_title(streams, title)
+    return streams if title.blank?
+
+    title_words = title.to_s.downcase.split(/\s+/).map { |w| w.gsub(/[^a-z0-9]/, "") }.reject { |w| w.length < 3 || STOP_WORDS.include?(w) }
+    return streams if title_words.empty?
+
+    streams.select do |s|
+      first_line = s[:title].to_s.split("\n").first.to_s.downcase
+      title_words.any? { |w| first_line.include?(w) }
+    end
   end
 
   def build_stream_path(imdb_id, type, season: nil, episode: nil)
@@ -189,7 +204,7 @@ class TorrentioService
       {
         season: v["season"],
         episode: v["episode"],
-        title: v["title"].presence || "Episode #{v["episode"]}",
+        title: v["name"].presence || "Episode #{v["episode"]}",
         released: v["released"]&.to_date&.to_s,
         imdb_id: v["id"]
       }
