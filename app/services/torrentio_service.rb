@@ -97,9 +97,13 @@ class TorrentioService
     title_words = title.to_s.downcase.split(/\s+/).map { |w| w.gsub(/[^a-z0-9]/, "") }.reject { |w| w.length < 3 || STOP_WORDS.include?(w) }
     return streams if title_words.empty?
 
+    # Require at least 2 word matches (or all words if fewer than 2 significant words)
+    min_matches = [title_words.length, 2].min
+
     streams.select do |s|
       first_line = s[:title].to_s.split("\n").first.to_s.downcase
-      title_words.any? { |w| first_line.include?(w) }
+      matches = title_words.count { |w| first_line.include?(w) }
+      matches >= min_matches
     end
   end
 
