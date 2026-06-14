@@ -1,50 +1,57 @@
 # frozen_string_literal: true
 
 class TorrentioService
-  BASE_URL = ENV.fetch("TORRENTIO_API_BASE_URL", "https://torrentio.strem.fun")
+  TORRENTIO_URL = ENV.fetch("TORRENTIO_API_BASE_URL", "https://torrentio.strem.fun")
+  CINEMETA_URL = "https://v3-cinemeta.strem.io"
 
   def initialize
-    @conn = Faraday.new(url: BASE_URL) do |f|
+    @torrentio = Faraday.new(url: TORRENTIO_URL) do |f|
       f.request :json
       f.response :json
       f.adapter Faraday.default_adapter
       f.options.timeout = 15
       f.options.open_timeout = 5
     end
+
+    @cinemeta = Faraday.new(url: CINEMETA_URL) do |f|
+      f.response :json
+      f.adapter Faraday.default_adapter
+      f.options.timeout = 10
+      f.options.open_timeout = 5
+    end
   end
 
-  # Search for content using OMDB API, then fetch streams per result
+  # Search for content via Cinemeta (same as Stremio)
   def search(query)
     return ServiceResult.failure("Query cannot be blank") if query.blank?
 
-    # Use OMDB API for search
-    omdb_result = search_omdb(query)
-    return omdb_result if omdb_result.failure?
+    encoded = URI.encode_www_form_component(query)
+    results = []
 
-    results = omdb_result.data
-    # Enrich each result with stream availability
-    enriched = results.map do |item|
-      streams_result = streams(item[:imdb_id], item[:type])
-      item[:streams_available] = streams_result.success? ? streams_result.data.any? : false
-      item
+    # Search both movies and series
+    %w[movie series].each do |type|
+      response = @cinemeta.get("catalog/#{type}/top/search=#{encoded}.json")
+      next unless response.success? && response.body.is_a?(Hash)
+
+      metas = response.body["metas"] || []
+      metas.each do |meta|
+        results << normalize_cinemeta(meta, type)
+      end
+    rescue Faraday::TimeoutError, Faraday::ConnectionFailed
     end
 
-    ServiceResult.success(enriched)
-  rescue Faraday::TimeoutError
-    ServiceResult.failure("Search request timed out")
-  rescue Faraday::ConnectionFailed
-    ServiceResult.failure("Could not connect to search service")
+    ServiceResult.success(results)
   rescue StandardError => e
     Rails.logger.error("TorrentioService#search error: #{e.message}")
-    ServiceResult.failure("An unexpected error occurred")
+    ServiceResult.failure("Search failed")
   end
 
-  # Fetch streams for a specific content item
+  # Fetch streams from Torrentio for a specific content item
   def streams(imdb_id, type, season: nil, episode: nil)
     return ServiceResult.failure("IMDB ID is required") if imdb_id.blank?
 
     path = build_stream_path(imdb_id, type, season: season, episode: episode)
-    response = @conn.get(path)
+    response = @torrentio.get(path)
 
     if response.success? && response.body.is_a?(Hash) && response.body["streams"]
       streams = parse_streams(response.body["streams"])
@@ -63,21 +70,17 @@ class TorrentioService
     ServiceResult.failure("An unexpected error occurred")
   end
 
-  # Fetch metadata from OMDB API
+  # Fetch metadata from Cinemeta (same as Stremio)
   def metadata(imdb_id, type)
     return ServiceResult.failure("IMDB ID is required") if imdb_id.blank?
 
-    response = Faraday.get("https://www.omdbapi.com/", {
-      i: imdb_id,
-      apikey: ENV.fetch("OMDB_API_KEY", ""),
-      type: type == "show" ? "series" : type
-    })
+    cinemeta_type = type.to_s == "show" ? "series" : type.to_s
+    response = @cinemeta.get("meta/#{cinemeta_type}/#{imdb_id}.json")
 
-    data = JSON.parse(response.body)
-    if data["Response"] == "True"
-      ServiceResult.success(normalize_omdb_metadata(data))
+    if response.success? && response.body.is_a?(Hash) && response.body["meta"]
+      ServiceResult.success(normalize_cinemeta_meta(response.body["meta"], type))
     else
-      ServiceResult.failure(data["Error"] || "Metadata not found")
+      ServiceResult.failure("Metadata not found")
     end
   rescue StandardError => e
     Rails.logger.error("TorrentioService#metadata error: #{e.message}")
@@ -86,26 +89,8 @@ class TorrentioService
 
   private
 
-  def search_omdb(query)
-    response = Faraday.get("https://www.omdbapi.com/", {
-      s: query,
-      apikey: ENV.fetch("OMDB_API_KEY", "")
-    })
-
-    data = JSON.parse(response.body)
-    if data["Response"] == "True" && data["Search"]
-      results = data["Search"].map { |item| normalize_omdb_search(item) }
-      ServiceResult.success(results)
-    else
-      ServiceResult.success([])
-    end
-  rescue StandardError => e
-    Rails.logger.error("TorrentioService#search_omdb error: #{e.message}")
-    ServiceResult.failure("Search failed")
-  end
-
   def build_stream_path(imdb_id, type, season: nil, episode: nil)
-    if type.to_s == "show" && season && episode
+    if type.to_s.in?(%w[show series]) && season && episode
       "/stream/series/#{imdb_id}:#{season}:#{episode}.json"
     else
       "/stream/movie/#{imdb_id}.json"
@@ -159,30 +144,55 @@ class TorrentioService
     end
   end
 
-  def normalize_omdb_search(item)
+  def normalize_cinemeta(meta, type)
     {
-      imdb_id: item["imdbID"],
-      title: item["Title"],
-      year: item["Year"],
-      type: item["Type"] == "series" ? "show" : "movie",
-      poster_url: item["Poster"] != "N/A" ? item["Poster"] : nil
+      imdb_id: meta["imdb_id"] || meta["id"],
+      title: meta["name"],
+      year: meta["releaseInfo"] || meta["year"],
+      type: type == "series" ? "show" : type,
+      poster_url: meta["poster"],
+      imdb_rating: meta["imdbRating"]
     }
   end
 
-  def normalize_omdb_metadata(data)
+  def normalize_cinemeta_meta(meta, type)
     {
-      imdb_id: data["imdbID"],
-      title: data["Title"],
-      year: data["Year"],
-      type: data["Type"] == "series" ? "show" : "movie",
-      poster_url: data["Poster"] != "N/A" ? data["Poster"] : nil,
-      plot: data["Plot"],
-      genre: data["Genre"],
-      director: data["Director"],
-      actors: data["Actors"],
-      rated: data["Rated"],
-      imdb_rating: data["imdbRating"],
-      total_seasons: data["totalSeasons"]&.to_i
+      imdb_id: meta["imdb_id"] || meta["id"],
+      title: meta["name"],
+      year: meta["year"] || meta["releaseInfo"],
+      type: type,
+      poster_url: meta["poster"],
+      background_url: meta["background"],
+      plot: meta["description"],
+      genre: meta["genres"]&.join(", "),
+      director: meta["director"]&.join(", "),
+      actors: meta["cast"]&.join(", "),
+      rated: meta["certification"],
+      imdb_rating: meta["imdbRating"],
+      runtime: meta["runtime"],
+      total_seasons: extract_total_seasons(meta),
+      episodes: extract_episodes(meta)
     }
+  end
+
+  def extract_total_seasons(meta)
+    videos = meta["videos"]
+    return nil unless videos.is_a?(Array)
+    videos.map { |v| v["season"] }.compact.max
+  end
+
+  def extract_episodes(meta)
+    videos = meta["videos"]
+    return [] unless videos.is_a?(Array)
+
+    videos.select { |v| v["episode"] }.map do |v|
+      {
+        season: v["season"],
+        episode: v["episode"],
+        title: v["title"],
+        released: v["released"]&.to_date&.to_s,
+        imdb_id: v["id"]
+      }
+    end
   end
 end

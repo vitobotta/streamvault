@@ -15,11 +15,10 @@ RSpec.describe "Episodes", type: :request do
       before { sign_in user }
 
       it "returns success" do
-        stub_request(:get, "https://www.omdbapi.com/")
-          .with(query: hash_including(i: "tt0903747"))
+        stub_request(:get, "https://v3-cinemeta.strem.io/meta/series/tt0903747.json")
           .to_return(
             status: 200,
-            body: { "Response" => "True", "imdbID" => "tt0903747", "Title" => "Breaking Bad", "Type" => "series", "totalSeasons" => "5" }.to_json,
+            body: { "meta" => { "id" => "tt0903747", "name" => "Breaking Bad", "videos" => [] } }.to_json,
             headers: { 'Content-Type' => 'application/json' }
           )
 

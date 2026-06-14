@@ -15,15 +15,14 @@ RSpec.describe "Content", type: :request do
       before { sign_in user }
 
       it "returns success" do
-        stub_request(:get, "https://www.omdbapi.com/")
-          .with(query: hash_including(i: "tt1375666"))
+        stub_request(:get, "https://v3-cinemeta.strem.io/meta/movie/tt1375666.json")
           .to_return(
             status: 200,
-            body: { "Response" => "True", "imdbID" => "tt1375666", "Title" => "Inception", "Year" => "2010", "Type" => "movie" }.to_json,
+            body: { "meta" => { "id" => "tt1375666", "name" => "Inception", "year" => "2010" } }.to_json,
             headers: { 'Content-Type' => 'application/json' }
           )
 
-        stub_request(:get, %r{torrentio\.strem\.fun})
+        stub_request(:get, %r{torrentio\.strem\.fun/stream/movie/tt1375666\.json})
           .to_return(status: 200, body: { "streams" => [] }.to_json, headers: { 'Content-Type' => 'application/json' })
 
         get content_path(type: "movie", imdb_id: "tt1375666")

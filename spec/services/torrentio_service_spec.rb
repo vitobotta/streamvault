@@ -10,33 +10,37 @@ RSpec.describe TorrentioService do
       expect(result.error_message).to eq("Query cannot be blank")
     end
 
-    it "returns search results from OMDB" do
-      # Stub OMDB search
-      stub_request(:get, "https://www.omdbapi.com/")
-        .with(query: hash_including(s: "Inception"))
+    it "returns search results from Cinemeta" do
+      # Stub Cinemeta movie search
+      stub_request(:get, %r{v3-cinemeta\.strem\.io/catalog/movie/top/search=.*\.json})
         .to_return(
           status: 200,
           body: {
-            "Search" => [
-              { "imdbID" => "tt1375666", "Title" => "Inception", "Year" => "2010", "Type" => "movie", "Poster" => "https://example.com/poster.jpg" }
-            ],
-            "Response" => "True"
+            "metas" => [
+              { "id" => "tt1375666", "imdb_id" => "tt1375666", "name" => "Inception", "releaseInfo" => "2010", "poster" => "https://example.com/poster.jpg" }
+            ]
           }.to_json,
           headers: { 'Content-Type' => 'application/json' }
         )
 
-      # Stub Torrentio streams
-      stub_request(:get, %r{torrentio\.strem\.fun/stream/movie/tt1375666\.json})
-        .to_return(
-          status: 200,
-          body: { "streams" => [{ "title" => "Inception 1080p", "infoHash" => "abc123" }] }.to_json,
-          headers: { 'Content-Type' => 'application/json' }
-        )
+      # Stub Cinemeta series search
+      stub_request(:get, %r{v3-cinemeta\.strem\.io/catalog/series/top/search=.*\.json})
+        .to_return(status: 200, body: { "metas" => [] }.to_json, headers: { 'Content-Type' => 'application/json' })
 
       result = service.search("Inception")
       expect(result).to be_success
       expect(result.data).to be_an(Array)
       expect(result.data.first[:imdb_id]).to eq("tt1375666")
+      expect(result.data.first[:title]).to eq("Inception")
+    end
+
+    it "handles Cinemeta timeout gracefully" do
+      stub_request(:get, %r{v3-cinemeta\.strem\.io/catalog/.*\.json})
+        .to_timeout
+
+      result = service.search("test")
+      expect(result).to be_success
+      expect(result.data).to eq([])
     end
   end
 
@@ -93,24 +97,24 @@ RSpec.describe TorrentioService do
   end
 
   describe "#metadata" do
-    it "returns metadata from OMDB" do
-      stub_request(:get, "https://www.omdbapi.com/")
-        .with(query: hash_including(i: "tt1375666"))
+    it "returns metadata from Cinemeta" do
+      stub_request(:get, "https://v3-cinemeta.strem.io/meta/movie/tt1375666.json")
         .to_return(
           status: 200,
           body: {
-            "Response" => "True",
-            "imdbID" => "tt1375666",
-            "Title" => "Inception",
-            "Year" => "2010",
-            "Type" => "movie",
-            "Poster" => "https://example.com/poster.jpg",
-            "Plot" => "A thief who steals corporate secrets...",
-            "Genre" => "Action, Sci-Fi",
-            "Director" => "Christopher Nolan",
-            "Actors" => "Leonardo DiCaprio, Joseph Gordon-Levitt",
-            "Rated" => "PG-13",
-            "imdbRating" => "8.8"
+            "meta" => {
+              "id" => "tt1375666",
+              "imdb_id" => "tt1375666",
+              "name" => "Inception",
+              "year" => "2010",
+              "poster" => "https://example.com/poster.jpg",
+              "description" => "A thief who steals corporate secrets...",
+              "genres" => ["Action", "Sci-Fi"],
+              "director" => ["Christopher Nolan"],
+              "cast" => ["Leonardo DiCaprio", "Joseph Gordon-Levitt"],
+              "imdbRating" => "8.8",
+              "runtime" => "148 min"
+            }
           }.to_json,
           headers: { 'Content-Type' => 'application/json' }
         )
@@ -119,6 +123,39 @@ RSpec.describe TorrentioService do
       expect(result).to be_success
       expect(result.data[:title]).to eq("Inception")
       expect(result.data[:imdb_rating]).to eq("8.8")
+      expect(result.data[:genre]).to eq("Action, Sci-Fi")
+    end
+
+    it "returns show metadata with episodes" do
+      stub_request(:get, "https://v3-cinemeta.strem.io/meta/series/tt0903747.json")
+        .to_return(
+          status: 200,
+          body: {
+            "meta" => {
+              "id" => "tt0903747",
+              "imdb_id" => "tt0903747",
+              "name" => "Breaking Bad",
+              "year" => "2008–2013",
+              "poster" => "https://example.com/poster.jpg",
+              "description" => "A high school chemistry teacher...",
+              "genres" => ["Crime", "Drama"],
+              "imdbRating" => "9.5",
+              "videos" => [
+                { "season" => 1, "episode" => 1, "title" => "Pilot", "released" => "2008-01-20" },
+                { "season" => 1, "episode" => 2, "title" => "Cat's in the Bag...", "released" => "2008-01-27" },
+                { "season" => 2, "episode" => 1, "title" => "Seven Thirty-Seven", "released" => "2009-03-08" }
+              ]
+            }
+          }.to_json,
+          headers: { 'Content-Type' => 'application/json' }
+        )
+
+      result = service.metadata("tt0903747", "show")
+      expect(result).to be_success
+      expect(result.data[:title]).to eq("Breaking Bad")
+      expect(result.data[:episodes].length).to eq(3)
+      expect(result.data[:total_seasons]).to eq(2)
+      expect(result.data[:episodes].first[:title]).to eq("Pilot")
     end
   end
 end
