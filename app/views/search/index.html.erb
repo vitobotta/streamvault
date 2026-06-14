@@ -4,7 +4,6 @@
   <%= form_tag search_index_path, method: :get, class: "mb-8", data: { turbo_frame: "_top" } do %>
     <div class="flex gap-3">
       <%= text_field_tag :q, @query, class: "input-field flex-1", placeholder: "Search for movies, TV shows..." %>
-      <%= select_tag :per_page, options_for_select([["25 per page", 25], ["50 per page", 50], ["100 per page", 100], ["200 per page", 200]], @per_page), class: "input-field w-auto" %>
       <%= submit_tag "Search", class: "btn-primary cursor-pointer" %>
     </div>
   <% end %>
@@ -14,11 +13,20 @@
   <% end %>
 
   <% if @results.present? %>
-    <%# Results header %>
+    <%# Results header with per_page control %>
     <div class="flex items-center justify-between mb-4">
       <p class="text-sm text-sv-text-muted">
         Showing <%= (@page - 1) * @per_page + 1 %>&ndash;<%= [@page * @per_page, @total].min %> of <%= @total %> results
       </p>
+      <div class="flex items-center gap-1 text-sm">
+        <% [25, 50, 100, 200].each do |size| %>
+          <% if size == @per_page %>
+            <span class="px-2 py-1 rounded bg-sv-accent text-white text-xs font-medium"><%= size %></span>
+          <% else %>
+            <%= link_to size, search_index_path(q: @query, per_page: size), class: "px-2 py-1 rounded bg-sv-surface text-sv-text-muted hover:text-white text-xs transition-colors" %>
+          <% end %>
+        <% end %>
+      </div>
     </div>
 
     <%# Results grid %>
@@ -54,7 +62,6 @@
 
         <%# Page numbers %>
         <%
-          # Show first, last, and pages around current
           visible_pages = []
           visible_pages << 1 unless @total_pages <= 1
           ([@page - 2, 2].max..[@page + 2, @total_pages - 1].min).each { |p| visible_pages << p }

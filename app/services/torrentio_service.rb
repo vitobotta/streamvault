@@ -95,10 +95,12 @@ class TorrentioService
   COMPATIBLE_AUDIO = /aac|ac3|ddp?\b|eac3|opus|mp3/i
   INCOMPATIBLE_AUDIO = /dts[-\s]?hd|dts[-\s]?ma|truehd|atmos|pcm|lpcm|flac/i
   PACK_PATTERN = /top \d+|collection|filmography|movies?\s+\d|pack\b|complete series/i
+  QUALITY_RANK = { "4K" => 4, "1080p" => 3, "720p" => 2, "480p" => 1, "Unknown" => 0 }.freeze
 
   def filter_streams_by_title(streams, title)
     title_words = title.to_s.downcase.split(/\s+/).map { |w| w.gsub(/[^a-z0-9]/, "") }.reject { |w| w.length < 3 || STOP_WORDS.include?(w) }
 
+    # Step 1: filter by title relevance
     relevant = if title_words.empty?
       streams
     else
@@ -108,17 +110,19 @@ class TorrentioService
       end
     end
 
-    # Remove packs/collections that contain this title among many others
+    # Step 2: remove packs/collections
     relevant = relevant.reject { |s| s[:title].to_s.match?(PACK_PATTERN) }
 
-    # Split into browser-compatible audio vs incompatible (DTS, TrueHD, Atmos etc)
-    compat, incompat = relevant.partition do |s|
+    # Step 3: sort by seeders (primary), compatible audio (secondary), quality (tertiary)
+    relevant.sort_by do |s|
       t = s[:title].to_s
-      t.match?(COMPATIBLE_AUDIO) || !t.match?(INCOMPATIBLE_AUDIO)
+      audio_score = if t.match?(INCOMPATIBLE_AUDIO) then -10
+                    elsif t.match?(COMPATIBLE_AUDIO) then 1
+                    else 0
+                    end
+      quality_score = QUALITY_RANK[s[:quality]] || 0
+      [-(s[:seeders] || 0), -audio_score, -quality_score]
     end
-
-    # Compatible streams first (sorted by seeders), then incompatible
-    compat.sort_by { |s| -(s[:seeders] || 0) } + incompat.sort_by { |s| -(s[:seeders] || 0) }
   end
 
 
