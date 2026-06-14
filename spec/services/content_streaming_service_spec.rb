@@ -42,9 +42,13 @@ RSpec.describe ContentStreamingService do
           headers: { 'Content-Type' => 'application/json' }
         )
 
-      # Stub RealDebrid selectFiles
-      stub_request(:post, "https://api.real-debrid.com/rest/1.0/torrents/selectFiles/torrent123")
-        .to_return(status: 204)
+      # Cache check: torrent resolves immediately
+      stub_request(:get, "https://api.real-debrid.com/rest/1.0/torrents/info/torrent123")
+        .to_return(
+          status: 200,
+          body: { "id" => "torrent123", "status" => "downloaded", "files" => [], "links" => [] }.to_json,
+          headers: { 'Content-Type' => 'application/json' }
+        )
 
       result = service.start_stream("tt1375666", "movie")
       expect(result).to be_success
@@ -86,7 +90,34 @@ RSpec.describe ContentStreamingService do
       expect(result.data[:streaming_url]).to include("download.real-debrid.com")
     end
 
-    it "returns progress when torrent is still downloading" do
+    it "returns streaming URL when link is available even while downloading" do
+      stub_request(:get, "https://api.real-debrid.com/rest/1.0/torrents/info/torrent123")
+        .to_return(
+          status: 200,
+          body: {
+            "id" => "torrent123",
+            "status" => "downloading",
+            "progress" => 30,
+            "files" => [{ "id" => 0, "path" => "/movie.mkv", "bytes" => 1_500_000_000, "selected" => 1 }],
+            "links" => ["https://rd.link/file123"]
+          }.to_json,
+          headers: { 'Content-Type' => 'application/json' }
+        )
+
+      stub_request(:post, "https://api.real-debrid.com/rest/1.0/unrestrict/link")
+        .to_return(
+          status: 200,
+          body: { "download" => "https://download.real-debrid.com/d/file123", "filename" => "movie.mkv" }.to_json,
+          headers: { 'Content-Type' => 'application/json' }
+        )
+
+      result = service.get_streaming_url("torrent123")
+      expect(result).to be_success
+      expect(result.data[:status]).to eq("ready")
+      expect(result.data[:streaming_url]).to include("download.real-debrid.com")
+    end
+
+    it "returns progress when no links available yet" do
       stub_request(:get, "https://api.real-debrid.com/rest/1.0/torrents/info/torrent123")
         .to_return(
           status: 200,
@@ -94,7 +125,8 @@ RSpec.describe ContentStreamingService do
             "id" => "torrent123",
             "status" => "downloading",
             "progress" => 45,
-            "speed" => 5_000_000
+            "files" => [],
+            "links" => []
           }.to_json,
           headers: { 'Content-Type' => 'application/json' }
         )
@@ -105,4 +137,4 @@ RSpec.describe ContentStreamingService do
       expect(result.data[:progress]).to eq(45)
     end
   end
-end
+ end

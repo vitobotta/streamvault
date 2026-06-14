@@ -4,6 +4,7 @@ class StreamingController < ApplicationController
   before_action :authenticate_user!
   before_action :verify_realdebrid_key!, except: [:progress]
 
+  # POST /streaming — add magnet, redirect to player
   def create
     service = ContentStreamingService.new(current_user)
     result = service.start_stream(
@@ -14,13 +15,33 @@ class StreamingController < ApplicationController
     )
 
     if result.success?
-      render json: result.data
+      redirect_to streaming_path(
+        result.data[:torrent_id],
+        imdb_id: params[:imdb_id],
+        type: params[:type],
+        season: params[:season],
+        episode: params[:episode],
+        title: params[:title],
+        file_idx: result.data[:file_idx]
+      )
     else
-      render json: { error: result.error_message }, status: :unprocessable_entity
+      redirect_back fallback_location: root_path, alert: result.error_message
     end
   end
 
+  # GET /streaming/:id — player page
   def show
+    @torrent_id = params[:id]
+    @imdb_id = params[:imdb_id]
+    @type = params[:type]
+    @season = params[:season]
+    @episode = params[:episode]
+    @title = params[:title] || "Now Playing"
+    @file_idx = params[:file_idx]
+  end
+
+  # GET /streaming/:id/url — JSON endpoint for polling
+  def url
     service = ContentStreamingService.new(current_user)
     result = service.get_streaming_url(params[:id], params[:file_idx])
 
@@ -31,6 +52,7 @@ class StreamingController < ApplicationController
     end
   end
 
+  # PATCH /streaming/:id/progress — save watch progress
   def progress
     result = ProgressTrackingService.save_progress(
       current_user,
@@ -53,7 +75,7 @@ class StreamingController < ApplicationController
 
   def verify_realdebrid_key!
     unless current_user.has_realdebrid_key?
-      render json: { error: "RealDebrid API key not configured. Please add it in Settings." }, status: :forbidden
+      redirect_to settings_path, alert: "RealDebrid API key not configured. Please add it in Settings."
     end
   end
 end

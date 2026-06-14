@@ -1,0 +1,39 @@
+<%# Fallback: auto-refresh if JS fails %>
+<noscript><meta http-equiv="refresh" content="5"></noscript>
+
+<div class="player-container" data-controller="video-player"
+     data-video-player-url-value="<%= url_streaming_path(@torrent_id, file_idx: @file_idx) %>"
+     data-video-player-imdb-id-value="<%= @imdb_id %>"
+     data-video-player-type-value="<%= @type %>"
+     data-video-player-season-value="<%= @season %>"
+     data-video-player-episode-value="<%= @episode %>">
+
+  <%# Back button %>
+  <div class="absolute top-4 left-4 z-10">
+    <%= link_to content_path(type: @type, imdb_id: @imdb_id), class: "flex items-center gap-2 px-3 py-2 bg-black/60 rounded-lg text-white hover:bg-black/80 transition-colors" do %>
+      <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+      <span class="text-sm"><%= @title %></span>
+    <% end %>
+  </div>
+
+  <%# Loading state %>
+  <div data-video-player-target="loading" class="flex flex-col items-center gap-4 text-white">
+    <div class="w-12 h-12 border-4 border-sv-accent border-t-transparent rounded-full animate-spin"></div>
+    <p class="text-sv-text-muted">Preparing your stream...</p>
+    <p data-video-player-target="status" class="text-sm text-sv-text-muted"></p>
+  </div>
+
+  <%# Error state %>
+  <div data-video-player-target="error" class="hidden flex flex-col items-center gap-4 text-white max-w-md text-center">
+    <svg class="w-16 h-16 text-sv-danger" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"/></svg>
+    <p data-video-player-target="errorMessage" class="text-sv-text-muted"></p>
+    <%= link_to "Back to content", content_path(type: @type, imdb_id: @imdb_id), class: "btn-primary" %>
+  </div>
+
+  <%# Video player %>
+  <div data-video-player-target="playerWrapper" class="hidden w-full h-full">
+    <video data-video-player-target="video" id="stream-player" playsinline controls class="w-full h-full">
+      <track kind="captions" label="No captions" default>
+    </video>
+  </div>
+</div>

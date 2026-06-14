@@ -33,6 +33,7 @@ Rails.application.routes.draw do
   # Streaming
   resources :streaming, only: [:create, :show] do
     member do
+      get :url
       patch :progress
     end
   end

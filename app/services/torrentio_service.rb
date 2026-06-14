@@ -21,7 +21,7 @@ class TorrentioService
     end
   end
 
-  # Search for content via Cinemeta (same as Stremio)
+  # Search for content via Cinemeta (same as Stremio), filtered by relevance
   def search(query)
     return ServiceResult.failure("Query cannot be blank") if query.blank?
 
@@ -39,6 +39,9 @@ class TorrentioService
       end
     rescue Faraday::TimeoutError, Faraday::ConnectionFailed
     end
+
+    # Filter by relevance to the search query
+    results = filter_by_relevance(results, query)
 
     ServiceResult.success(results)
   rescue StandardError => e
@@ -88,6 +91,32 @@ class TorrentioService
   end
 
   private
+  STOP_WORDS = %w[the a an of in on at to for is it and or but not with by from].freeze
+
+  def filter_by_relevance(results, query)
+    query_words = query.downcase.split(/\s+/).map { |w| w.gsub(/[^a-z0-9]/, '') }.reject { |w| w.length < 2 }
+    return results if query_words.empty?
+
+    sig_words = query_words.reject { |w| STOP_WORDS.include?(w) }
+    sig_words = query_words if sig_words.empty?
+
+    scored = results.map do |item|
+      title = item[:title].to_s.downcase
+      sig_matches = sig_words.count { |w| title.include?(w) }
+      all_matches = query_words.count { |w| title.include?(w) }
+      score = sig_matches * 2 + all_matches
+      score += 10 if title == query.downcase
+      score += 5 if sig_words.length > 1 && sig_words.all? { |w| title.include?(w) }
+      [item, score, sig_matches]
+    end
+
+    min_matches = [sig_words.length, 1].max
+    scored.select { |_, _, sig| sig >= min_matches }
+          .sort_by { |item| -item[1] }
+          .map { |item, _, _| item }
+  end
+
+
 
   def build_stream_path(imdb_id, type, season: nil, episode: nil)
     if type.to_s.in?(%w[show series]) && season && episode

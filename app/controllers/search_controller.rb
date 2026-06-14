@@ -5,8 +5,8 @@ class SearchController < ApplicationController
 
   def index
     if params[:q].present?
-      @torrentio = TorrentioService.new
-      result = @torrentio.search(params[:q])
+      torrentio = TorrentioService.new
+      result = torrentio.search(params[:q])
       @results = result.success? ? result.data : []
       @error = result.failure? ? result.error_message : nil
     else
