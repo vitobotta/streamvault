@@ -51,7 +51,7 @@ RSpec.describe "Streaming", type: :request do
           )
 
         post streaming_index_path, params: { imdb_id: "tt1375666", type: "movie", title: "Inception" }
-        expect(response).to redirect_to(streaming_path("torrent123", imdb_id: "tt1375666", type: "movie", title: "Inception"))
+        expect(response).to redirect_to(streaming_path("torrent123", imdb_id: "tt1375666", type: "movie", title: "Inception", file_idx: 0))
       end
     end
   end

@@ -33,7 +33,6 @@ class ContentController < ApplicationController
   end
 
   # GET /content/:type/:imdb_id/episode_streams?season=N&episode=N
-  # Returns streams for a specific episode (used by Stimulus to load into drawer)
   def episode_streams
     @imdb_id = params[:imdb_id]
     @type = params[:type]
@@ -42,21 +41,20 @@ class ContentController < ApplicationController
 
     torrentio = TorrentioService.new
 
-    # Get show title for stream filtering
+    # Get show title and episode title for stream filtering
     meta = torrentio.metadata(@imdb_id, @type)
-    content_title = meta.success? ? meta.data[:title] : nil
-    episode_title = ""
+    @show_title = meta.success? ? meta.data[:title] : @imdb_id
+    @episode_title = ""
     if meta.success? && meta.data[:episodes]
       ep = meta.data[:episodes].find { |e| e[:season] == @season && e[:episode] == @episode }
-      episode_title = ep&.dig(:title).to_s
+      @episode_title = ep&.dig(:title).to_s
     end
 
-    # Build combined title for filtering: "Show Name S01E01 Episode Title"
-    filter_title = [content_title, episode_title].compact_blank.join(" ")
+    # Build combined title for filtering
+    filter_title = [@show_title, @episode_title].compact_blank.join(" ")
 
     streams_result = torrentio.streams(@imdb_id, "show", season: @season, episode: @episode, title: filter_title)
     @streams = streams_result.success? ? streams_result.data : []
-    @episode_title = episode_title.presence || "S#{@season}E#{@episode}"
 
     render layout: false
   end

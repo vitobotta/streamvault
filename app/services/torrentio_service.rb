@@ -226,7 +226,7 @@ class TorrentioService
       {
         season: v["season"],
         episode: v["episode"],
-        title: v["title"],
+        title: v["title"].presence || "Episode #{v["episode"]}",
         released: v["released"]&.to_date&.to_s,
         imdb_id: v["id"]
       }
