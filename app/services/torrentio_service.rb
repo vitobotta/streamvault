@@ -21,7 +21,7 @@ class TorrentioService
     end
   end
 
-  # Search for content via Cinemeta, filtered by relevance
+  # Search for content via Cinemeta (same as Stremio) — no filtering, return all results
   def search(query)
     return ServiceResult.failure("Query cannot be blank") if query.blank?
 
@@ -39,7 +39,6 @@ class TorrentioService
     rescue Faraday::TimeoutError, Faraday::ConnectionFailed
     end
 
-    results = filter_by_relevance(results, query)
     ServiceResult.success(results)
   rescue StandardError => e
     Rails.logger.error("TorrentioService#search error: #{e.message}")
@@ -91,29 +90,6 @@ class TorrentioService
   private
 
   STOP_WORDS = %w[the a an of in on at to for is it and or but not with by from]
-
-  def filter_by_relevance(results, query)
-    query_words = query.downcase.split(/\s+/).map { |w| w.gsub(/[^a-z0-9]/, "") }.reject { |w| w.length < 2 }
-    return results if query_words.empty?
-
-    sig_words = query_words.reject { |w| STOP_WORDS.include?(w) }
-    sig_words = query_words if sig_words.empty?
-
-    scored = results.map do |item|
-      title = item[:title].to_s.downcase
-      sig_matches = sig_words.count { |w| title.include?(w) }
-      all_matches = query_words.count { |w| title.include?(w) }
-      score = sig_matches * 2 + all_matches
-      score += 10 if title == query.downcase
-      score += 5 if sig_words.length > 1 && sig_words.all? { |w| title.include?(w) }
-      [item.merge(relevance: score), sig_matches]
-    end
-
-    # Require at least 1 significant word match; sort by score (more matches = higher)
-    scored.select { |_, sig| sig >= 1 }
-          .sort_by { |item| -item[0][:relevance] }
-          .map { |item, _| item }
-  end
 
 
   COMPATIBLE_AUDIO = /aac|ac3|ddp?\b|eac3|opus|mp3/i
