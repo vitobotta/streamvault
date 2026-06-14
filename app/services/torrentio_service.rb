@@ -48,8 +48,7 @@ class TorrentioService
 
     if response.success? && response.body.is_a?(Hash) && response.body["streams"]
       parsed = parse_streams(response.body["streams"])
-      parsed = rd_plus_first(parsed)
-      parsed = filter_streams_by_title(parsed, title) if title.present?
+      parsed = sort_streams(parsed, title)
       ServiceResult.success(parsed)
     elsif response.status == 404
       ServiceResult.success([])
@@ -85,26 +84,23 @@ class TorrentioService
 
   STOP_WORDS = %w[the a an of in on at to for is it and or but not with by from]
 
-  def rd_plus_first(streams)
-    rd_plus = streams.select { |s| s[:rd_plus] }
-    others = streams.reject { |s| s[:rd_plus] }
-    rd_plus + others
-  end
-
-  def filter_streams_by_title(streams, title)
-    return streams if title.blank?
-
-    title_words = title.to_s.downcase.split(/\s+/).map { |w| w.gsub(/[^a-z0-9]/, "") }.reject { |w| w.length < 3 || STOP_WORDS.include?(w) }
-    return streams if title_words.empty?
-
-    # Require at least 2 word matches (or all words if fewer than 2 significant words)
-    min_matches = [title_words.length, 2].min
-
-    streams.select do |s|
-      first_line = s[:title].to_s.split("\n").first.to_s.downcase
-      matches = title_words.count { |w| first_line.include?(w) }
-      matches >= min_matches
+  def sort_streams(streams, title)
+    title_words = if title.present?
+      title.to_s.downcase.split(/\s+/).map { |w| w.gsub(/[^a-z0-9]/, "") }.reject { |w| w.length < 3 || STOP_WORDS.include?(w) }
+    else
+      []
     end
+
+    # Score: RD+ bonus + word match count
+    scored = streams.map do |s|
+      first_line = s[:title].to_s.split("\n").first.to_s.downcase
+      word_score = title_words.count { |w| first_line.include?(w) }
+      rd_score = s[:rd_plus] ? 100 : 0
+      [s, rd_score + word_score]
+    end
+
+    # Sort by score descending, stable within same score (keeps Torrentio order)
+    scored.sort_by.with_index { |item, i| [-item[1], i] }.map { |s, _| s }
   end
 
   def build_stream_path(imdb_id, type, season: nil, episode: nil)

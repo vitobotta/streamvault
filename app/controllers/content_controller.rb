@@ -50,8 +50,9 @@ class ContentController < ApplicationController
       @episode_title = ep&.dig(:title).to_s
     end
 
-    # Filter by show title only -- episode names differ between Cinemeta and Torrentio
-    streams_result = torrentio.streams(@imdb_id, "show", season: @season, episode: @episode, title: @show_title)
+    # Filter by show name + episode title words
+    filter_title = "#{@show_title} #{@episode_title}"
+    streams_result = torrentio.streams(@imdb_id, "show", season: @season, episode: @episode, title: filter_title)
     @streams = streams_result.success? ? streams_result.data : []
 
     render layout: false
