@@ -91,15 +91,15 @@ class TorrentioService
       []
     end
 
-    # Score: RD+ bonus + word match count
     scored = streams.map do |s|
-      first_line = s[:title].to_s.split("\n").first.to_s.downcase
-      word_score = title_words.count { |w| first_line.include?(w) }
+      # Use filename from behaviorHints for matching (cleaner than title which has metadata appended)
+      match_target = s[:filename].to_s.downcase
+      word_score = title_words.count { |w| match_target.include?(w) }
       rd_score = s[:rd_plus] ? 100 : 0
       [s, rd_score + word_score]
     end
 
-    # Sort by score descending, stable within same score (keeps Torrentio order)
+    # Sort by score descending, stable within same score
     scored.sort_by.with_index { |item, i| [-item[1], i] }.map { |s, _| s }
   end
 
@@ -122,7 +122,8 @@ class TorrentioService
         seeders: extract_seeders(s),
         size: s["size"] ? format_size(s["size"]) : "Unknown",
         raw_size: s["size"],
-        rd_plus: s["sources"].is_a?(Array) && s["sources"].any?
+        rd_plus: s["sources"].is_a?(Array) && s["sources"].any?,
+        filename: s.dig("behaviorHints", "filename")
       }
     end
   end
