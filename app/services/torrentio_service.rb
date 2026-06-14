@@ -106,24 +106,45 @@ class TorrentioService
       score = sig_matches * 2 + all_matches
       score += 10 if title == query.downcase
       score += 5 if sig_words.length > 1 && sig_words.all? { |w| title.include?(w) }
-      [item, score, sig_matches]
+      [item.merge(relevance: score), sig_matches]
     end
 
     min_matches = [sig_words.length, 1].max
-    scored.select { |_, _, sig| sig >= min_matches }
-          .sort_by { |item| -item[1] }
-          .map { |item, _, _| item }
+    scored.select { |_, sig| sig >= min_matches }
+          .sort_by { |item| -item[0][:relevance] }
+          .map { |item, _| item }
   end
+
+
+  COMPATIBLE_AUDIO = /aac|ac3|ddp?\b|eac3|opus|mp3/i
+  INCOMPATIBLE_AUDIO = /dts[-\s]?hd|dts[-\s]?ma|truehd|atmos|pcm|lpcm|flac/i
+  PACK_PATTERN = /top \d+|collection|filmography|movies?\s+\d|pack\b|complete series/i
 
   def filter_streams_by_title(streams, title)
-    title_words = title.downcase.split(/\s+/).map { |w| w.gsub(/[^a-z0-9]/, "") }.reject { |w| w.length < 3 || STOP_WORDS.include?(w) }
-    return streams if title_words.empty?
+    title_words = title.to_s.downcase.split(/\s+/).map { |w| w.gsub(/[^a-z0-9]/, "") }.reject { |w| w.length < 3 || STOP_WORDS.include?(w) }
 
-    streams.select do |s|
-      stream_title = s[:title].to_s.downcase
-      title_words.any? { |w| stream_title.include?(w) }
+    relevant = if title_words.empty?
+      streams
+    else
+      streams.select do |s|
+        stream_title = s[:title].to_s.downcase
+        title_words.any? { |w| stream_title.include?(w) }
+      end
     end
+
+    # Remove packs/collections that contain this title among many others
+    relevant = relevant.reject { |s| s[:title].to_s.match?(PACK_PATTERN) }
+
+    # Split into browser-compatible audio vs incompatible (DTS, TrueHD, Atmos etc)
+    compat, incompat = relevant.partition do |s|
+      t = s[:title].to_s
+      t.match?(COMPATIBLE_AUDIO) || !t.match?(INCOMPATIBLE_AUDIO)
+    end
+
+    # Compatible streams first (sorted by seeders), then incompatible
+    compat.sort_by { |s| -(s[:seeders] || 0) } + incompat.sort_by { |s| -(s[:seeders] || 0) }
   end
+
 
   def build_stream_path(imdb_id, type, season: nil, episode: nil)
     if type.to_s.in?(%w[show series]) && season && episode
