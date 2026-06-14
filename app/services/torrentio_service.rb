@@ -21,14 +21,13 @@ class TorrentioService
     end
   end
 
-  # Search for content via Cinemeta (same as Stremio), filtered by relevance
+  # Search for content via Cinemeta, filtered by relevance
   def search(query)
     return ServiceResult.failure("Query cannot be blank") if query.blank?
 
     encoded = URI.encode_www_form_component(query)
     results = []
 
-    # Search both movies and series
     %w[movie series].each do |type|
       response = @cinemeta.get("catalog/#{type}/top/search=#{encoded}.json")
       next unless response.success? && response.body.is_a?(Hash)
@@ -40,25 +39,24 @@ class TorrentioService
     rescue Faraday::TimeoutError, Faraday::ConnectionFailed
     end
 
-    # Filter by relevance to the search query
     results = filter_by_relevance(results, query)
-
     ServiceResult.success(results)
   rescue StandardError => e
     Rails.logger.error("TorrentioService#search error: #{e.message}")
     ServiceResult.failure("Search failed")
   end
 
-  # Fetch streams from Torrentio for a specific content item
-  def streams(imdb_id, type, season: nil, episode: nil)
+  # Fetch streams from Torrentio, optionally filtered by content title
+  def streams(imdb_id, type, season: nil, episode: nil, title: nil)
     return ServiceResult.failure("IMDB ID is required") if imdb_id.blank?
 
     path = build_stream_path(imdb_id, type, season: season, episode: episode)
     response = @torrentio.get(path)
 
     if response.success? && response.body.is_a?(Hash) && response.body["streams"]
-      streams = parse_streams(response.body["streams"])
-      ServiceResult.success(streams)
+      parsed = parse_streams(response.body["streams"])
+      parsed = filter_streams_by_title(parsed, title) if title.present?
+      ServiceResult.success(parsed)
     elsif response.status == 404
       ServiceResult.success([])
     else
@@ -73,7 +71,7 @@ class TorrentioService
     ServiceResult.failure("An unexpected error occurred")
   end
 
-  # Fetch metadata from Cinemeta (same as Stremio)
+  # Fetch metadata from Cinemeta
   def metadata(imdb_id, type)
     return ServiceResult.failure("IMDB ID is required") if imdb_id.blank?
 
@@ -91,10 +89,11 @@ class TorrentioService
   end
 
   private
-  STOP_WORDS = %w[the a an of in on at to for is it and or but not with by from].freeze
+
+  STOP_WORDS = %w[the a an of in on at to for is it and or but not with by from]
 
   def filter_by_relevance(results, query)
-    query_words = query.downcase.split(/\s+/).map { |w| w.gsub(/[^a-z0-9]/, '') }.reject { |w| w.length < 2 }
+    query_words = query.downcase.split(/\s+/).map { |w| w.gsub(/[^a-z0-9]/, "") }.reject { |w| w.length < 2 }
     return results if query_words.empty?
 
     sig_words = query_words.reject { |w| STOP_WORDS.include?(w) }
@@ -116,7 +115,15 @@ class TorrentioService
           .map { |item, _, _| item }
   end
 
+  def filter_streams_by_title(streams, title)
+    title_words = title.downcase.split(/\s+/).map { |w| w.gsub(/[^a-z0-9]/, "") }.reject { |w| w.length < 3 || STOP_WORDS.include?(w) }
+    return streams if title_words.empty?
 
+    streams.select do |s|
+      stream_title = s[:title].to_s.downcase
+      title_words.any? { |w| stream_title.include?(w) }
+    end
+  end
 
   def build_stream_path(imdb_id, type, season: nil, episode: nil)
     if type.to_s.in?(%w[show series]) && season && episode

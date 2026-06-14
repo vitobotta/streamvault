@@ -4,6 +4,15 @@ RSpec.describe ContentStreamingService do
   let(:user) { create(:user, realdebrid_api_key: "test_key_123") }
   subject(:service) { described_class.new(user) }
 
+  let(:cinemeta_stub) {
+    stub_request(:get, "https://v3-cinemeta.strem.io/meta/movie/tt1375666.json")
+      .to_return(
+        status: 200,
+        body: { "meta" => { "id" => "tt1375666", "name" => "Inception" } }.to_json,
+        headers: { 'Content-Type' => 'application/json' }
+      )
+  }
+
   describe "#start_stream" do
     it "returns failure when RealDebrid key is missing" do
       user.update!(realdebrid_api_key: nil)
@@ -13,6 +22,8 @@ RSpec.describe ContentStreamingService do
     end
 
     it "returns failure when no streams available" do
+      cinemeta_stub
+
       stub_request(:get, %r{torrentio\.strem\.fun/stream/movie/tt1375666\.json})
         .to_return(status: 200, body: { "streams" => [] }.to_json, headers: { 'Content-Type' => 'application/json' })
 
@@ -22,7 +33,8 @@ RSpec.describe ContentStreamingService do
     end
 
     it "starts a stream successfully" do
-      # Stub Torrentio
+      cinemeta_stub
+
       stub_request(:get, %r{torrentio\.strem\.fun/stream/movie/tt1375666\.json})
         .to_return(
           status: 200,
@@ -34,7 +46,6 @@ RSpec.describe ContentStreamingService do
           headers: { 'Content-Type' => 'application/json' }
         )
 
-      # Stub RealDebrid addMagnet
       stub_request(:post, "https://api.real-debrid.com/rest/1.0/torrents/addMagnet")
         .to_return(
           status: 201,
@@ -42,7 +53,6 @@ RSpec.describe ContentStreamingService do
           headers: { 'Content-Type' => 'application/json' }
         )
 
-      # Cache check: torrent resolves immediately
       stub_request(:get, "https://api.real-debrid.com/rest/1.0/torrents/info/torrent123")
         .to_return(
           status: 200,
@@ -58,7 +68,6 @@ RSpec.describe ContentStreamingService do
 
   describe "#get_streaming_url" do
     it "returns streaming URL when torrent is downloaded" do
-      # Stub torrent info
       stub_request(:get, "https://api.real-debrid.com/rest/1.0/torrents/info/torrent123")
         .to_return(
           status: 200,
@@ -72,7 +81,6 @@ RSpec.describe ContentStreamingService do
           headers: { 'Content-Type' => 'application/json' }
         )
 
-      # Stub unrestrict
       stub_request(:post, "https://api.real-debrid.com/rest/1.0/unrestrict/link")
         .to_return(
           status: 200,
@@ -137,4 +145,4 @@ RSpec.describe ContentStreamingService do
       expect(result.data[:progress]).to eq(45)
     end
   end
- end
+end

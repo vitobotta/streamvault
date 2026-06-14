@@ -13,10 +13,11 @@ class ContentController < ApplicationController
     meta_result = torrentio.metadata(@imdb_id, @type)
     @metadata = meta_result.success? ? meta_result.data : nil
 
-    # Fetch streams
+    # Fetch streams, filtered by content title
     season = params[:season]&.to_i
     episode = params[:episode]&.to_i
-    streams_result = torrentio.streams(@imdb_id, @type, season: season, episode: episode)
+    content_title = @metadata&.dig(:title)
+    streams_result = torrentio.streams(@imdb_id, @type, season: season, episode: episode, title: content_title)
     @streams = streams_result.success? ? streams_result.data : []
 
     # Check library/wishlist status

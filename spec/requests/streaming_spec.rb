@@ -26,6 +26,13 @@ RSpec.describe "Streaming", type: :request do
       before { sign_in user }
 
       it "starts a stream and redirects to player page" do
+        stub_request(:get, "https://v3-cinemeta.strem.io/meta/movie/tt1375666.json")
+          .to_return(
+            status: 200,
+            body: { "meta" => { "id" => "tt1375666", "name" => "Inception", "year" => "2010" } }.to_json,
+            headers: { 'Content-Type' => 'application/json' }
+          )
+
         stub_request(:get, %r{torrentio\.strem\.fun/stream/movie/tt1375666\.json})
           .to_return(
             status: 200,
@@ -36,7 +43,6 @@ RSpec.describe "Streaming", type: :request do
         stub_request(:post, "https://api.real-debrid.com/rest/1.0/torrents/addMagnet")
           .to_return(status: 201, body: { "id" => "torrent123" }.to_json, headers: { 'Content-Type' => 'application/json' })
 
-        # Cache check: torrent resolves to downloaded immediately
         stub_request(:get, "https://api.real-debrid.com/rest/1.0/torrents/info/torrent123")
           .to_return(
             status: 200,
@@ -49,6 +55,7 @@ RSpec.describe "Streaming", type: :request do
       end
     end
   end
+
   describe "GET /streaming/:id" do
     before { sign_in user }
 

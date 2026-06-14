@@ -14,7 +14,11 @@ class ContentStreamingService
   def start_stream(imdb_id, type, season: nil, episode: nil)
     return ServiceResult.failure("RealDebrid API key not configured") unless @user.has_realdebrid_key?
 
-    streams_result = @torrentio.streams(imdb_id, type, season: season, episode: episode)
+    # Fetch metadata to get the content title for stream filtering
+    meta = @torrentio.metadata(imdb_id, type)
+    content_title = meta.success? ? meta.data[:title] : nil
+
+    streams_result = @torrentio.streams(imdb_id, type, season: season, episode: episode, title: content_title)
     return streams_result if streams_result.failure?
 
     streams = streams_result.data.select { |s| s[:info_hash].present? }
