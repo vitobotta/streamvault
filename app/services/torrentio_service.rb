@@ -109,8 +109,8 @@ class TorrentioService
       [item.merge(relevance: score), sig_matches]
     end
 
-    min_matches = [sig_words.length, 1].max
-    scored.select { |_, sig| sig >= min_matches }
+    # Require at least 1 significant word match; sort by score (more matches = higher)
+    scored.select { |_, sig| sig >= 1 }
           .sort_by { |item| -item[0][:relevance] }
           .map { |item, _| item }
   end
