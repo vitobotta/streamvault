@@ -51,14 +51,22 @@ class ContentStreamingService
     ServiceResult.failure("No instant streams available. Try a different quality or wait for downloads.")
   end
 
-  # Get the streaming URL — uses file_idx to select the correct episode file
+  # Get the streaming URL — uses file_idx to select the correct file
   def get_streaming_url(torrent_id, file_idx = nil)
     info = fetch_torrent_info(torrent_id)
     return info if info.is_a?(ServiceResult) && info.failure?
 
-    # Select files if they exist but none are selected
-    if info[:files].any? && info[:files].none? { |f| f[:selected] }
-      target_id = find_file_by_idx(info[:files], file_idx) || find_largest_file_id(info[:files])
+    # Always try to select the correct file based on file_idx
+    # RealDebrid allows re-selecting files even if some were already selected
+    if info[:files].any? && file_idx.present?
+      target_id = find_file_by_idx(info[:files], file_idx)
+      @rd.select_files(torrent_id, target_id) if target_id
+      # Re-fetch after selection to get updated links
+      info = fetch_torrent_info(torrent_id)
+      return info if info.is_a?(ServiceResult) && info.failure?
+    elsif info[:files].any? && info[:files].none? { |f| f[:selected] }
+      # No file_idx and nothing selected — pick the largest
+      target_id = find_largest_file_id(info[:files])
       @rd.select_files(torrent_id, target_id) if target_id
       info = fetch_torrent_info(torrent_id)
       return info if info.is_a?(ServiceResult) && info.failure?
@@ -97,11 +105,11 @@ class ContentStreamingService
       when "downloaded"
         return true
       when "waiting_files_selection"
-        target = find_largest_file_id(info[:files])
-        @rd.select_files(torrent_id, target) if target
-        # keep polling — next iteration will check if it resolved
+        # DON'T select files here — get_streaming_url will select the right one
+        # Just select all files to trigger download
+        all_file_ids = info[:files].map { |f| f[:id] }
+        @rd.select_files(torrent_id, all_file_ids) if all_file_ids.any?
       else
-        # downloading, queued, magnet_conversion, etc — keep polling
         next
       end
     end
