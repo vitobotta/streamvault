@@ -3,7 +3,8 @@
 
   <%= form_tag search_index_path, method: :get, class: "mb-8", data: { turbo_frame: "_top" } do %>
     <div class="flex gap-3">
-      <%= text_field_tag :q, params[:q], class: "input-field flex-1", placeholder: "Search for movies, TV shows..." %>
+      <%= text_field_tag :q, @query, class: "input-field flex-1", placeholder: "Search for movies, TV shows..." %>
+      <%= select_tag :per_page, options_for_select([["25 per page", 25], ["50 per page", 50], ["100 per page", 100], ["200 per page", 200]], @per_page), class: "input-field w-auto" %>
       <%= submit_tag "Search", class: "btn-primary cursor-pointer" %>
     </div>
   <% end %>
@@ -13,6 +14,14 @@
   <% end %>
 
   <% if @results.present? %>
+    <%# Results header %>
+    <div class="flex items-center justify-between mb-4">
+      <p class="text-sm text-sv-text-muted">
+        Showing <%= (@page - 1) * @per_page + 1 %>&ndash;<%= [@page * @per_page, @total].min %> of <%= @total %> results
+      </p>
+    </div>
+
+    <%# Results grid %>
     <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
       <% @results.each do |result| %>
         <div class="poster-card group">
@@ -32,7 +41,50 @@
         </div>
       <% end %>
     </div>
-  <% elsif params[:q].present? %>
-    <p class="text-sv-text-muted">No results found for "<%= params[:q] %>".</p>
+
+    <%# Pagination controls %>
+    <% if @total_pages > 1 %>
+      <nav class="flex items-center justify-center gap-2 mt-8" aria-label="Search pagination">
+        <%# Previous %>
+        <% if @page > 1 %>
+          <%= link_to search_index_path(q: @query, page: @page - 1, per_page: @per_page), class: "px-3 py-2 rounded-lg bg-sv-surface text-sv-text hover:bg-sv-surface-hover transition-colors text-sm" do %>
+            &larr; Previous
+          <% end %>
+        <% end %>
+
+        <%# Page numbers %>
+        <%
+          # Show first, last, and pages around current
+          visible_pages = []
+          visible_pages << 1 unless @total_pages <= 1
+          ([@page - 2, 2].max..[@page + 2, @total_pages - 1].min).each { |p| visible_pages << p }
+          visible_pages << @total_pages if @total_pages > 1
+          visible_pages = visible_pages.uniq.sort
+        %>
+
+        <% prev_page = 0 %>
+        <% visible_pages.each do |p| %>
+          <% if p - prev_page > 1 %>
+            <span class="px-2 text-sv-text-muted">&hellip;</span>
+          <% end %>
+          <% if p == @page %>
+            <span class="px-3 py-2 rounded-lg bg-sv-accent text-white text-sm font-medium"><%= p %></span>
+          <% else %>
+            <%= link_to p, search_index_path(q: @query, page: p, per_page: @per_page), class: "px-3 py-2 rounded-lg bg-sv-surface text-sv-text hover:bg-sv-surface-hover transition-colors text-sm" %>
+          <% end %>
+          <% prev_page = p %>
+        <% end %>
+
+        <%# Next %>
+        <% if @page < @total_pages %>
+          <%= link_to search_index_path(q: @query, page: @page + 1, per_page: @per_page), class: "px-3 py-2 rounded-lg bg-sv-surface text-sv-text hover:bg-sv-surface-hover transition-colors text-sm" do %>
+            Next &rarr;
+          <% end %>
+        <% end %>
+      </nav>
+    <% end %>
+
+  <% elsif @query.present? %>
+    <p class="text-sv-text-muted">No results found for "<%= @query %>".</p>
   <% end %>
 </div>
