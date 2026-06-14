@@ -42,6 +42,7 @@
           <% @streams.each do |stream| %>
             <div class="flex items-center justify-between p-3 bg-sv-surface rounded-lg">
               <div class="min-w-0 flex-1">
+                <% if stream[:rd_plus] %><span class="badge badge-success">RD+</span><% end %>
                 <span class="badge badge-accent"><%= stream[:quality] %></span>
                 <span class="text-sm text-white ml-2 truncate"><%= stream[:title] || stream[:name] %></span>
                 <span class="text-xs text-sv-text-muted ml-2"><%= stream[:size] %></span>
