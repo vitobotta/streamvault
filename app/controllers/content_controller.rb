@@ -50,10 +50,8 @@ class ContentController < ApplicationController
       @episode_title = ep&.dig(:title).to_s
     end
 
-    # Build combined title for filtering
-    filter_title = [@show_title, @episode_title].compact_blank.join(" ")
-
-    streams_result = torrentio.streams(@imdb_id, "show", season: @season, episode: @episode, title: filter_title)
+    # Filter by show title only -- episode names differ between Cinemeta and Torrentio
+    streams_result = torrentio.streams(@imdb_id, "show", season: @season, episode: @episode, title: @show_title)
     @streams = streams_result.success? ? streams_result.data : []
 
     render layout: false
