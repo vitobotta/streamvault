@@ -21,7 +21,6 @@ class TorrentioService
     end
   end
 
-  # Search for content via Cinemeta (same as Stremio)
   def search(query)
     return ServiceResult.failure("Query cannot be blank") if query.blank?
 
@@ -31,11 +30,7 @@ class TorrentioService
     %w[movie series].each do |type|
       response = @cinemeta.get("catalog/#{type}/top/search=#{encoded}.json")
       next unless response.success? && response.body.is_a?(Hash)
-
-      metas = response.body["metas"] || []
-      metas.each do |meta|
-        results << normalize_cinemeta(meta, type)
-      end
+      (response.body["metas"] || []).each { |meta| results << normalize_cinemeta(meta, type) }
     rescue Faraday::TimeoutError, Faraday::ConnectionFailed
     end
 
@@ -45,7 +40,6 @@ class TorrentioService
     ServiceResult.failure("Search failed")
   end
 
-  # Fetch streams from Torrentio, optionally filtered by content title
   def streams(imdb_id, type, season: nil, episode: nil, title: nil)
     return ServiceResult.failure("IMDB ID is required") if imdb_id.blank?
 
@@ -54,7 +48,7 @@ class TorrentioService
 
     if response.success? && response.body.is_a?(Hash) && response.body["streams"]
       parsed = parse_streams(response.body["streams"])
-      parsed = filter_streams_by_title(parsed, title) if title.present?
+      parsed = rd_plus_first(parsed) if title.present?
       ServiceResult.success(parsed)
     elsif response.status == 404
       ServiceResult.success([])
@@ -70,7 +64,6 @@ class TorrentioService
     ServiceResult.failure("An unexpected error occurred")
   end
 
-  # Fetch metadata from Cinemeta
   def metadata(imdb_id, type)
     return ServiceResult.failure("IMDB ID is required") if imdb_id.blank?
 
@@ -89,24 +82,10 @@ class TorrentioService
 
   private
 
-  STOP_WORDS = %w[the a an of in on at to for is it and or but not with by from]
-  COMPATIBLE_AUDIO = /aac|ac3|ddp?\b|eac3|opus|mp3/i
-  INCOMPATIBLE_AUDIO = /dts[-\s]?hd|dts[-\s]?ma|truehd|atmos|pcm|lpcm|flac/i
-  PACK_PATTERN = /top \d+|collection|filmography|movies?\s+\d|pack\b|complete series|bonanza|paczka|kolekcja|bundle|anthology|compilation|marvel\s+\d|dc\s+\d/i
-  QUALITY_RANK = { "4K" => 4, "1080p" => 3, "720p" => 2, "480p" => 1, "Unknown" => 0 }.freeze
-
-  def filter_streams_by_title(streams, _title)
-    # Sort: RD+ first, then seeders, compatible audio, quality
-    streams.sort_by do |s|
-      t = s[:title].to_s
-      rd_boost = s[:rd_plus] ? 1 : 0
-      audio_score = if t.match?(INCOMPATIBLE_AUDIO) then -10
-                    elsif t.match?(COMPATIBLE_AUDIO) then 1
-                    else 0
-                    end
-      quality_score = QUALITY_RANK[s[:quality]] || 0
-      [-rd_boost, -(s[:seeders] || 0), -audio_score, -quality_score]
-    end
+  def rd_plus_first(streams)
+    rd_plus = streams.select { |s| s[:rd_plus] }
+    others = streams.reject { |s| s[:rd_plus] }
+    rd_plus + others
   end
 
   def build_stream_path(imdb_id, type, season: nil, episode: nil)
