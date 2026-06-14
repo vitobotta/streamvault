@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 class ContentStreamingService
-  CACHE_CHECK_ATTEMPTS = 6
-  CACHE_CHECK_INTERVAL = 0.5
+  CACHE_CHECK_ATTEMPTS = 20
+  CACHE_CHECK_INTERVAL = 1
 
   def initialize(user)
     @user = user
@@ -60,12 +60,11 @@ class ContentStreamingService
     if info[:files].any? && info[:files].none? { |f| f[:selected] }
       target_id = find_file_by_idx(info[:files], file_idx) || find_largest_file_id(info[:files])
       @rd.select_files(torrent_id, target_id) if target_id
-      # Re-fetch after selection
       info = fetch_torrent_info(torrent_id)
       return info if info.is_a?(ServiceResult) && info.failure?
     end
 
-    # Get the link for the correct file (not just links.first)
+    # Get the link for the correct file
     link = find_link_for_file(info, file_idx)
     if link
       unrestrict_result = @rd.unrestrict_link(link)
@@ -100,13 +99,10 @@ class ContentStreamingService
       when "waiting_files_selection"
         target = find_largest_file_id(info[:files])
         @rd.select_files(torrent_id, target) if target
-        sleep CACHE_CHECK_INTERVAL
-        recheck = fetch_torrent_info(torrent_id)
-        return true if recheck.is_a?(Hash) && recheck[:status] == "downloaded"
-      when "magnet_conversion", "magnet_error"
-        next
+        # keep polling — next iteration will check if it resolved
       else
-        return false
+        # downloading, queued, magnet_conversion, etc — keep polling
+        next
       end
     end
     false
@@ -141,16 +137,13 @@ class ContentStreamingService
   end
 
   # Find the download link for the correct file
-  # RealDebrid returns links[] indexed to match files[]
   def find_link_for_file(info, file_idx)
     return info[:links]&.first if file_idx.nil?
 
     idx = file_idx.to_i
-    # Try direct index match first
     link = info[:links][idx]
     return link if link
 
-    # Fallback: first available link
     info[:links]&.first
   end
 end
