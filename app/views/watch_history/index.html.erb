@@ -1,0 +1,35 @@
+<div class="px-6 py-8">
+  <div class="flex items-center justify-between mb-6">
+    <h1 class="text-3xl font-bold text-white">Watch History</h1>
+    <% if @entries.any? %>
+      <%= button_to "Clear History", clear_all_watch_history_index_path, method: :delete, class: "btn-secondary text-sm", data: { turbo_confirm: "Clear all watch history?" } %>
+    <% end %>
+  </div>
+
+  <% if @entries.any? %>
+    <div class="space-y-2">
+      <% @entries.each do |entry| %>
+        <div class="flex items-center gap-4 p-3 bg-sv-surface rounded-lg">
+          <% if entry.poster_url %>
+            <img src="<%= entry.poster_url %>" alt="<%= entry.title %>" class="w-12 h-18 object-cover rounded">
+          <% end %>
+          <div class="flex-1 min-w-0">
+            <h3 class="text-sm font-medium text-white truncate"><%= entry.title %></h3>
+            <% if entry.episode? %>
+              <p class="text-xs text-sv-text-muted">S<%= entry.season_number.to_s.rjust(2, '0') %>E<%= entry.episode_number.to_s.rjust(2, '0') %> · <%= entry.show_title %></p>
+            <% end %>
+            <div class="mt-1 h-1 bg-sv-border rounded-full overflow-hidden">
+              <div class="h-full bg-sv-accent rounded-full" style="width: <%= entry.progress_percentage %>%"></div>
+            </div>
+          </div>
+          <span class="text-xs text-sv-text-muted"><%= time_ago_in_words(entry.watched_at) %> ago</span>
+        </div>
+      <% end %>
+    </div>
+  <% else %>
+    <div class="text-center py-16">
+      <svg class="w-16 h-16 text-sv-text-muted mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      <p class="text-sv-text-muted">No watch history yet.</p>
+    </div>
+  <% end %>
+</div>

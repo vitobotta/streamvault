@@ -1,0 +1,21 @@
+<div class="px-6 py-8">
+  <% if @metadata %>
+    <div class="flex items-center gap-4 mb-6">
+      <%= link_to content_path(type: "show", imdb_id: @show_imdb_id), class: "text-sv-text-muted hover:text-white" do %>
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+      <% end %>
+      <h1 class="text-2xl font-bold text-white"><%= @metadata[:title] %></h1>
+    </div>
+
+    <%# Season selector %>
+    <div class="flex gap-2 mb-6 overflow-x-auto">
+      <% (1..@total_seasons).each do |s| %>
+        <%= link_to "Season #{s}", episodes_path(show_imdb_id: @show_imdb_id, season: s), class: "px-3 py-1.5 rounded-full text-sm font-medium #{@season == s ? 'bg-sv-accent text-white' : 'bg-sv-surface text-sv-text-muted hover:text-white'}" %>
+      <% end %>
+    </div>
+
+    <p class="text-sv-text-muted">Episodes for Season <%= @season %> will appear here once you start watching.</p>
+  <% else %>
+    <p class="text-sv-text-muted">Show information not available.</p>
+  <% end %>
+</div>

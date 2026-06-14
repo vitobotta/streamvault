@@ -1,0 +1,44 @@
+<div class="px-6 py-8">
+  <% if @metadata %>
+    <div class="flex flex-col md:flex-row gap-8">
+      <% if @metadata[:poster_url] %>
+        <img src="<%= @metadata[:poster_url] %>" alt="<%= @metadata[:title] %>" class="w-48 rounded-lg shadow-lg">
+      <% end %>
+      <div>
+        <h1 class="text-3xl font-bold text-white"><%= @metadata[:title] %></h1>
+        <p class="text-sv-text-muted mt-1"><%= @metadata[:year] %> · <%= @metadata[:rated] %> · <%= @metadata[:genre] %></p>
+        <p class="text-sv-text mt-4"><%= @metadata[:plot] %></p>
+
+        <div class="flex gap-3 mt-6">
+          <% unless @in_library %>
+            <%= button_to "Add to Library", library_index_path, params: { library_entry: { content_type: @type, imdb_id: @imdb_id, title: @metadata[:title], poster_url: @metadata[:poster_url], year: @metadata[:year]&.to_i } }, class: "btn-primary" %>
+          <% end %>
+          <% unless @in_wishlist %>
+            <%= button_to "Add to Wishlist", wishlist_index_path, params: { wishlist_entry: { content_type: @type, imdb_id: @imdb_id, title: @metadata[:title], poster_url: @metadata[:poster_url], year: @metadata[:year]&.to_i } }, class: "btn-secondary" %>
+          <% end %>
+        </div>
+      </div>
+    </div>
+  <% end %>
+
+  <% if @streams.present? %>
+    <h2 class="text-xl font-bold text-white mt-8 mb-4">Available Streams</h2>
+    <div class="space-y-2">
+      <% @streams.each do |stream| %>
+        <div class="flex items-center justify-between p-3 bg-sv-surface rounded-lg">
+          <div>
+            <span class="badge badge-accent"><%= stream[:quality] %></span>
+            <span class="text-sm text-white ml-2"><%= stream[:name] || stream[:title] %></span>
+            <span class="text-xs text-sv-text-muted ml-2"><%= stream[:size] %></span>
+          </div>
+          <div class="flex items-center gap-4">
+            <span class="text-xs text-sv-text-muted">👤 <%= stream[:seeders] || 0 %></span>
+            <%= button_to "Watch", streaming_index_path, params: { imdb_id: @imdb_id, type: @type }, class: "btn-primary text-sm", data: { turbo: false } %>
+          </div>
+        </div>
+      <% end %>
+    </div>
+  <% elsif @metadata %>
+    <p class="text-sv-text-muted mt-8">No streams available.</p>
+  <% end %>
+</div>

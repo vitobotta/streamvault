@@ -1,0 +1,38 @@
+<div class="px-6 py-8">
+  <h1 class="text-3xl font-bold text-white mb-6">Search</h1>
+
+  <%= form_tag search_index_path, method: :get, class: "mb-8", data: { turbo_frame: "_top" } do %>
+    <div class="flex gap-3">
+      <%= text_field_tag :q, params[:q], class: "input-field flex-1", placeholder: "Search for movies, TV shows..." %>
+      <%= submit_tag "Search", class: "btn-primary cursor-pointer" %>
+    </div>
+  <% end %>
+
+  <% if @error.present? %>
+    <div class="flash-alert"><%= @error %></div>
+  <% end %>
+
+  <% if @results.present? %>
+    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+      <% @results.each do |result| %>
+        <div class="poster-card group">
+          <%= link_to content_path(type: result[:type], imdb_id: result[:imdb_id]) do %>
+            <% if result[:poster_url] %>
+              <img src="<%= result[:poster_url] %>" alt="<%= result[:title] %>" loading="lazy">
+            <% else %>
+              <div class="aspect-[2/3] bg-sv-surface flex items-center justify-center">
+                <svg class="w-12 h-12 text-sv-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>
+              </div>
+            <% end %>
+            <div class="p-3">
+              <h3 class="text-sm font-medium text-white truncate"><%= result[:title] %></h3>
+              <p class="text-xs text-sv-text-muted mt-0.5"><%= result[:year] %> · <%= result[:type].capitalize %></p>
+            </div>
+          <% end %>
+        </div>
+      <% end %>
+    </div>
+  <% elsif params[:q].present? %>
+    <p class="text-sv-text-muted">No results found for "<%= params[:q] %>".</p>
+  <% end %>
+</div>

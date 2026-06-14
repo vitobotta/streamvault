@@ -1,0 +1,207 @@
+@import "tailwindcss";
+
+/* StreamVault Dark Theme */
+@theme {
+  --color-sv-bg: oklch(0.13 0.01 270);
+  --color-sv-surface: oklch(0.17 0.012 270);
+  --color-sv-surface-hover: oklch(0.21 0.015 270);
+  --color-sv-border: oklch(0.25 0.015 270);
+  --color-sv-text: oklch(0.93 0.01 270);
+  --color-sv-text-muted: oklch(0.65 0.02 270);
+  --color-sv-accent: oklch(0.55 0.20 270);
+  --color-sv-accent-hover: oklch(0.60 0.22 270);
+  --color-sv-accent-muted: oklch(0.35 0.12 270);
+  --color-sv-success: oklch(0.65 0.18 155);
+  --color-sv-warning: oklch(0.75 0.15 80);
+  --color-sv-danger: oklch(0.60 0.20 25);
+}
+
+/* Base styles */
+html {
+  background-color: var(--color-sv-bg);
+  color-scheme: dark;
+}
+
+body {
+  background-color: var(--color-sv-bg);
+  color: var(--color-sv-text);
+  font-family: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+/* Sidebar */
+.sidebar {
+  background-color: var(--color-sv-surface);
+  border-right: 1px solid var(--color-sv-border);
+}
+
+.sidebar-link {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.625rem 1rem;
+  border-radius: 0.5rem;
+  color: var(--color-sv-text-muted);
+  transition: all 150ms ease;
+}
+
+.sidebar-link:hover {
+  background-color: var(--color-sv-surface-hover);
+  color: var(--color-sv-text);
+}
+
+.sidebar-link.active {
+  background-color: var(--color-sv-accent-muted);
+  color: var(--color-sv-accent);
+}
+
+/* Poster cards */
+.poster-card {
+  position: relative;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  transition: transform 200ms ease, box-shadow 200ms ease;
+  background-color: var(--color-sv-surface);
+}
+
+.poster-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 24px oklch(0 0 0 / 0.4);
+}
+
+.poster-card img {
+  width: 100%;
+  aspect-ratio: 2/3;
+  object-fit: cover;
+}
+
+/* Progress bar on cards */
+.card-progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background-color: var(--color-sv-surface);
+}
+
+.card-progress-bar {
+  height: 100%;
+  background-color: var(--color-sv-accent);
+  transition: width 300ms ease;
+}
+
+/* Buttons */
+.btn-primary {
+  background-color: var(--color-sv-accent);
+  color: white;
+  padding: 0.5rem 1.25rem;
+  border-radius: 0.5rem;
+  font-weight: 600;
+  transition: background-color 150ms ease;
+}
+
+.btn-primary:hover {
+  background-color: var(--color-sv-accent-hover);
+}
+
+.btn-secondary {
+  background-color: var(--color-sv-surface);
+  color: var(--color-sv-text);
+  padding: 0.5rem 1.25rem;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  border: 1px solid var(--color-sv-border);
+  transition: background-color 150ms ease;
+}
+
+.btn-secondary:hover {
+  background-color: var(--color-sv-surface-hover);
+}
+
+/* Form inputs */
+.input-field {
+  background-color: var(--color-sv-surface);
+  border: 1px solid var(--color-sv-border);
+  color: var(--color-sv-text);
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  width: 100%;
+  transition: border-color 150ms ease;
+}
+
+.input-field:focus {
+  outline: none;
+  border-color: var(--color-sv-accent);
+  box-shadow: 0 0 0 2px var(--color-sv-accent-muted);
+}
+
+.input-field::placeholder {
+  color: var(--color-sv-text-muted);
+}
+
+/* Badge */
+.badge {
+  display: inline-flex;
+  padding: 0.125rem 0.5rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.badge-accent {
+  background-color: var(--color-sv-accent-muted);
+  color: var(--color-sv-accent);
+}
+
+.badge-success {
+  background-color: oklch(0.30 0.08 155);
+  color: var(--color-sv-success);
+}
+
+.badge-warning {
+  background-color: oklch(0.30 0.08 80);
+  color: var(--color-sv-warning);
+}
+
+/* Flash messages */
+.flash-notice {
+  background-color: oklch(0.25 0.06 270);
+  border: 1px solid var(--color-sv-accent-muted);
+  color: var(--color-sv-accent);
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+}
+
+.flash-alert {
+  background-color: oklch(0.25 0.06 25);
+  border: 1px solid oklch(0.35 0.12 25);
+  color: var(--color-sv-danger);
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+}
+
+/* Video player container */
+.player-container {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background-color: black;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Skeleton loading */
+.skeleton {
+  background: linear-gradient(90deg, var(--color-sv-surface) 25%, var(--color-sv-surface-hover) 50%, var(--color-sv-surface) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+  border-radius: 0.5rem;
+}
+
+@keyframes skeleton-pulse {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}

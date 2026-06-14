@@ -1,0 +1,89 @@
+require 'rails_helper'
+
+RSpec.describe ProgressTrackingService do
+  let(:user) { create(:user) }
+
+  describe ".save_progress" do
+    it "creates a watch history entry for a movie" do
+      create(:library_entry, user: user, imdb_id: "tt1375666", title: "Inception")
+
+      result = described_class.save_progress(user, "tt1375666", 3600, 7200, type: "movie")
+      expect(result).to be_success
+      expect(user.watch_history_entries.count).to eq(1)
+      expect(user.watch_history_entries.first.progress_percentage).to eq(50)
+    end
+
+    it "creates episode progress for a show" do
+      create(:library_entry, user: user, imdb_id: "tt0903747", title: "Breaking Bad", content_type: :show)
+
+      result = described_class.save_progress(user, "tt0903747", 1200, 2400, type: "show", season: 1, episode: 1)
+      expect(result).to be_success
+      expect(user.episode_progresses.count).to eq(1)
+      expect(user.watch_history_entries.first.content_type).to eq("episode")
+    end
+
+    it "returns failure for invalid data" do
+      result = described_class.save_progress(user, "tt1375666", nil, nil, type: "movie")
+      expect(result).to be_failure
+    end
+  end
+
+  describe ".get_progress" do
+    it "returns latest watch history for a movie" do
+      create(:watch_history_entry, user: user, imdb_id: "tt1375666", progress_seconds: 3600)
+
+      result = described_class.get_progress(user, "tt1375666")
+      expect(result).to be_success
+      expect(result.data.progress_seconds).to eq(3600)
+    end
+
+    it "returns episode progress for a show" do
+      create(:episode_progress, user: user, show_imdb_id: "tt0903747", season_number: 1, episode_number: 1)
+
+      result = described_class.get_progress(user, "tt0903747", season: 1, episode: 1)
+      expect(result).to be_success
+      expect(result.data).to be_a(EpisodeProgress)
+    end
+  end
+
+  describe ".auto_advance" do
+    it "returns next episode when it exists" do
+      create(:episode_progress, user: user, show_imdb_id: "tt0903747", season_number: 1, episode_number: 1)
+      create(:episode_progress, user: user, show_imdb_id: "tt0903747", season_number: 1, episode_number: 2)
+
+      result = described_class.auto_advance(user, "tt0903747", 1, 1)
+      expect(result).to be_success
+      expect(result.data[:season]).to eq(1)
+      expect(result.data[:episode]).to eq(2)
+      expect(result.data[:exists]).to be true
+    end
+
+    it "returns next season when current season is done" do
+      create(:episode_progress, user: user, show_imdb_id: "tt0903747", season_number: 1, episode_number: 7)
+      create(:episode_progress, user: user, show_imdb_id: "tt0903747", season_number: 2, episode_number: 1)
+
+      result = described_class.auto_advance(user, "tt0903747", 1, 7)
+      expect(result).to be_success
+      expect(result.data[:season]).to eq(2)
+      expect(result.data[:episode]).to eq(1)
+    end
+
+    it "returns exists: false when no next episode" do
+      result = described_class.auto_advance(user, "tt0903747", 1, 1)
+      expect(result).to be_success
+      expect(result.data[:exists]).to be false
+    end
+  end
+
+  describe ".continue_watching" do
+    it "returns partially watched content" do
+      create(:watch_history_entry, user: user, imdb_id: "tt1375666", progress_percentage: 50, watched_at: 1.hour.ago)
+      create(:watch_history_entry, user: user, imdb_id: "tt0903747", progress_percentage: 95, watched_at: 2.hours.ago)
+
+      result = described_class.continue_watching(user)
+      expect(result).to be_success
+      expect(result.data.length).to eq(1)
+      expect(result.data.first[:imdb_id]).to eq("tt1375666")
+    end
+  end
+end

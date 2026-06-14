@@ -1,0 +1,38 @@
+<div class="px-6 py-8 max-w-2xl">
+  <h1 class="text-3xl font-bold text-white mb-8">Settings</h1>
+
+  <%= form_with model: @user, url: settings_path, method: :patch, class: "space-y-6" do |f| %>
+    <div class="bg-sv-surface rounded-xl p-6 border border-sv-border">
+      <h2 class="text-lg font-semibold text-white mb-4">Profile</h2>
+
+      <div class="mb-4">
+        <%= f.label :display_name, class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
+        <%= f.text_field :display_name, class: "input-field" %>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-sv-text-muted mb-1.5">Email</label>
+        <input type="email" value="<%= @user.email %>" class="input-field" disabled>
+      </div>
+    </div>
+
+    <div class="bg-sv-surface rounded-xl p-6 border border-sv-border">
+      <h2 class="text-lg font-semibold text-white mb-4">RealDebrid</h2>
+
+      <div class="mb-4">
+        <%= f.label :realdebrid_api_key, "API Key", class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
+        <%= f.password_field :realdebrid_api_key, class: "input-field", placeholder: "Enter your RealDebrid API key", value: "" %>
+        <p class="text-xs text-sv-text-muted mt-1">Get your API key from <a href="https://real-debrid.com/apitoken" target="_blank" class="text-sv-accent">real-debrid.com/apitoken</a></p>
+      </div>
+
+      <% if @user.has_realdebrid_key? %>
+        <div class="flex items-center gap-2 text-sv-success text-sm">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+          API key configured
+        </div>
+      <% end %>
+    </div>
+
+    <%= f.submit "Save Settings", class: "btn-primary cursor-pointer" %>
+  <% end %>
+</div>

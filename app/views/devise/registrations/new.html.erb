@@ -1,0 +1,43 @@
+<div class="min-h-screen flex items-center justify-center px-4">
+  <div class="w-full max-w-md">
+    <%# Logo %>
+    <div class="flex items-center justify-center gap-2 mb-8">
+      <svg class="w-10 h-10 text-sv-accent" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M8 5v14l11-7z"/>
+      </svg>
+      <span class="text-2xl font-bold text-white tracking-tight">StreamVault</span>
+    </div>
+
+    <div class="bg-sv-surface rounded-xl p-8 border border-sv-border">
+      <h2 class="text-2xl font-bold text-white mb-6 text-center">Create account</h2>
+
+      <%= form_for(resource, as: resource_name, url: registration_path(resource_name)) do |f| %>
+        <%= render "devise/shared/error_messages", resource: resource %>
+
+        <div class="mb-4">
+          <%= f.label :email, class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
+          <%= f.email_field :email, autofocus: true, autocomplete: "email", class: "input-field", placeholder: "you@example.com" %>
+        </div>
+
+        <div class="mb-4">
+          <%= f.label :password, class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
+          <% if @minimum_password_length %>
+            <p class="text-xs text-sv-text-muted mb-1.5"><%= @minimum_password_length %> characters minimum</p>
+          <% end %>
+          <%= f.password_field :password, autocomplete: "new-password", class: "input-field", placeholder: "••••••••" %>
+        </div>
+
+        <div class="mb-6">
+          <%= f.label :password_confirmation, class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
+          <%= f.password_field :password_confirmation, autocomplete: "new-password", class: "input-field", placeholder: "••••••••" %>
+        </div>
+
+        <%= f.submit "Create account", class: "btn-primary w-full text-center cursor-pointer" %>
+      <% end %>
+    </div>
+
+    <div class="mt-4 text-center">
+      <%= render "devise/shared/links" %>
+    </div>
+  </div>
+</div>
