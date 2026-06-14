@@ -95,27 +95,9 @@ class TorrentioService
   PACK_PATTERN = /top \d+|collection|filmography|movies?\s+\d|pack\b|complete series|bonanza|paczka|kolekcja|bundle|anthology|compilation|marvel\s+\d|dc\s+\d/i
   QUALITY_RANK = { "4K" => 4, "1080p" => 3, "720p" => 2, "480p" => 1, "Unknown" => 0 }.freeze
 
-  def filter_streams_by_title(streams, title)
-    title_words = title.to_s.downcase.split(/\s+/).map { |w| w.gsub(/[^a-z0-9]/, "") }.reject { |w| w.length < 3 || STOP_WORDS.include?(w) }
-
-    # Use first line of stream title for all checks (rest is Torrentio metadata)
-    streams_with_first = streams.map { |s| [s, s[:title].to_s.split("\n").first.to_s] }
-
-    # Step 1: filter by title relevance
-    relevant = if title_words.empty?
-      streams_with_first
-    else
-      streams_with_first.select do |_s, first|
-        fl = first.downcase
-        title_words.any? { |w| fl.include?(w) }
-      end
-    end
-
-    # Step 2: remove packs/collections
-    relevant = relevant.reject { |_s, first| first.match?(PACK_PATTERN) }
-
-    # Step 3: sort by seeders (primary), compatible audio (secondary), quality (tertiary)
-    relevant.map(&:first).sort_by do |s|
+  def filter_streams_by_title(streams, _title)
+    # Sort only: seeders (primary), compatible audio (secondary), quality (tertiary)
+    streams.sort_by do |s|
       t = s[:title].to_s
       audio_score = if t.match?(INCOMPATIBLE_AUDIO) then -10
                     elsif t.match?(COMPATIBLE_AUDIO) then 1

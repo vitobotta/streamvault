@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 class ContentStreamingService
-  CACHE_CHECK_ATTEMPTS = 20
+  CACHE_CHECK_ATTEMPTS = 15
   CACHE_CHECK_INTERVAL = 1
 
   def initialize(user)
@@ -10,7 +10,6 @@ class ContentStreamingService
     @rd = RealDebridService.new(user.realdebrid_api_key)
   end
 
-  # Start a stream — only returns torrents that are cached on RealDebrid
   def start_stream(imdb_id, type, season: nil, episode: nil)
     return ServiceResult.failure("RealDebrid API key not configured") unless @user.has_realdebrid_key?
 
@@ -32,7 +31,7 @@ class ContentStreamingService
 
       if add_result.success?
         torrent_id = add_result.data[:id]
-        cached = wait_for_cache(torrent_id)
+        cached = wait_for_cache(torrent_id, stream[:file_idx])
         if cached
           return ServiceResult.success({
             torrent_id: torrent_id,
@@ -51,29 +50,23 @@ class ContentStreamingService
     ServiceResult.failure("No instant streams available. Try a different quality or wait for downloads.")
   end
 
-  # Get the streaming URL — uses file_idx to select the correct file
   def get_streaming_url(torrent_id, file_idx = nil)
     info = fetch_torrent_info(torrent_id)
     return info if info.is_a?(ServiceResult) && info.failure?
 
-    # Always try to select the correct file based on file_idx
-    # RealDebrid allows re-selecting files even if some were already selected
-    if info[:files].any? && file_idx.present?
-      target_id = find_file_by_idx(info[:files], file_idx)
-      @rd.select_files(torrent_id, target_id) if target_id
-      # Re-fetch after selection to get updated links
-      info = fetch_torrent_info(torrent_id)
-      return info if info.is_a?(ServiceResult) && info.failure?
-    elsif info[:files].any? && info[:files].none? { |f| f[:selected] }
-      # No file_idx and nothing selected — pick the largest
-      target_id = find_largest_file_id(info[:files])
-      @rd.select_files(torrent_id, target_id) if target_id
+    # Select files if nothing is selected (shouldn't happen if wait_for_cache worked)
+    if info[:files].any? && info[:files].none? { |f| f[:selected] }
+      target = if file_idx.present?
+        info[:files][file_idx.to_i]&.dig(:id)
+      end
+      target ||= info[:files].max_by { |f| f[:bytes] || 0 }&.dig(:id)
+      @rd.select_files(torrent_id, target) if target
+      sleep 1
       info = fetch_torrent_info(torrent_id)
       return info if info.is_a?(ServiceResult) && info.failure?
     end
 
-    # Get the link for the correct file
-    link = find_link_for_file(info, file_idx)
+    link = info[:links]&.first
     if link
       unrestrict_result = @rd.unrestrict_link(link)
       if unrestrict_result.success?
@@ -95,22 +88,25 @@ class ContentStreamingService
 
   private
 
-  def wait_for_cache(torrent_id)
+  # Select the specific episode file and wait for "downloaded"
+  def wait_for_cache(torrent_id, file_idx = nil)
+    file_selected = false
     CACHE_CHECK_ATTEMPTS.times do
       sleep CACHE_CHECK_INTERVAL
       info = fetch_torrent_info(torrent_id)
       next unless info.is_a?(Hash)
+      return true if info[:status] == "downloaded"
 
-      case info[:status]
-      when "downloaded"
-        return true
-      when "waiting_files_selection"
-        # DON'T select files here — get_streaming_url will select the right one
-        # Just select all files to trigger download
-        all_file_ids = info[:files].map { |f| f[:id] }
-        @rd.select_files(torrent_id, all_file_ids) if all_file_ids.any?
-      else
-        next
+      if info[:status] == "waiting_files_selection" && info[:files].any? && !file_selected
+        # Select the specific episode file (via file_idx), or largest as fallback
+        target = if file_idx.present?
+          info[:files][file_idx.to_i]&.dig(:id)
+        end
+        target ||= info[:files].max_by { |f| f[:bytes] || 0 }&.dig(:id)
+        if target
+          @rd.select_files(torrent_id, target)
+          file_selected = true
+        end
       end
     end
     false
@@ -122,36 +118,12 @@ class ContentStreamingService
     end
     conn.delete("torrents/delete/#{torrent_id}")
   rescue StandardError
-    # ignore cleanup errors
+    # ignore
   end
 
   def fetch_torrent_info(torrent_id)
     result = @rd.torrent_info(torrent_id)
     return result if result.failure?
     result.data
-  end
-
-  # Map Torrentio's file_idx (0-based) to RealDebrid's file ID
-  def find_file_by_idx(files, file_idx)
-    return nil if file_idx.nil?
-    idx = file_idx.to_i
-    file = files[idx]
-    file&.dig(:id)
-  end
-
-  def find_largest_file_id(files)
-    largest = files.max_by { |f| f[:bytes] || 0 }
-    largest&.dig(:id)
-  end
-
-  # Find the download link for the correct file
-  def find_link_for_file(info, file_idx)
-    return info[:links]&.first if file_idx.nil?
-
-    idx = file_idx.to_i
-    link = info[:links][idx]
-    return link if link
-
-    info[:links]&.first
   end
 end
