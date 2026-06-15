@@ -4,7 +4,7 @@ class StreamingController < ApplicationController
   before_action :authenticate_user!
   before_action :verify_realdebrid_key!, except: [:progress]
 
-  # POST /streaming — add magnet, redirect to player
+  # POST /streaming — start stream, redirect to player page
   def create
     service = ContentStreamingService.new(current_user)
     result = service.start_stream(
@@ -16,13 +16,13 @@ class StreamingController < ApplicationController
 
     if result.success?
       redirect_to streaming_path(
-        result.data[:torrent_id],
+        "play",
+        resolve_url: result.data[:resolve_url],
         imdb_id: params[:imdb_id],
         type: params[:type],
         season: params[:season],
         episode: params[:episode],
-        title: params[:title],
-        file_idx: result.data[:file_idx]
+        title: params[:title]
       )
     else
       redirect_back fallback_location: root_path, alert: result.error_message
@@ -31,24 +31,47 @@ class StreamingController < ApplicationController
 
   # GET /streaming/:id — player page
   def show
-    @torrent_id = params[:id]
+    @resolve_url = params[:resolve_url]
     @imdb_id = params[:imdb_id]
     @type = params[:type]
     @season = params[:season]
     @episode = params[:episode]
     @title = params[:title] || "Now Playing"
-    @file_idx = params[:file_idx]
   end
 
-  # GET /streaming/:id/url — JSON endpoint for polling
+  # GET /streaming/:id/url — resolve the actual streaming URL
   def url
-    service = ContentStreamingService.new(current_user)
-    result = service.get_streaming_url(params[:id], params[:file_idx])
+    resolve_url = params[:resolve_url]
+    if resolve_url.blank?
+      render json: { error: "Missing resolve URL" }, status: :bad_request
+      return
+    end
 
-    if result.success?
-      render json: result.data
-    else
-      render json: { error: result.error_message }, status: :unprocessable_entity
+    conn = Faraday.new do |f|
+      f.adapter Faraday.default_adapter
+      f.options.timeout = 15
+      f.options.open_timeout = 5
+    end
+
+    begin
+      response = conn.get(resolve_url) do |req|
+        req.options.on_data = Proc.new { } # discard body
+      end
+
+      if [301, 302, 303, 307, 308].include?(response.status)
+        location = response.headers["location"]
+        if location&.include?("downloading")
+          render json: { status: "downloading", progress: 0 }
+        else
+          render json: { status: "ready", streaming_url: location, filename: location&.split("/")&.last }
+        end
+      elsif response.status == 200
+        render json: { status: "ready", streaming_url: resolve_url }
+      else
+        render json: { status: "waiting", progress: 0 }
+      end
+    rescue Faraday::TimeoutError, Faraday::ConnectionFailed
+      render json: { status: "waiting", progress: 0 }
     end
   end
 

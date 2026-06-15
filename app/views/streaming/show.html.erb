@@ -2,7 +2,7 @@
 <noscript><meta http-equiv="refresh" content="5"></noscript>
 
 <div class="player-container" data-controller="video-player"
-     data-video-player-url-value="<%= url_streaming_path(@torrent_id, file_idx: @file_idx) %>"
+     data-video-player-url-value="<%= url_streaming_path('play', resolve_url: @resolve_url) %>"
      data-video-player-imdb-id-value="<%= @imdb_id %>"
      data-video-player-type-value="<%= @type %>"
      data-video-player-season-value="<%= @season %>"

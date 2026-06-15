@@ -124,7 +124,8 @@ class TorrentioService
         size: size_bytes ? format_size(size_bytes) : "Unknown",
         raw_size: size_bytes || 0,
         rd_plus: s["sources"].is_a?(Array) && s["sources"].any?,
-        filename: s.dig("behaviorHints", "filename")
+        filename: s.dig("behaviorHints", "filename"),
+        resolve_url: s["url"]
       }
     end
   end
