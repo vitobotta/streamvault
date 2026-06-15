@@ -3,6 +3,7 @@
 class TorrentioService
   TORRENTIO_URL = ENV.fetch("TORRENTIO_API_BASE_URL", "https://torrentio.strem.fun")
   CINEMETA_URL = "https://v3-cinemeta.strem.io"
+  QUALITY_SORT = { "4K" => 0, "1080p" => 1, "720p" => 2, "480p" => 3, "Unknown" => 4 }.freeze
 
   def initialize
     @torrentio = Faraday.new(url: TORRENTIO_URL) do |f|
@@ -82,25 +83,14 @@ class TorrentioService
 
   private
 
-  STOP_WORDS = %w[the a an of in on at to for is it and or but not with by from]
-
-  def sort_streams(streams, title)
-    title_words = if title.present?
-      title.to_s.downcase.split(/\s+/).map { |w| w.gsub(/[^a-z0-9]/, "") }.reject { |w| w.length < 3 || STOP_WORDS.include?(w) }
-    else
-      []
+  # Stremio sorting with debrid: RD+ first, quality descending, size descending
+  def sort_streams(streams, _title)
+    streams.sort_by do |s|
+      rd_score = s[:rd_plus] ? 0 : 1
+      quality_score = QUALITY_SORT[s[:quality]] || 4
+      size_bytes = s[:raw_size].is_a?(Numeric) ? s[:raw_size] : 0
+      [rd_score, quality_score, -size_bytes]
     end
-
-    scored = streams.map do |s|
-      # Use filename from behaviorHints for matching (cleaner than title which has metadata appended)
-      match_target = s[:filename].to_s.downcase
-      word_score = title_words.count { |w| match_target.include?(w) }
-      rd_score = s[:rd_plus] ? 100 : 0
-      [s, rd_score + word_score]
-    end
-
-    # Sort by score descending, stable within same score
-    scored.sort_by.with_index { |item, i| [-item[1], i] }.map { |s, _| s }
   end
 
   def build_stream_path(imdb_id, type, season: nil, episode: nil)
@@ -113,6 +103,8 @@ class TorrentioService
 
   def parse_streams(raw_streams)
     raw_streams.map do |s|
+      title_text = s["title"].to_s
+      size_bytes = parse_size_bytes(title_text)
       {
         title: s["title"],
         info_hash: s["infoHash"],
@@ -120,11 +112,22 @@ class TorrentioService
         name: s["name"],
         quality: extract_quality(s["title"] || s["name"]),
         seeders: extract_seeders(s),
-        size: s["size"] ? format_size(s["size"]) : "Unknown",
-        raw_size: s["size"],
+        size: size_bytes ? format_size(size_bytes) : "Unknown",
+        raw_size: size_bytes || 0,
         rd_plus: s["sources"].is_a?(Array) && s["sources"].any?,
         filename: s.dig("behaviorHints", "filename")
       }
+    end
+  end
+
+  def parse_size_bytes(title)
+    match = title.match(/💾\s*([\d.]+)\s*(GB|MB|KB)/i)
+    return nil unless match
+    value = match[1].to_f
+    case match[2].upcase
+    when "GB" then (value * 1_073_741_824).to_i
+    when "MB" then (value * 1_048_576).to_i
+    when "KB" then (value * 1024).to_i
     end
   end
 
