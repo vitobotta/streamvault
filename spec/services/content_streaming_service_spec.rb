@@ -24,7 +24,7 @@ RSpec.describe ContentStreamingService do
     it "returns failure when no streams available" do
       cinemeta_stub
 
-      stub_request(:get, %r{torrentio\.strem\.fun/stream/movie/tt1375666\.json})
+      stub_request(:get, %r{torrentio\.strem\.fun/([A-Za-z0-9_]*/)?stream/movie/tt1375666\.json})
         .to_return(status: 200, body: { "streams" => [] }.to_json, headers: { 'Content-Type' => 'application/json' })
 
       result = service.start_stream("tt1375666", "movie")
@@ -35,7 +35,7 @@ RSpec.describe ContentStreamingService do
     it "starts a stream successfully" do
       cinemeta_stub
 
-      stub_request(:get, %r{torrentio\.strem\.fun/stream/movie/tt1375666\.json})
+      stub_request(:get, %r{torrentio\.strem\.fun/([A-Za-z0-9_]*/)?stream/movie/tt1375666\.json})
         .to_return(
           status: 200,
           body: {

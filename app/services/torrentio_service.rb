@@ -5,7 +5,9 @@ class TorrentioService
   CINEMETA_URL = "https://v3-cinemeta.strem.io"
   QUALITY_SORT = { "4K" => 0, "1080p" => 1, "720p" => 2, "480p" => 3, "Unknown" => 4 }.freeze
 
-  def initialize
+  def initialize(rd_api_key: nil)
+    @rd_api_key = rd_api_key
+
     @torrentio = Faraday.new(url: TORRENTIO_URL) do |f|
       f.request :json
       f.response :json
@@ -49,7 +51,7 @@ class TorrentioService
 
     if response.success? && response.body.is_a?(Hash) && response.body["streams"]
       parsed = parse_streams(response.body["streams"])
-      parsed = sort_streams(parsed, title)
+      parsed = sort_streams(parsed)
       ServiceResult.success(parsed)
     elsif response.status == 404
       ServiceResult.success([])
@@ -84,7 +86,7 @@ class TorrentioService
   private
 
   # Stremio sorting with debrid: RD+ first, quality descending, size descending
-  def sort_streams(streams, _title)
+  def sort_streams(streams)
     streams.sort_by do |s|
       rd_score = s[:rd_plus] ? 0 : 1
       quality_score = QUALITY_SORT[s[:quality]] || 4
@@ -93,11 +95,21 @@ class TorrentioService
     end
   end
 
+  # Build Torrentio URL with RD key — same as Stremio does
+  # Format: torrentio.strem.fun/{rd_key}/stream/{type}/{imdb_id}.json
+  # Torrentio uses the RD key to check instant availability and
+  # marks cached streams with 'sources' field (RD+)
   def build_stream_path(imdb_id, type, season: nil, episode: nil)
-    if type.to_s.in?(%w[show series]) && season && episode
-      "/stream/series/#{imdb_id}:#{season}:#{episode}.json"
+    base = if @rd_api_key.present?
+      "/#{@rd_api_key}"
     else
-      "/stream/movie/#{imdb_id}.json"
+      ""
+    end
+
+    if type.to_s.in?(%w[show series]) && season && episode
+      "#{base}/stream/series/#{imdb_id}:#{season}:#{episode}.json"
+    else
+      "#{base}/stream/movie/#{imdb_id}.json"
     end
   end
 

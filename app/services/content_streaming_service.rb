@@ -6,7 +6,7 @@ class ContentStreamingService
 
   def initialize(user)
     @user = user
-    @torrentio = TorrentioService.new
+    @torrentio = TorrentioService.new(rd_api_key: user.realdebrid_api_key)
     @rd = RealDebridService.new(user.realdebrid_api_key)
   end
 
@@ -22,7 +22,7 @@ class ContentStreamingService
     streams = streams_result.data.select { |s| s[:info_hash].present? }
     return ServiceResult.failure("No streams available for this content") if streams.empty?
 
-    sorted = streams.sort_by { |s| -(s[:seeders] || 0) }.first(15)
+    sorted = streams.first(15)
 
     sorted.each_with_index do |stream, i|
       sleep 0.3 if i > 0

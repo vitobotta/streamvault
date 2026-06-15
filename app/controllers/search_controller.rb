@@ -9,7 +9,7 @@ class SearchController < ApplicationController
     @per_page = (params[:per_page] || 25).to_i.clamp(1, 200)
 
     if @query.present?
-      torrentio = TorrentioService.new
+      torrentio = TorrentioService.new(rd_api_key: current_user&.realdebrid_api_key)
       result = torrentio.search(@query)
       all_results = result.success? ? result.data : []
       @error = result.failure? ? result.error_message : nil

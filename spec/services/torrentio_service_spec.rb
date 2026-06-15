@@ -51,7 +51,7 @@ RSpec.describe TorrentioService do
     end
 
     it "returns streams for a movie" do
-      stub_request(:get, %r{torrentio\.strem\.fun/stream/movie/tt1375666\.json})
+      stub_request(:get, %r{torrentio\.strem\.fun/([A-Za-z0-9_]*/)?stream/movie/tt1375666\.json})
         .to_return(
           status: 200,
           body: {
@@ -70,7 +70,7 @@ RSpec.describe TorrentioService do
     end
 
     it "returns streams for a series episode" do
-      stub_request(:get, %r{torrentio\.strem\.fun/stream/series/tt0903747:1:1\.json})
+      stub_request(:get, %r{torrentio\.strem\.fun/([A-Za-z0-9_]*/)?stream/series/tt0903747:1:1\.json})
         .to_return(
           status: 200,
           body: {
@@ -87,7 +87,7 @@ RSpec.describe TorrentioService do
     end
 
     it "returns empty array for 404" do
-      stub_request(:get, %r{torrentio\.strem\.fun/stream/movie/tt9999999\.json})
+      stub_request(:get, %r{torrentio\.strem\.fun/([A-Za-z0-9_]*/)?stream/movie/tt9999999\.json})
         .to_return(status: 404, body: "Not Found")
 
       result = service.streams("tt9999999", "movie")

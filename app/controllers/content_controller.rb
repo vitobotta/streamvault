@@ -7,7 +7,7 @@ class ContentController < ApplicationController
     @imdb_id = params[:imdb_id]
     @type = params[:type]
 
-    torrentio = TorrentioService.new
+    torrentio = TorrentioService.new(rd_api_key: current_user&.realdebrid_api_key)
 
     # Fetch metadata (includes episodes for shows via Cinemeta)
     meta_result = torrentio.metadata(@imdb_id, @type)
@@ -39,7 +39,7 @@ class ContentController < ApplicationController
     @season = params[:season]&.to_i
     @episode = params[:episode]&.to_i
 
-    torrentio = TorrentioService.new
+    torrentio = TorrentioService.new(rd_api_key: current_user&.realdebrid_api_key)
 
     # Get show title and episode title for stream filtering
     meta = torrentio.metadata(@imdb_id, @type)
