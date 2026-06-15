@@ -95,22 +95,19 @@ class TorrentioService
     end
   end
 
-  # Build Torrentio URL with RD key — same as Stremio does
-  # Format: torrentio.strem.fun/{rd_key}/stream/{type}/{imdb_id}.json
-  # Torrentio uses the RD key to check instant availability and
-  # marks cached streams with 'sources' field (RD+)
+  # Build Torrentio URL — same format as Stremio
+  # With RD key: torrentio.strem.fun/realdebrid={key}/stream/...
+  # Without:     torrentio.strem.fun/stream/...
   def build_stream_path(imdb_id, type, season: nil, episode: nil)
-    base = if @rd_api_key.present?
-      "/#{@rd_api_key}"
+    base = @rd_api_key.present? ? "/realdebrid=#{@rd_api_key}" : ""
+
+    episode_path = if type.to_s.in?(%w[show series]) && season && episode
+      "series/#{imdb_id}:#{season}:#{episode}"
     else
-      ""
+      "movie/#{imdb_id}"
     end
 
-    if type.to_s.in?(%w[show series]) && season && episode
-      "#{base}/stream/series/#{imdb_id}:#{season}:#{episode}.json"
-    else
-      "#{base}/stream/movie/#{imdb_id}.json"
-    end
+    "#{base}/stream/#{episode_path}.json"
   end
 
   def parse_streams(raw_streams)

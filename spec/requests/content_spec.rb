@@ -22,7 +22,7 @@ RSpec.describe "Content", type: :request do
             headers: { 'Content-Type' => 'application/json' }
           )
 
-        stub_request(:get, %r{torrentio\.strem\.fun/([A-Za-z0-9_]*/)?stream/movie/tt1375666\.json})
+        stub_request(:get, %r{torrentio\.strem\.fun/([^/]+/)?stream/movie/tt1375666\.json})
           .to_return(status: 200, body: { "streams" => [] }.to_json, headers: { 'Content-Type' => 'application/json' })
 
         get content_path(type: "movie", imdb_id: "tt1375666")

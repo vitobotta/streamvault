@@ -33,7 +33,7 @@ RSpec.describe "Streaming", type: :request do
             headers: { 'Content-Type' => 'application/json' }
           )
 
-        stub_request(:get, %r{torrentio\.strem\.fun/([A-Za-z0-9_]*/)?stream/movie/tt1375666\.json})
+        stub_request(:get, %r{torrentio\.strem\.fun/([^/]+/)?stream/movie/tt1375666\.json})
           .to_return(
             status: 200,
             body: { "streams" => [{ "title" => "Inception 1080p", "infoHash" => "abc123", "fileIdx" => 0, "seeders" => 100 }] }.to_json,
