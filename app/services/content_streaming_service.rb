@@ -2,6 +2,7 @@
 
 class ContentStreamingService
   MAX_STREAM_ATTEMPTS = 10
+  BLOCKED_PATTERNS = /downloading|infringing|failed.infringement|removed|blocked/i
 
   def initialize(user)
     @user = user
@@ -50,12 +51,14 @@ class ContentStreamingService
 
     location = response.headers["location"]
     return nil if location.blank?
-    return nil if location.include?("downloading")
-    return nil if location.include?("infringing")
+    return nil if location.match?(BLOCKED_PATTERNS)
+
+    filename = location.split("/").last.to_s
+    return nil if filename.match?(BLOCKED_PATTERNS)
 
     {
       streaming_url: location,
-      filename: location.split("/").last
+      filename: filename
     }
   rescue Faraday::TimeoutError, Faraday::ConnectionFailed
     nil

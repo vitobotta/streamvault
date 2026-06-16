@@ -102,5 +102,31 @@ RSpec.describe ContentStreamingService do
       expect(result).to be_failure
       expect(result.error_message).to include("blocked")
     end
+
+it "skips streams with failed_infringement filenames" do
+  cinemeta_stub
+
+  stub_request(:get, %r{torrentio\.strem\.fun/([^/]+/)?stream/movie/tt1375666\.json})
+    .to_return(
+      status: 200,
+      body: {
+        "streams" => [
+          { "title" => "Inception 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/inf/null/0/Inception.mkv", "behaviorHints" => { "filename" => "Inception.mkv" } },
+          { "title" => "Inception 720p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/ok/null/0/Inception720.mkv", "behaviorHints" => { "filename" => "Inception720.mkv" } }
+        ]
+      }.to_json,
+      headers: { "Content-Type" => "application/json" }
+    )
+
+  stub_request(:get, "https://torrentio.strem.fun/resolve/realdebrid/test_key/inf/null/0/Inception.mkv")
+    .to_return(status: 302, headers: { "Location" => "https://download.real-debrid.com/d/abc/failed_infringement_003.mp4" })
+
+  stub_request(:get, "https://torrentio.strem.fun/resolve/realdebrid/test_key/ok/null/0/Inception720.mkv")
+    .to_return(status: 302, headers: { "Location" => "https://download.real-debrid.com/d/def/Inception720.mkv" })
+
+  result = service.start_stream("tt1375666", "movie")
+  expect(result).to be_success
+  expect(result.data[:streaming_url]).to eq("https://download.real-debrid.com/d/def/Inception720.mkv")
+end
   end
 end
