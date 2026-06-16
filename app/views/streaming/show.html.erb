@@ -27,9 +27,9 @@
     </div>
   </div>
 
-  <%# Native video — starts immediately without waiting for JS %>
+  <%# Video — no autoplay/controls; Plyr takes over after init %>
   <video data-video-player-target="video" id="stream-player"
-         playsinline autoplay controls
+         playsinline
          preload="auto"
          src="<%= @streaming_url %>"
          class="w-full h-full">

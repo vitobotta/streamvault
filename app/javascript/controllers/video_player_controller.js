@@ -17,22 +17,24 @@ export default class extends Controller {
     this.showOverlayUi()
     this.element.addEventListener("mousemove", this.mouseMoveHandler)
 
-    // Resume from last position
-    const resumeAt = parseInt(this.resumeAtValue) || 0
-    if (resumeAt > 0) {
-      this.videoTarget.currentTime = resumeAt
-    }
-
-    // Init Plyr as enhancement — video already plays natively
-    requestAnimationFrame(() => {
-      this.player = new Plyr(this.videoTarget, {
-        controls: ['play-large', 'play', 'progress', 'current-time', 'duration', 'mute', 'volume', 'captions', 'settings', 'pip', 'airplay', 'fullscreen'],
-        settings: ['captions', 'quality', 'speed'],
-        keyboard: { focused: true, global: true }
-      })
-
-      this.player.on("ended", () => this.onVideoEnded())
+    // Init Plyr first, then play
+    this.player = new Plyr(this.videoTarget, {
+      controls: ['play-large', 'play', 'progress', 'current-time', 'duration', 'mute', 'volume', 'captions', 'settings', 'pip', 'airplay', 'fullscreen'],
+      settings: ['captions', 'quality', 'speed'],
+      keyboard: { focused: true, global: true },
+      autoplay: true
     })
+
+    this.player.on("ready", () => {
+      // Resume from last position
+      const resumeAt = parseInt(this.resumeAtValue) || 0
+      if (resumeAt > 0) {
+        this.player.currentTime = resumeAt
+      }
+      this.player.play()
+    })
+
+    this.player.on("ended", () => this.onVideoEnded())
 
     this.startProgressTracking()
 
@@ -91,8 +93,7 @@ export default class extends Controller {
 
   startProgressTracking() {
     this.progressInterval = setInterval(() => {
-      const video = this.player || this.videoTarget
-      if (video && !video.paused) this.saveProgress()
+      if (this.player && !this.player.paused) this.saveProgress()
     }, 5000)
   }
 
@@ -104,12 +105,9 @@ export default class extends Controller {
   }
 
   async saveProgress() {
-    const el = this.player || this.videoTarget
-    if (!el) return
-    const currentTime = this.player ? this.player.currentTime : this.videoTarget.currentTime
-    const duration = this.player ? this.player.duration : this.videoTarget.duration
-    const progressSeconds = Math.floor(currentTime)
-    const durationSeconds = Math.floor(duration)
+    if (!this.player) return
+    const progressSeconds = Math.floor(this.player.currentTime)
+    const durationSeconds = Math.floor(this.player.duration)
     if (durationSeconds <= 0) return
 
     try {
@@ -124,7 +122,6 @@ export default class extends Controller {
           type: this.typeValue,
           season: this.seasonValue,
           episode: this.episodeValue,
-          poster_url: this.streamingUrlValue ? null : null,
           title: this.titleValue || null
         })
       })
@@ -134,29 +131,24 @@ export default class extends Controller {
   }
 
   saveProgressSync() {
-    const el = this.player || this.videoTarget
-    if (!el) return
-    const currentTime = this.player ? this.player.currentTime : this.videoTarget.currentTime
-    const duration = this.player ? this.player.duration : this.videoTarget.duration
-    const progressSeconds = Math.floor(currentTime)
-    const durationSeconds = Math.floor(duration)
+    if (!this.player) return
+    const progressSeconds = Math.floor(this.player.currentTime)
+    const durationSeconds = Math.floor(this.player.duration)
     if (durationSeconds <= 0) return
 
     const csrfToken = document.querySelector("meta[name='csrf-token']")?.content
-    const body = JSON.stringify({
-      imdb_id: this.imdbIdValue,
-      progress_seconds: progressSeconds,
-      duration_seconds: durationSeconds,
-      type: this.typeValue,
-      season: this.seasonValue,
-      episode: this.episodeValue,
-      title: this.titleValue || null
-    })
-
     fetch(`/streaming/play/progress`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-      body: body,
+      body: JSON.stringify({
+        imdb_id: this.imdbIdValue,
+        progress_seconds: progressSeconds,
+        duration_seconds: durationSeconds,
+        type: this.typeValue,
+        season: this.seasonValue,
+        episode: this.episodeValue,
+        title: this.titleValue || null
+      }),
       keepalive: true
     })
   }
