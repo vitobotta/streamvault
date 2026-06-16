@@ -17,7 +17,8 @@ class StreamingController < ApplicationController
     if result.success?
       redirect_to streaming_path(
         "play",
-        resolve_url: result.data[:resolve_url],
+        streaming_url: result.data[:streaming_url],
+        filename: result.data[:filename],
         imdb_id: params[:imdb_id],
         type: params[:type],
         season: params[:season],
@@ -29,50 +30,15 @@ class StreamingController < ApplicationController
     end
   end
 
-  # GET /streaming/:id — player page
+  # GET /streaming/:id — player page (streaming_url already resolved)
   def show
-    @resolve_url = params[:resolve_url]
+    @streaming_url = params[:streaming_url]
+    @filename = params[:filename]
     @imdb_id = params[:imdb_id]
     @type = params[:type]
     @season = params[:season]
     @episode = params[:episode]
     @title = params[:title] || "Now Playing"
-  end
-
-  # GET /streaming/:id/url — resolve the actual streaming URL
-  def url
-    resolve_url = params[:resolve_url]
-    if resolve_url.blank?
-      render json: { error: "Missing resolve URL" }, status: :bad_request
-      return
-    end
-
-    conn = Faraday.new do |f|
-      f.adapter Faraday.default_adapter
-      f.options.timeout = 15
-      f.options.open_timeout = 5
-    end
-
-    begin
-      response = conn.get(resolve_url) do |req|
-        req.options.on_data = Proc.new { } # discard body
-      end
-
-      if [301, 302, 303, 307, 308].include?(response.status)
-        location = response.headers["location"]
-        if location&.include?("downloading")
-          render json: { status: "downloading", progress: 0 }
-        else
-          render json: { status: "ready", streaming_url: location, filename: location&.split("/")&.last }
-        end
-      elsif response.status == 200
-        render json: { status: "ready", streaming_url: resolve_url }
-      else
-        render json: { status: "waiting", progress: 0 }
-      end
-    rescue Faraday::TimeoutError, Faraday::ConnectionFailed
-      render json: { status: "waiting", progress: 0 }
-    end
   end
 
   # PATCH /streaming/:id/progress — save watch progress
