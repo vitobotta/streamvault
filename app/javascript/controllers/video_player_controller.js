@@ -2,7 +2,7 @@ import { Controller } from "@hotwired/stimulus"
 
 export default class extends Controller {
   static targets = ["video", "sourceInfo", "sourceToggle", "sourceDetails", "sourceUrl", "sourceFilename", "backButton"]
-  static values = { streamingUrl: String, filename: String, imdbId: String, type: String, season: String, episode: String, resumeAt: String }
+  static values = { streamingUrl: String, filename: String, imdbId: String, type: String, season: String, episode: String, resumeAt: String, title: String }
 
   connect() {
     this.player = null
@@ -123,7 +123,9 @@ export default class extends Controller {
           duration_seconds: durationSeconds,
           type: this.typeValue,
           season: this.seasonValue,
-          episode: this.episodeValue
+          episode: this.episodeValue,
+          poster_url: this.streamingUrlValue ? null : null,
+          title: this.titleValue || null
         })
       })
     } catch (e) {
@@ -147,7 +149,8 @@ export default class extends Controller {
       duration_seconds: durationSeconds,
       type: this.typeValue,
       season: this.seasonValue,
-      episode: this.episodeValue
+      episode: this.episodeValue,
+      title: this.titleValue || null
     })
 
     fetch(`/streaming/play/progress`, {

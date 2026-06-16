@@ -2,13 +2,18 @@
   <h1 class="text-3xl font-bold text-white mb-8">Settings</h1>
 
   <%= form_with model: @user, url: settings_path, method: :patch, class: "space-y-6" do |f| %>
-    <div class="bg-sv-surface rounded-xl p-6 border border-sv-border">
-      <h2 class="text-lg font-semibold text-white mb-4">Profile</h2>
-
-      <div class="mb-4">
-        <%= f.label :display_name, class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
-        <%= f.text_field :display_name, class: "input-field" %>
+    <% if @user.errors.any? %>
+      <div class="bg-red-900/20 border border-red-800/40 rounded-lg p-4">
+        <ul class="list-disc list-inside text-sm text-red-300">
+          <% @user.errors.full_messages.each do |msg| %>
+            <li><%= msg %></li>
+          <% end %>
+        </ul>
       </div>
+    <% end %>
+
+    <div class="bg-sv-surface rounded-xl p-6 border border-sv-border">
+      <h2 class="text-lg font-semibold text-white mb-4">Account</h2>
 
       <div>
         <label class="block text-sm font-medium text-sv-text-muted mb-1.5">Email</label>
@@ -35,12 +40,16 @@
 
     <div class="bg-sv-surface rounded-xl p-6 border border-sv-border">
       <h2 class="text-lg font-semibold text-white mb-2">Preferred Languages</h2>
-      <p class="text-xs text-sv-text-muted mb-4">Streams without at least one of your selected languages will be filtered out. Leave empty to show all streams.</p>
+      <p class="text-xs text-sv-text-muted mb-4">Select at least one language. Streams without at least one of your selected languages will be filtered out.</p>
 
-      <div class="flex flex-wrap gap-2 mb-4">
+      <div class="flex flex-wrap gap-2 mb-4" data-controller="language-picker">
         <% User::STREAM_LANGUAGE_OPTIONS.each do |code, name| %>
           <% selected = Array(@user.preferred_languages).include?(code) %>
-          <label class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm cursor-pointer transition-colors <%= selected ? 'bg-sv-accent text-white' : 'bg-sv-surface-hover text-sv-text-muted hover:text-white' %>">
+          <label class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm cursor-pointer transition-colors"
+                 data-language-picker-target="pill"
+                 data-code="<%= code %>"
+                 data-selected="<%= selected %>"
+                 style="<%= selected ? 'background-color: var(--color-sv-accent); color: white;' : 'background-color: var(--color-sv-surface-hover); color: var(--color-sv-text-muted);' %>">
             <input type="checkbox" name="user[preferred_languages][]" value="<%= code %>" <%= 'checked' if selected %> class="hidden">
             <span><%= name %></span>
           </label>
@@ -55,7 +64,7 @@
 
       <%= f.select :default_language,
         options_for_select(
-          [["None", ""]] + User::STREAM_LANGUAGE_OPTIONS.to_a.map { |c, n| [n, c] },
+          Array(@user.preferred_languages).map { |c| [User::STREAM_LANGUAGE_OPTIONS[c], c] },
           @user.default_language
         ),
         {},

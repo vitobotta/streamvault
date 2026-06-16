@@ -17,7 +17,6 @@
           <span class="text-xs text-sv-text-muted ml-1.5 shrink-0"><%= stream[:size] %></span>
         </div>
         <div class="flex items-center gap-3 shrink-0 ml-3">
-          <span class="text-xs text-sv-text-muted">👤 <%= stream[:seeders] || 0 %></span>
           <%= button_to "Watch", streaming_index_path, params: { imdb_id: @imdb_id, type: "show", season: @season, episode: @episode, title: "#{@show_title} S#{@season.to_s.rjust(2,'0')}E#{@episode.to_s.rjust(2,'0')}" }, class: "btn-primary text-xs px-2 py-1", data: { turbo: false } %>
         </div>
       </div>

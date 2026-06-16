@@ -27,7 +27,7 @@ class TorrentioService
   BROWSER_VIDEO_CODECS = /x264|h\.?264|x265|h\.?265|hevc|avc|vp9|av1/i
   BROWSER_AUDIO_CODECS = /aac|ac3|eac3|dd[p+]?\b|opus|mp3|flac/i
   INCOMPATIBLE_VIDEO = /mpeg-?2|vc-?1|wmv|realvideo/i
-  INCOMPATIBLE_AUDIO = /dts[-\s]?(?:hd|ma)|truehd|pcm|lpcm|dts/i
+  INCOMPATIBLE_AUDIO = /dts[-\s]?(?:hd|ma)|truehd|pcm|lpcm/i
 
   def initialize(rd_api_key: nil)
     @rd_api_key = rd_api_key

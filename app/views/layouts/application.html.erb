@@ -15,6 +15,7 @@
     <link rel="icon" href="/icon.png" type="image/png">
     <link rel="icon" href="/icon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/icon.png">
+    <link rel="preload" href="https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=1920&q=80" as="image">
 
     <%# Tailwind compiled CSS + custom styles %>
     <%= stylesheet_link_tag "tailwind", "data-turbo-track": "reload" %>
@@ -87,8 +88,8 @@
 
           <%# User info %>
           <div class="mt-auto px-3 py-2">
-            <p class="text-sm text-sv-text-muted truncate"><%= current_user.display_name || current_user.email %></p>
-            <%= link_to "Sign out", destroy_user_session_path, data: { turbo_method: :delete }, class: "text-xs text-sv-text-muted hover:text-sv-accent transition-colors" %>
+            <p class="text-sm text-sv-text-muted truncate"><%= current_user.email %></p>
+            <%= button_to "Sign out", destroy_user_session_path, method: :delete, class: "text-xs text-sv-text-muted hover:text-sv-accent transition-colors cursor-pointer bg-transparent border-0 p-0" %>
           </div>
         </aside>
 
@@ -160,15 +161,21 @@
         </nav>
       </div>
     <% else %>
-      <%# Unauthenticated layout %>
-      <div class="min-h-screen flex flex-col">
-        <% if notice.present? %>
-          <div class="flash-notice mx-6 mt-4"><%= notice %></div>
-        <% end %>
-        <% if alert.present? %>
-          <div class="flash-alert mx-6 mt-4"><%= alert %></div>
-        <% end %>
-        <%= yield %>
+      <%# Unauthenticated layout with cinema background %>
+      <div class="min-h-screen flex flex-col relative">
+        <div class="absolute inset-0 bg-sv-bg">
+          <div class="absolute inset-0 bg-cover bg-center bg-no-repeat" style="background-image: url('https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=1920&q=80'); filter: brightness(0.3);"></div>
+          <div class="absolute inset-0 bg-gradient-to-t from-sv-bg via-sv-bg/80 to-transparent"></div>
+        </div>
+        <div class="relative z-10 flex flex-col min-h-screen">
+          <% if notice.present? %>
+            <div class="flash-notice mx-6 mt-4"><%= notice %></div>
+          <% end %>
+          <% if alert.present? %>
+            <div class="flash-alert mx-6 mt-4"><%= alert %></div>
+          <% end %>
+          <%= yield %>
+        </div>
       </div>
     <% end %>
   </body>

@@ -8,21 +8,24 @@ RSpec.describe User, type: :model do
     it { is_expected.to have_many(:episode_progresses).dependent(:destroy) }
   end
 
-  describe "validations" do
-    it { is_expected.to validate_length_of(:display_name).is_at_most(50) }
-  end
-
   describe "encryption" do
     it "encrypts realdebrid_api_key" do
       user = create(:user, realdebrid_api_key: "test_api_key_123")
       user.reload
 
       expect(user.realdebrid_api_key).to eq("test_api_key_123")
-      # Verify it's encrypted in the database
       raw_value = User.connection.select_value(
         "SELECT realdebrid_api_key FROM users WHERE id = #{user.id}"
       )
       expect(raw_value).not_to eq("test_api_key_123")
+    end
+  end
+
+  describe "language defaults" do
+    it "defaults preferred_languages to English on create" do
+      user = create(:user)
+      expect(user.preferred_languages).to eq(["ENG"])
+      expect(user.default_language).to eq("ENG")
     end
   end
 

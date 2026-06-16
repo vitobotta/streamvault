@@ -1,9 +1,38 @@
+<%# Back link based on referrer %>
+<% if request.referer&.include?("/search") %>
+  <div class="px-6 pt-4">
+    <%= link_to "← Back to search results", request.referer, class: "text-sm text-sv-accent hover:underline" %>
+  </div>
+<% elsif request.referer&.include?("/library") %>
+  <div class="px-6 pt-4">
+    <%= link_to "← Back to library", library_index_path, class: "text-sm text-sv-accent hover:underline" %>
+  </div>
+<% elsif request.referer&.include?("/wishlist") %>
+  <div class="px-6 pt-4">
+    <%= link_to "← Back to wishlist", wishlist_index_path, class: "text-sm text-sv-accent hover:underline" %>
+  </div>
+<% elsif request.referer&.include?("/watch_history") %>
+  <div class="px-6 pt-4">
+    <%= link_to "← Back to history", watch_history_index_path, class: "text-sm text-sv-accent hover:underline" %>
+  </div>
+<% end %>
+
 <div class="px-6 py-8">
   <% if @metadata %>
     <%# Hero section %>
     <div class="flex flex-col md:flex-row gap-8">
       <% if @metadata[:poster_url] %>
-        <img src="<%= @metadata[:poster_url] %>" alt="<%= @metadata[:title] %>" class="w-48 rounded-lg shadow-lg shrink-0">
+        <div class="shrink-0">
+          <img src="<%= @metadata[:poster_url] %>" alt="<%= @metadata[:title] %>" class="w-48 rounded-lg shadow-lg">
+          <% if @progress && @progress > 0 %>
+            <div class="mt-2">
+              <div class="h-1 bg-sv-border rounded-full overflow-hidden">
+                <div class="h-full bg-sv-accent rounded-full" style="width: <%= @progress %>%"></div>
+              </div>
+              <p class="text-xs text-sv-text-muted mt-1"><%= @progress %>% watched</p>
+            </div>
+          <% end %>
+        </div>
       <% end %>
       <div>
         <h1 class="text-3xl font-bold text-white"><%= @metadata[:title] %></h1>
@@ -35,10 +64,12 @@
 
         <div class="flex gap-3 mt-6">
           <% unless @in_library %>
-            <%= button_to "Add to Library", library_index_path, params: { library_entry: { content_type: @type, imdb_id: @imdb_id, title: @metadata[:title], poster_url: @metadata[:poster_url], year: @metadata[:year]&.to_i } }, class: "btn-primary" %>
+            <%= button_to library_index_path, params: { library_entry: { content_type: @type, imdb_id: @imdb_id, title: @metadata[:title], poster_url: @metadata[:poster_url], year: @metadata[:year]&.to_i } }, class: "w-8 h-8 bg-sv-surface rounded-lg hover:bg-sv-surface-hover flex items-center justify-center text-sv-text-muted hover:text-sv-accent transition-colors cursor-pointer", title: "Add to Library" do %>
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+            <% end %>
           <% end %>
           <% unless @in_wishlist %>
-            <%= button_to content_path(type: @type, imdb_id: @imdb_id), method: :post, class: "w-8 h-8 bg-sv-surface rounded-lg hover:bg-sv-surface-hover flex items-center justify-center text-sv-text-muted hover:text-sv-accent transition-colors" do %>
+            <%= button_to wishlist_index_path, params: { wishlist_entry: { content_type: @type, imdb_id: @imdb_id, title: @metadata[:title], poster_url: @metadata[:poster_url], year: @metadata[:year]&.to_i } }, class: "w-8 h-8 bg-sv-surface rounded-lg hover:bg-sv-surface-hover flex items-center justify-center text-sv-text-muted hover:text-sv-accent transition-colors cursor-pointer", title: "Add to Wishlist" do %>
               <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>
             <% end %>
           <% end %>
@@ -72,8 +103,7 @@
                 <span class="text-sm text-white ml-1 truncate sv-stream-title"><%= stream[:title] || stream[:name] %></span>
                 <span class="text-xs text-sv-text-muted ml-2 shrink-0"><%= stream[:size] %></span>
               </div>
-              <div class="flex items-center gap-4 shrink-0 ml-3">
-                <span class="text-xs text-sv-text-muted">👤 <%= stream[:seeders] || 0 %></span>
+              <div class="flex items-center gap-3 shrink-0 ml-3">
                 <%= button_to "Watch", streaming_index_path, params: { imdb_id: @imdb_id, type: @type, title: @metadata[:title] }, class: "btn-primary text-sm", data: { turbo: false } %>
               </div>
             </div>
@@ -117,8 +147,7 @@
               <div class="flex-1 min-w-0">
                 <h3 class="text-sm font-medium text-white truncate"><%= ep[:title] || "Episode #{ep[:episode]}" %></h3>
                 <p class="text-xs text-sv-text-muted">
-                  <%= ep[:released] %>
-                  <% if ep[:runtime] %> · <%= ep[:runtime] %><% end %>
+                  <%= ep[:released] %><% if ep[:runtime] %> · <%= ep[:runtime] %><% end %>
                 </p>
                 <% if ep[:overview].present? %>
                   <p class="text-xs text-sv-text-muted mt-0.5 line-clamp-2"><%= ep[:overview] %></p>

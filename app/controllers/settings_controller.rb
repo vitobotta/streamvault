@@ -10,6 +10,11 @@ class SettingsController < ApplicationController
   def update
     @user = current_user
 
+    # Preserve existing RD key if not provided
+    if params[:user][:realdebrid_api_key].blank?
+      params[:user].delete(:realdebrid_api_key)
+    end
+
     if @user.update(settings_params)
       if params[:user][:realdebrid_api_key].present?
         rd = RealDebridService.new(@user.realdebrid_api_key)
@@ -30,6 +35,6 @@ class SettingsController < ApplicationController
   private
 
   def settings_params
-    params.require(:user).permit(:display_name, :realdebrid_api_key, :default_language, preferred_languages: [])
+    params.require(:user).permit(:realdebrid_api_key, :default_language, preferred_languages: [])
   end
 end

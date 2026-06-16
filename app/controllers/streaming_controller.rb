@@ -33,7 +33,7 @@ class StreamingController < ApplicationController
     end
   end
 
-  # GET /streaming/:id — player page (streaming_url already resolved)
+  # GET /streaming/:id — player page
   def show
     @streaming_url = params[:streaming_url]
     @filename = params[:filename]
@@ -54,7 +54,9 @@ class StreamingController < ApplicationController
       params[:duration_seconds].to_i,
       type: params[:type] || "movie",
       season: params[:season]&.to_i,
-      episode: params[:episode]&.to_i
+      episode: params[:episode]&.to_i,
+      poster_url: params[:poster_url],
+      title: params[:title]
     )
 
     if result.success?

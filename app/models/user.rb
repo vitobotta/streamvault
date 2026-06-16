@@ -13,9 +13,6 @@ class User < ApplicationRecord
   has_many :wishlist_entries, dependent: :destroy
   has_many :episode_progresses, dependent: :destroy
 
-  # Validations
-  validates :display_name, length: { maximum: 50 }
-
   # Language preferences
   serialize :preferred_languages, coder: JSON
 
@@ -28,22 +25,37 @@ class User < ApplicationRecord
     "SWEDISH" => "Swedish"
   }.freeze
 
-  before_validation :normalize_languages
+  before_validation :set_default_languages, on: :create
+  before_validation :normalize_languages, on: :update
+  validate :preferred_languages_present, on: :update
 
   def has_realdebrid_key?
     realdebrid_api_key.present?
   end
 
   def preferred_stream_languages
-    Array(preferred_languages).presence
+    Array(preferred_languages).presence || ["ENG"]
   end
 
   private
 
+  def set_default_languages
+    self.preferred_languages ||= ["ENG"]
+    self.default_language ||= "ENG"
+  end
+
   def normalize_languages
-    return if preferred_languages.blank?
-    self.preferred_languages = Array(preferred_languages).map(&:to_s).map(&:upcase).uniq.select { |l| STREAM_LANGUAGE_OPTIONS.key?(l) }
-    self.preferred_languages = nil if preferred_languages.empty?
-    self.default_language = default_language&.upcase
+    if preferred_languages.blank?
+      self.preferred_languages = ["ENG"]
+    else
+      self.preferred_languages = Array(preferred_languages).map(&:to_s).map(&:upcase).uniq.select { |l| STREAM_LANGUAGE_OPTIONS.key?(l) }
+      self.preferred_languages = ["ENG"] if preferred_languages.empty?
+    end
+    self.default_language = (default_language.presence || "ENG").upcase
+    self.default_language = preferred_languages.first unless preferred_languages.include?(default_language)
+  end
+
+  def preferred_languages_present
+    errors.add(:preferred_languages, "must include at least one language") if preferred_languages.blank? || Array(preferred_languages).empty?
   end
 end

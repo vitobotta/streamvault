@@ -64,19 +64,21 @@ class ContentStreamingService
   def verify_resolve_url(resolve_url)
     response = Faraday.get(resolve_url)
 
-    return nil unless [301, 302, 303, 307, 308].include?(response.status)
-
-    location = response.headers["location"]
-    return nil if location.blank?
-    return nil if location.match?(BLOCKED_PATTERNS)
-
-    filename = location.split("/").last.to_s
-    return nil if filename.match?(BLOCKED_PATTERNS)
-
-    {
-      streaming_url: location,
-      filename: filename
-    }
+    if [301, 302, 303, 307, 308].include?(response.status)
+      location = response.headers["location"]
+      return nil if location.blank?
+      return nil if location.match?(BLOCKED_PATTERNS)
+      filename = location.split("/").last.to_s
+      return nil if filename.match?(BLOCKED_PATTERNS)
+      { streaming_url: location, filename: filename }
+    elsif [200, 206].include?(response.status)
+      # 200 = direct stream, 206 = partial content (streamable)
+      filename = resolve_url.split("/").last.to_s
+      return nil if filename.match?(BLOCKED_PATTERNS)
+      { streaming_url: resolve_url, filename: filename }
+    else
+      nil
+    end
   rescue Faraday::TimeoutError, Faraday::ConnectionFailed
     nil
   end

@@ -18,7 +18,7 @@ class WatchHistoryController < ApplicationController
   def destroy
     entry = current_user.watch_history_entries.find(params[:id])
     entry.destroy
-    redirect_back fallback_location: watch_history_index_path, notice: "Removed from history."
+    redirect_back fallback_location: watch_history_index_path, status: :see_other, notice: "Removed from history."
   end
 
   def clear_all
