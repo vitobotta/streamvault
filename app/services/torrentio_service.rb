@@ -83,7 +83,39 @@ class TorrentioService
     ServiceResult.failure("Failed to fetch metadata")
   end
 
+  # Fetch popular movies/shows from Cinemeta catalog
+  def popular(type, limit: 20)
+    catalog(type, "top", limit: limit)
+  end
+
+  # Fetch trending/new movies/shows (current year)
+  def trending(type, limit: 20)
+    catalog(type, "year", genre: Date.today.year.to_s, limit: limit)
+  end
+
+  # Fetch featured/highly rated movies/shows
+  def featured(type, limit: 20)
+    catalog(type, "imdbRating", limit: limit)
+  end
+
   private
+
+  def catalog(type, catalog_id, genre: nil, limit: 20)
+    cinemeta_type = type.to_s == "show" ? "series" : type.to_s
+    path = "catalog/#{cinemeta_type}/#{catalog_id}.json"
+    path += "?genre=#{CGI.escape(genre)}" if genre.present?
+
+    response = @cinemeta.get(path)
+    if response.success? && response.body.is_a?(Hash)
+      metas = (response.body["metas"] || []).first(limit)
+      ServiceResult.success(metas.map { |m| normalize_cinemeta(m, type.to_s) })
+    else
+      ServiceResult.success([])
+    end
+  rescue StandardError => e
+    Rails.logger.error("TorrentioService#catalog error: #{e.message}")
+    ServiceResult.success([])
+  end
 
   # Stremio sorting with debrid: RD+ first, quality descending, size descending
   def sort_streams(streams)
@@ -95,9 +127,6 @@ class TorrentioService
     end
   end
 
-  # Build Torrentio URL — same format as Stremio
-  # With RD key: torrentio.strem.fun/realdebrid={key}/stream/...
-  # Without:     torrentio.strem.fun/stream/...
   def build_stream_path(imdb_id, type, season: nil, episode: nil)
     base = @rd_api_key.present? ? "/realdebrid=#{@rd_api_key}" : ""
 
@@ -220,7 +249,9 @@ class TorrentioService
         episode: v["episode"],
         title: v["name"].presence || "Episode #{v["episode"]}",
         released: v["released"]&.to_date&.to_s,
-        imdb_id: v["id"]
+        imdb_id: v["id"],
+        overview: v["overview"],
+        runtime: v["runtime"]
       }
     end
   end

@@ -22,7 +22,7 @@ Rails.application.routes.draw do
   end
 
   # Watch History
-  resources :watch_history, only: [:index] do
+  resources :watch_history, only: [:index, :destroy] do
     collection do
       delete :clear_all
     end
