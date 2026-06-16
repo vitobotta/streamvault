@@ -4,7 +4,7 @@ class TorrentioService
   TORRENTIO_URL = ENV.fetch("TORRENTIO_API_BASE_URL", "https://torrentio.strem.fun")
   CINEMETA_URL = "https://v3-cinemeta.strem.io"
   QUALITY_SORT = { "4K" => 0, "1080p" => 1, "720p" => 2, "480p" => 3, "Unknown" => 4 }.freeze
-  CONTAINER_COMPAT = { "mp4" => 0, "webm" => 0, "mov" => 1, "mkv" => 2, "avi" => 2, "unknown" => 1 }.freeze
+  CONTAINER_COMPAT = { "mp4" => 0, "webm" => 0, "mov" => 1, "mkv" => 2, "avi" => 2, "unknown" => 2 }.freeze
 
   LANGUAGE_PATTERNS = {
     "ENG" => /\b(ENG|ENGLISH|EN)\b/i,
@@ -26,7 +26,7 @@ class TorrentioService
   }.freeze
 
   BROWSER_VIDEO_CODECS = /x264|h\.?264|x265|h\.?265|hevc|avc|vp9|av1/i
-  BROWSER_AUDIO_CODECS = /aac|ac3|eac3|dd[p+]?\b|opus|mp3|flac/i
+  BROWSER_AUDIO_CODECS = /aac|ac3|eac3|dd[p+]?(?:\b|\d)|opus|mp3|flac/i
   INCOMPATIBLE_VIDEO = /mpeg-?2|vc-?1|wmv|realvideo/i
   INCOMPATIBLE_AUDIO = /dts[-\s]?(?:hd|ma)|truehd|pcm|lpcm/i
 
