@@ -24,9 +24,13 @@ class ContentStreamingService
     result = resolve_first_valid(candidates)
 
     if result
+      # Use the torrent filename from stream data (has correct extension like .mkv)
+      # not the RealDebrid URL filename (usually has no extension)
+      torrent_filename = result[:stream][:filename].presence || result[:filename]
+
       ServiceResult.success({
         streaming_url: result[:streaming_url],
-        filename: result[:filename],
+        filename: torrent_filename,
         stream: result[:stream],
         imdb_id: imdb_id,
         type: type,
