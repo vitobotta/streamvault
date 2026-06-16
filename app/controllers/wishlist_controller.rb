@@ -5,7 +5,17 @@ class WishlistController < ApplicationController
   before_action :set_entry, only: [:destroy, :move_to_library]
 
   def index
-    @entries = policy_scope(WishlistEntry).recently_added
+    @page = (params[:page] || 1).to_i.clamp(1, Float::INFINITY)
+    @per_page = (params[:per_page] || 25).to_i.clamp(1, 100)
+
+    entries = policy_scope(WishlistEntry)
+    entries = entries.by_type(params[:type]) if params[:type].present?
+    entries = entries.recently_added
+
+    @total = entries.count
+    @total_pages = (@total.to_f / @per_page).ceil
+    @page = @page.clamp(1, [@total_pages, 1].max)
+    @entries = entries.offset((@page - 1) * @per_page).limit(@per_page)
   end
 
   def create

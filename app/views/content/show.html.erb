@@ -9,8 +9,7 @@
         <h1 class="text-3xl font-bold text-white"><%= @metadata[:title] %></h1>
         <p class="text-sv-text-muted mt-1">
           <%= @metadata[:year] %>
-          <% if @metadata[:rated] %> · <%= @metadata[:rated] %><% end %>
-          <% if @metadata[:runtime] %> · <%= @metadata[:runtime] %><% end %>
+          <% if @type != "show" && @metadata[:runtime] %> · <%= @metadata[:runtime] %><% end %>
           <% if @metadata[:genre] %> · <%= @metadata[:genre] %><% end %>
         </p>
         <div class="flex items-center gap-3 mt-1 flex-wrap">
@@ -39,7 +38,9 @@
             <%= button_to "Add to Library", library_index_path, params: { library_entry: { content_type: @type, imdb_id: @imdb_id, title: @metadata[:title], poster_url: @metadata[:poster_url], year: @metadata[:year]&.to_i } }, class: "btn-primary" %>
           <% end %>
           <% unless @in_wishlist %>
-            <%= button_to "Add to Wishlist", wishlist_index_path, params: { wishlist_entry: { content_type: @type, imdb_id: @imdb_id, title: @metadata[:title], poster_url: @metadata[:poster_url], year: @metadata[:year]&.to_i } }, class: "btn-secondary" %>
+            <%= button_to content_path(type: @type, imdb_id: @imdb_id), method: :post, class: "w-8 h-8 bg-sv-surface rounded-lg hover:bg-sv-surface-hover flex items-center justify-center text-sv-text-muted hover:text-sv-accent transition-colors" do %>
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>
+            <% end %>
           <% end %>
         </div>
       </div>
@@ -52,13 +53,26 @@
         <div class="space-y-2">
           <% @streams.each do |stream| %>
             <div class="flex items-center justify-between p-3 bg-sv-surface rounded-lg">
-              <div class="min-w-0 flex-1">
+              <div class="min-w-0 flex-1 flex items-center gap-1.5 flex-wrap">
                 <% if stream[:rd_plus] %><span class="badge badge-success">RD+</span><% end %>
                 <span class="badge badge-accent"><%= stream[:quality] %></span>
-                <span class="text-sm text-white ml-2 truncate"><%= stream[:title] || stream[:name] %></span>
-                <span class="text-xs text-sv-text-muted ml-2"><%= stream[:size] %></span>
+                <% stream[:languages]&.each do |lang| %>
+                  <span class="px-1.5 py-0.5 rounded text-xs font-medium bg-sv-surface-hover text-sv-text-muted"><%= lang %></span>
+                <% end %>
+                <% if stream[:video_codec] == "incompatible" %>
+                  <span class="px-1.5 py-0.5 rounded text-xs font-medium bg-red-900/40 text-red-300">!<%= stream[:video_codec] %></span>
+                <% elsif stream[:video_codec] != "unknown" %>
+                  <span class="px-1.5 py-0.5 rounded text-xs font-medium bg-sv-surface-hover text-sv-text-muted"><%= stream[:video_codec] %></span>
+                <% end %>
+                <% if stream[:audio_codec] == "incompatible" %>
+                  <span class="px-1.5 py-0.5 rounded text-xs font-medium bg-red-900/40 text-red-300">!<%= stream[:audio_codec] %></span>
+                <% elsif stream[:audio_codec] != "unknown" %>
+                  <span class="px-1.5 py-0.5 rounded text-xs font-medium bg-sv-surface-hover text-sv-text-muted"><%= stream[:audio_codec] %></span>
+                <% end %>
+                <span class="text-sm text-white ml-1 truncate sv-stream-title"><%= stream[:title] || stream[:name] %></span>
+                <span class="text-xs text-sv-text-muted ml-2 shrink-0"><%= stream[:size] %></span>
               </div>
-              <div class="flex items-center gap-4 shrink-0">
+              <div class="flex items-center gap-4 shrink-0 ml-3">
                 <span class="text-xs text-sv-text-muted">👤 <%= stream[:seeders] || 0 %></span>
                 <%= button_to "Watch", streaming_index_path, params: { imdb_id: @imdb_id, type: @type, title: @metadata[:title] }, class: "btn-primary text-sm", data: { turbo: false } %>
               </div>
@@ -77,22 +91,20 @@
 
     <%# SHOWS: season tabs + episode list + streams drawer %>
     <% if @type == "show" && @metadata[:episodes].present? %>
-      <%# Season tabs %>
-      <% seasons = @metadata[:episodes].map { |e| e[:season] }.uniq.sort %>
-      <div class="flex gap-2 mt-8 mb-4 overflow-x-auto">
+      <% seasons = @metadata[:episodes].map { |e| e[:season] }.reject { |s| s == 0 }.uniq.sort %>
+      <div class="flex flex-wrap gap-2 mt-8 mb-4">
         <% seasons.each do |s| %>
-          <%= link_to content_path(type: @type, imdb_id: @imdb_id, season: s), class: "px-3 py-1.5 rounded-full text-sm font-medium #{@selected_season == s ? 'bg-sv-accent text-white' : 'bg-sv-surface text-sv-text-muted hover:text-white'}" do %>
+          <%= link_to content_path(type: @type, imdb_id: @imdb_id, season: s), class: "px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap #{@selected_season == s ? 'bg-sv-accent text-white' : 'bg-sv-surface text-sv-text-muted hover:text-white'}" do %>
             Season <%= s %>
           <% end %>
         <% end %>
       </div>
 
-      <%# Episode list (loads streams into drawer on click) %>
       <div class="space-y-2" data-controller="episode-picker"
            data-episode-picker-url-value="<%= episode_streams_path(type: @type, imdb_id: @imdb_id) %>"
            data-episode-picker-imdb-id-value="<%= @imdb_id %>"
            data-episode-picker-show-title-value="<%= @metadata[:title] %>">
-        <% @metadata[:episodes].select { |e| e[:season] == @selected_season }.each do |ep| %>
+        <% @metadata[:episodes].select { |e| e[:season] == @selected_season && e[:season] != 0 }.each do |ep| %>
           <% progress = @episode_progress&.dig([ep[:season], ep[:episode]]) %>
           <div class="bg-sv-surface rounded-lg hover:bg-sv-surface-hover transition-colors"
                data-episode-picker-target="episode">
@@ -105,12 +117,12 @@
               <div class="flex-1 min-w-0">
                 <h3 class="text-sm font-medium text-white truncate"><%= ep[:title] || "Episode #{ep[:episode]}" %></h3>
                 <p class="text-xs text-sv-text-muted">
-                    <%= ep[:released] %>
-                    <% if ep[:runtime] %> · <%= ep[:runtime] %><% end %>
-                  </p>
-                  <% if ep[:overview].present? %>
-                    <p class="text-xs text-sv-text-muted mt-0.5 line-clamp-2"><%= ep[:overview] %></p>
-                  <% end %>
+                  <%= ep[:released] %>
+                  <% if ep[:runtime] %> · <%= ep[:runtime] %><% end %>
+                </p>
+                <% if ep[:overview].present? %>
+                  <p class="text-xs text-sv-text-muted mt-0.5 line-clamp-2"><%= ep[:overview] %></p>
+                <% end %>
                 <% if progress %>
                   <div class="mt-1 h-1 bg-sv-border rounded-full overflow-hidden">
                     <div class="h-full bg-sv-accent rounded-full" style="width: <%= progress.progress_percentage %>%"></div>
@@ -120,7 +132,6 @@
               <svg class="w-4 h-4 text-sv-text-muted shrink-0 transition-transform" data-episode-picker-target="chevron" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
             </button>
 
-            <%# Streams drawer (loaded via AJAX) %>
             <div data-episode-picker-target="drawer" class="hidden border-t border-sv-border">
               <div data-episode-picker-target="drawerContent" class="p-3">
                 <div class="flex items-center gap-2 text-sv-text-muted text-sm">

@@ -1,17 +1,38 @@
 <div class="px-6 py-8">
   <div class="flex items-center justify-between mb-6">
     <h1 class="text-3xl font-bold text-white">Library</h1>
-    <%= link_to "Search for content", search_index_path, class: "btn-secondary text-sm" %>
+    <%= link_to search_index_path, class: "btn-secondary text-sm" do %>
+      <svg class="w-4 h-4 inline-block mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+      Search
+    <% end %>
   </div>
 
   <%# Filter tabs %>
-  <div class="flex gap-2 mb-6 overflow-x-auto">
-    <%= link_to "All", library_index_path, class: "px-3 py-1.5 rounded-full text-sm font-medium #{params[:type].blank? && params[:status].blank? ? 'bg-sv-accent text-white' : 'bg-sv-surface text-sv-text-muted hover:text-white'}" %>
-    <%= link_to "Movies", library_index_path(type: :movie), class: "px-3 py-1.5 rounded-full text-sm font-medium #{params[:type] == 'movie' ? 'bg-sv-accent text-white' : 'bg-sv-surface text-sv-text-muted hover:text-white'}" %>
-    <%= link_to "Shows", library_index_path(type: :show), class: "px-3 py-1.5 rounded-full text-sm font-medium #{params[:type] == 'show' ? 'bg-sv-accent text-white' : 'bg-sv-surface text-sv-text-muted hover:text-white'}" %>
-    <%= link_to "Watching", library_index_path(status: :watching), class: "px-3 py-1.5 rounded-full text-sm font-medium #{params[:status] == 'watching' ? 'bg-sv-accent text-white' : 'bg-sv-surface text-sv-text-muted hover:text-white'}" %>
-    <%= link_to "Finished", library_index_path(status: :finished), class: "px-3 py-1.5 rounded-full text-sm font-medium #{params[:status] == 'finished' ? 'bg-sv-accent text-white' : 'bg-sv-surface text-sv-text-muted hover:text-white'}" %>
+  <div class="flex flex-wrap gap-2 mb-4">
+    <%= link_to "All", library_index_path, class: "px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap #{params[:type].blank? && params[:status].blank? ? 'bg-sv-accent text-white' : 'bg-sv-surface text-sv-text-muted hover:text-white'}" %>
+    <%= link_to "Movies", library_index_path(type: :movie), class: "px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap #{params[:type] == 'movie' ? 'bg-sv-accent text-white' : 'bg-sv-surface text-sv-text-muted hover:text-white'}" %>
+    <%= link_to "Shows", library_index_path(type: :show), class: "px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap #{params[:type] == 'show' ? 'bg-sv-accent text-white' : 'bg-sv-surface text-sv-text-muted hover:text-white'}" %>
+    <%= link_to "Watching", library_index_path(status: :watching), class: "px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap #{params[:status] == 'watching' ? 'bg-sv-accent text-white' : 'bg-sv-surface text-sv-text-muted hover:text-white'}" %>
+    <%= link_to "Finished", library_index_path(status: :finished), class: "px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap #{params[:status] == 'finished' ? 'bg-sv-accent text-white' : 'bg-sv-surface text-sv-text-muted hover:text-white'}" %>
   </div>
+
+  <%# Result count and page size %>
+  <% if @entries.any? %>
+    <div class="flex items-center justify-between mb-4">
+      <p class="text-sm text-sv-text-muted">
+        Showing <%= (@page - 1) * @per_page + 1 %>&ndash;<%= [@page * @per_page, @total].min %> of <%= @total %>
+      </p>
+      <div class="flex items-center gap-1">
+        <% [25, 50, 100].each do |size| %>
+          <% if size == @per_page %>
+            <span class="px-2 py-1 rounded bg-sv-accent text-white text-xs font-medium"><%= size %></span>
+          <% else %>
+            <%= link_to size, library_index_path(params.permit(:type, :status).merge(per_page: size, page: 1)), class: "px-2 py-1 rounded bg-sv-surface text-sv-text-muted hover:text-white text-xs transition-colors" %>
+          <% end %>
+        <% end %>
+      </div>
+    </div>
+  <% end %>
 
   <% if @entries.any? %>
     <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
@@ -30,6 +51,12 @@
               <p class="text-xs text-sv-text-muted mt-0.5"><%= entry.year %></p>
               <span class="badge badge-accent text-xs mt-1"><%= entry.watch_status.humanize %></span>
             </div>
+            <% progress = @progress_map&.dig(entry.imdb_id) %>
+            <% if progress&.max_progress&.to_i&.positive? %>
+              <div class="card-progress">
+                <div class="card-progress-bar" style="width: <%= progress.max_progress.to_i %>%"></div>
+              </div>
+            <% end %>
           <% end %>
           <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
             <%= button_to library_path(entry), method: :delete, class: "w-7 h-7 bg-black/60 rounded-full flex items-center justify-center text-white hover:bg-red-600", data: { turbo_confirm: "Remove from library?" } do %>
@@ -39,6 +66,39 @@
         </div>
       <% end %>
     </div>
+
+    <%# Pagination %>
+    <% if @total_pages > 1 %>
+      <nav class="flex items-center justify-center gap-2 mt-8" aria-label="Library pagination">
+        <% if @page > 1 %>
+          <%= link_to "&larr; Previous".html_safe, library_index_path(params.permit(:type, :status).merge(page: @page - 1, per_page: @per_page)), class: "px-3 py-2 rounded-lg bg-sv-surface text-sv-text hover:bg-sv-surface-hover transition-colors text-sm" %>
+        <% end %>
+
+        <%
+          visible_pages = []
+          visible_pages << 1 unless @total_pages <= 1
+          ([@page - 2, 2].max..[@page + 2, @total_pages - 1].min).each { |p| visible_pages << p }
+          visible_pages << @total_pages if @total_pages > 1
+          visible_pages = visible_pages.uniq.sort
+        %>
+        <% prev_page = 0 %>
+        <% visible_pages.each do |p| %>
+          <% if p - prev_page > 1 %>
+            <span class="px-2 text-sv-text-muted">&hellip;</span>
+          <% end %>
+          <% if p == @page %>
+            <span class="px-3 py-2 rounded-lg bg-sv-accent text-white text-sm font-medium"><%= p %></span>
+          <% else %>
+            <%= link_to p, library_index_path(params.permit(:type, :status).merge(page: p, per_page: @per_page)), class: "px-3 py-2 rounded-lg bg-sv-surface text-sv-text hover:bg-sv-surface-hover transition-colors text-sm" %>
+          <% end %>
+          <% prev_page = p %>
+        <% end %>
+
+        <% if @page < @total_pages %>
+          <%= link_to "Next &rarr;".html_safe, library_index_path(params.permit(:type, :status).merge(page: @page + 1, per_page: @per_page)), class: "px-3 py-2 rounded-lg bg-sv-surface text-sv-text hover:bg-sv-surface-hover transition-colors text-sm" %>
+        <% end %>
+      </nav>
+    <% end %>
   <% else %>
     <div class="text-center py-16">
       <svg class="w-16 h-16 text-sv-text-muted mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>

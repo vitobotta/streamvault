@@ -11,7 +11,6 @@ class SettingsController < ApplicationController
     @user = current_user
 
     if @user.update(settings_params)
-      # Verify RealDebrid key if provided
       if params[:user][:realdebrid_api_key].present?
         rd = RealDebridService.new(@user.realdebrid_api_key)
         result = rd.verify_key
@@ -31,6 +30,6 @@ class SettingsController < ApplicationController
   private
 
   def settings_params
-    params.require(:user).permit(:display_name, :realdebrid_api_key)
+    params.require(:user).permit(:display_name, :realdebrid_api_key, :default_language, preferred_languages: [])
   end
 end

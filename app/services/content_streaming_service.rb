@@ -14,13 +14,12 @@ class ContentStreamingService
     meta = @torrentio.metadata(imdb_id, type)
     content_title = meta.success? ? meta.data[:title] : nil
 
-    streams_result = @torrentio.streams(imdb_id, type, season: season, episode: episode, title: content_title)
+    streams_result = @torrentio.streams(imdb_id, type, season: season, episode: episode, title: content_title, preferred_languages: @user.preferred_stream_languages)
     return streams_result if streams_result.failure?
 
     streams = streams_result.data
     return ServiceResult.failure("No streams available for this content") if streams.empty?
 
-    # Check all streams concurrently — much faster than sequential
     candidates = streams.first(MAX_STREAM_ATTEMPTS).select { |s| s[:resolve_url].present? }
     result = resolve_first_valid(candidates)
 
@@ -43,7 +42,6 @@ class ContentStreamingService
 
   BLOCKED_PATTERNS = /downloading|infringing|failed.infringement|removed|blocked/i
 
-  # Fire all resolve requests in parallel, return the first valid result
   def resolve_first_valid(candidates)
     mutex = Mutex.new
     winner = nil

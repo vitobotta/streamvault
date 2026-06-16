@@ -15,6 +15,8 @@ class StreamingController < ApplicationController
     )
 
     if result.success?
+      resume_at = find_resume_position(params[:imdb_id], params[:type], params[:season], params[:episode])
+
       redirect_to streaming_path(
         "play",
         streaming_url: result.data[:streaming_url],
@@ -23,7 +25,8 @@ class StreamingController < ApplicationController
         type: params[:type],
         season: params[:season],
         episode: params[:episode],
-        title: params[:title]
+        title: params[:title],
+        resume_at: resume_at
       )
     else
       redirect_back fallback_location: root_path, alert: result.error_message
@@ -39,6 +42,7 @@ class StreamingController < ApplicationController
     @season = params[:season]
     @episode = params[:episode]
     @title = params[:title] || "Now Playing"
+    @resume_at = params[:resume_at]
   end
 
   # PATCH /streaming/:id/progress — save watch progress
@@ -66,5 +70,22 @@ class StreamingController < ApplicationController
     unless current_user.has_realdebrid_key?
       redirect_to settings_path, alert: "RealDebrid API key not configured. Please add it in Settings."
     end
+  end
+
+  def find_resume_position(imdb_id, type, season, episode)
+    if type == "show" && season.present? && episode.present?
+      ep = current_user.episode_progresses.find_by(
+        show_imdb_id: imdb_id,
+        season_number: season.to_i,
+        episode_number: episode.to_i
+      )
+      return ep&.progress_seconds
+    end
+
+    entry = current_user.watch_history_entries
+      .where(imdb_id: imdb_id)
+      .order(watched_at: :desc)
+      .first
+    entry&.progress_seconds
   end
 end

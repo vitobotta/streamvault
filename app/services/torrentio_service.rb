@@ -5,6 +5,30 @@ class TorrentioService
   CINEMETA_URL = "https://v3-cinemeta.strem.io"
   QUALITY_SORT = { "4K" => 0, "1080p" => 1, "720p" => 2, "480p" => 3, "Unknown" => 4 }.freeze
 
+  LANGUAGE_PATTERNS = {
+    "ENG" => /\b(ENG|ENGLISH|EN)\b/i,
+    "FRENCH" => /\b(FRENCH|FR|VFF|VFQ|TRUEFRENCH)\b/i,
+    "GERMAN" => /\b(GERMAN|GER|DE)\b/i,
+    "SPANISH" => /\b(SPANISH|SPA|ES|CASTELLANO)\b/i,
+    "ITALIAN" => /\b(ITALIAN|ITA|IT)\b/i,
+    "JAPANESE" => /\b(JAPANESE|JAP|JA)\b/i,
+    "KOREAN" => /\b(KOREAN|KOR|KO)\b/i,
+    "CHINESE" => /\b(CHINESE|CHI|ZH)\b/i,
+    "HINDI" => /\b(HINDI|HIN|HI)\b/i,
+    "ARABIC" => /\b(ARABIC|ARA|AR)\b/i,
+    "PORTUGUESE" => /\b(PORTUGUESE|POR|PT|PTBR|BRAZILIAN)\b/i,
+    "RUSSIAN" => /\b(RUSSIAN|RUS|RU)\b/i,
+    "DUTCH" => /\b(DUTCH|DUT|NL|NLD)\b/i,
+    "POLISH" => /\b(POLISH|POL|PL)\b/i,
+    "TURKISH" => /\b(TURKISH|TUR|TR)\b/i,
+    "SWEDISH" => /\b(SWEDISH|SWE|SV)\b/i
+  }.freeze
+
+  BROWSER_VIDEO_CODECS = /x264|h\.?264|x265|h\.?265|hevc|avc|vp9|av1/i
+  BROWSER_AUDIO_CODECS = /aac|ac3|eac3|dd[p+]?\b|opus|mp3|flac/i
+  INCOMPATIBLE_VIDEO = /mpeg-?2|vc-?1|wmv|realvideo/i
+  INCOMPATIBLE_AUDIO = /dts[-\s]?(?:hd|ma)|truehd|pcm|lpcm|dts/i
+
   def initialize(rd_api_key: nil)
     @rd_api_key = rd_api_key
 
@@ -43,7 +67,7 @@ class TorrentioService
     ServiceResult.failure("Search failed")
   end
 
-  def streams(imdb_id, type, season: nil, episode: nil, title: nil)
+  def streams(imdb_id, type, season: nil, episode: nil, title: nil, preferred_languages: nil)
     return ServiceResult.failure("IMDB ID is required") if imdb_id.blank?
 
     path = build_stream_path(imdb_id, type, season: season, episode: episode)
@@ -52,6 +76,7 @@ class TorrentioService
     if response.success? && response.body.is_a?(Hash) && response.body["streams"]
       parsed = parse_streams(response.body["streams"])
       parsed = sort_streams(parsed)
+      parsed = filter_by_preferred_languages(parsed, preferred_languages) if preferred_languages.present?
       ServiceResult.success(parsed)
     elsif response.status == 404
       ServiceResult.success([])
@@ -75,7 +100,6 @@ class TorrentioService
 
     if response.success? && response.body.is_a?(Hash) && response.body["meta"]
       result = normalize_cinemeta_meta(response.body["meta"], type)
-      # Enrich with OMDB data (age rating, RT rating)
       result.merge!(fetch_omdb_ratings(imdb_id))
       ServiceResult.success(result)
     else
@@ -86,22 +110,25 @@ class TorrentioService
     ServiceResult.failure("Failed to fetch metadata")
   end
 
-  # Fetch popular movies/shows from Cinemeta catalog
   def popular(type, limit: 20)
     catalog(type, "top", limit: limit)
   end
 
-  # Fetch trending/new movies/shows (current year)
   def trending(type, limit: 20)
     catalog(type, "year", genre: Date.today.year.to_s, limit: limit)
   end
 
-  # Fetch featured/highly rated movies/shows
   def featured(type, limit: 20)
     catalog(type, "imdbRating", limit: limit)
   end
 
   private
+
+  def filter_by_preferred_languages(streams, preferred_languages)
+    return streams if preferred_languages.blank?
+    langs = Array(preferred_languages).map(&:to_s).map(&:upcase)
+    streams.select { |s| (s[:languages] & langs).any? }
+  end
 
   def catalog(type, catalog_id, genre: nil, limit: 20)
     cinemeta_type = type.to_s == "show" ? "series" : type.to_s
@@ -120,13 +147,14 @@ class TorrentioService
     ServiceResult.success([])
   end
 
-  # Stremio sorting with debrid: RD+ first, quality descending, size descending
   def sort_streams(streams)
     streams.sort_by do |s|
+      video_compat = s[:video_codec] == "incompatible" ? 1 : 0
+      audio_compat = s[:audio_codec] == "incompatible" ? 1 : 0
       rd_score = s[:rd_plus] ? 0 : 1
       quality_score = QUALITY_SORT[s[:quality]] || 4
       size_bytes = s[:raw_size].is_a?(Numeric) ? s[:raw_size] : 0
-      [rd_score, quality_score, -size_bytes]
+      [video_compat, audio_compat, rd_score, quality_score, -size_bytes]
     end
   end
 
@@ -157,9 +185,33 @@ class TorrentioService
         raw_size: size_bytes || 0,
         rd_plus: s["sources"].is_a?(Array) && s["sources"].any?,
         filename: s.dig("behaviorHints", "filename"),
-        resolve_url: s["url"]
+        resolve_url: s["url"],
+        languages: extract_languages(title_text),
+        video_codec: extract_video_codec(title_text),
+        audio_codec: extract_audio_codec(title_text)
       }
     end
+  end
+
+  def extract_languages(title)
+    return ["ENG"] if title.blank?
+    langs = LANGUAGE_PATTERNS.select { |_, pattern| title.match?(pattern) }.keys
+    langs = LANGUAGE_PATTERNS.keys if title.match?(/\bMULTi|MULTIPLE|MULTI\b/i)
+    langs.presence || ["ENG"]
+  end
+
+  def extract_video_codec(title)
+    return "unknown" if title.blank?
+    return "incompatible" if title.match?(INCOMPATIBLE_VIDEO)
+    match = title.match(BROWSER_VIDEO_CODECS)
+    match ? match[0].upcase : "unknown"
+  end
+
+  def extract_audio_codec(title)
+    return "unknown" if title.blank?
+    return "incompatible" if title.match?(INCOMPATIBLE_AUDIO)
+    match = title.match(BROWSER_AUDIO_CODECS)
+    match ? match[0].upcase : "unknown"
   end
 
   def parse_size_bytes(title)
@@ -236,8 +288,6 @@ class TorrentioService
     }
   end
 
-
-  # Fetch age rating and RT rating from OMDB
   def fetch_omdb_ratings(imdb_id)
     api_key = ENV.fetch("OMDB_API_KEY", "")
     return {} if api_key.blank? || api_key == "your_omdb_api_key_here"

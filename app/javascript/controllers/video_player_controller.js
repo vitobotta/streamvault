@@ -2,7 +2,7 @@ import { Controller } from "@hotwired/stimulus"
 
 export default class extends Controller {
   static targets = ["video", "sourceInfo", "sourceToggle", "sourceDetails", "sourceUrl", "sourceFilename", "backButton"]
-  static values = { streamingUrl: String, filename: String, imdbId: String, type: String, season: String, episode: String }
+  static values = { streamingUrl: String, filename: String, imdbId: String, type: String, season: String, episode: String, resumeAt: String }
 
   connect() {
     this.player = null
@@ -17,6 +17,12 @@ export default class extends Controller {
     this.showOverlayUi()
     this.element.addEventListener("mousemove", this.mouseMoveHandler)
 
+    // Resume from last position
+    const resumeAt = parseInt(this.resumeAtValue) || 0
+    if (resumeAt > 0) {
+      this.videoTarget.currentTime = resumeAt
+    }
+
     // Init Plyr as enhancement — video already plays natively
     requestAnimationFrame(() => {
       this.player = new Plyr(this.videoTarget, {
@@ -29,6 +35,10 @@ export default class extends Controller {
     })
 
     this.startProgressTracking()
+
+    // Save progress on page unload
+    this.beforeUnloadHandler = () => this.saveProgressSync()
+    window.addEventListener("beforeunload", this.beforeUnloadHandler)
   }
 
   disconnect() {
@@ -36,6 +46,7 @@ export default class extends Controller {
     this.clearUiHideTimer()
     if (this.player) this.player.destroy()
     this.element.removeEventListener("mousemove", this.mouseMoveHandler)
+    window.removeEventListener("beforeunload", this.beforeUnloadHandler)
   }
 
   showOverlayUi() {
@@ -82,7 +93,7 @@ export default class extends Controller {
     this.progressInterval = setInterval(() => {
       const video = this.player || this.videoTarget
       if (video && !video.paused) this.saveProgress()
-    }, 10000)
+    }, 5000)
   }
 
   stopProgressTracking() {
@@ -118,6 +129,33 @@ export default class extends Controller {
     } catch (e) {
       console.warn("Progress save failed:", e)
     }
+  }
+
+  saveProgressSync() {
+    const el = this.player || this.videoTarget
+    if (!el) return
+    const currentTime = this.player ? this.player.currentTime : this.videoTarget.currentTime
+    const duration = this.player ? this.player.duration : this.videoTarget.duration
+    const progressSeconds = Math.floor(currentTime)
+    const durationSeconds = Math.floor(duration)
+    if (durationSeconds <= 0) return
+
+    const csrfToken = document.querySelector("meta[name='csrf-token']")?.content
+    const body = JSON.stringify({
+      imdb_id: this.imdbIdValue,
+      progress_seconds: progressSeconds,
+      duration_seconds: durationSeconds,
+      type: this.typeValue,
+      season: this.seasonValue,
+      episode: this.episodeValue
+    })
+
+    fetch(`/streaming/play/progress`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+      body: body,
+      keepalive: true
+    })
   }
 
   onVideoEnded() {

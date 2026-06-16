@@ -2,13 +2,21 @@
   <div class="space-y-1.5">
     <% @streams.each do |stream| %>
       <div class="flex items-center justify-between p-2 bg-sv-surface-hover rounded-lg">
-        <div class="min-w-0 flex-1">
+        <div class="min-w-0 flex-1 flex items-center gap-1.5 flex-wrap">
           <% if stream[:rd_plus] %><span class="badge badge-success text-xs">RD+</span><% end %>
           <span class="badge badge-accent text-xs"><%= stream[:quality] %></span>
-          <span class="text-xs text-white ml-1.5 truncate"><%= stream[:title] || stream[:name] %></span>
-          <span class="text-xs text-sv-text-muted ml-1.5"><%= stream[:size] %></span>
+          <% stream[:languages]&.each do |lang| %>
+            <span class="px-1.5 py-0.5 rounded text-xs font-medium bg-sv-surface text-sv-text-muted"><%= lang %></span>
+          <% end %>
+          <% if stream[:audio_codec] == "incompatible" %>
+            <span class="px-1.5 py-0.5 rounded text-xs font-medium bg-red-900/40 text-red-300">!<%= stream[:audio_codec] %></span>
+          <% elsif stream[:audio_codec] != "unknown" %>
+            <span class="px-1.5 py-0.5 rounded text-xs font-medium bg-sv-surface text-sv-text-muted"><%= stream[:audio_codec] %></span>
+          <% end %>
+          <span class="text-xs text-white ml-1 sv-stream-title"><%= stream[:title] || stream[:name] %></span>
+          <span class="text-xs text-sv-text-muted ml-1.5 shrink-0"><%= stream[:size] %></span>
         </div>
-        <div class="flex items-center gap-3 shrink-0">
+        <div class="flex items-center gap-3 shrink-0 ml-3">
           <span class="text-xs text-sv-text-muted">👤 <%= stream[:seeders] || 0 %></span>
           <%= button_to "Watch", streaming_index_path, params: { imdb_id: @imdb_id, type: "show", season: @season, episode: @episode, title: "#{@show_title} S#{@season.to_s.rjust(2,'0')}E#{@episode.to_s.rjust(2,'0')}" }, class: "btn-primary text-xs px-2 py-1", data: { turbo: false } %>
         </div>

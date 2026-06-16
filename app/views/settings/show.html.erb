@@ -33,6 +33,36 @@
       <% end %>
     </div>
 
+    <div class="bg-sv-surface rounded-xl p-6 border border-sv-border">
+      <h2 class="text-lg font-semibold text-white mb-2">Preferred Languages</h2>
+      <p class="text-xs text-sv-text-muted mb-4">Streams without at least one of your selected languages will be filtered out. Leave empty to show all streams.</p>
+
+      <div class="flex flex-wrap gap-2 mb-4">
+        <% User::STREAM_LANGUAGE_OPTIONS.each do |code, name| %>
+          <% selected = Array(@user.preferred_languages).include?(code) %>
+          <label class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm cursor-pointer transition-colors <%= selected ? 'bg-sv-accent text-white' : 'bg-sv-surface-hover text-sv-text-muted hover:text-white' %>">
+            <input type="checkbox" name="user[preferred_languages][]" value="<%= code %>" <%= 'checked' if selected %> class="hidden">
+            <span><%= name %></span>
+          </label>
+        <% end %>
+      </div>
+      <input type="hidden" name="user[preferred_languages][]" value="">
+    </div>
+
+    <div class="bg-sv-surface rounded-xl p-6 border border-sv-border">
+      <h2 class="text-lg font-semibold text-white mb-2">Default Language</h2>
+      <p class="text-xs text-sv-text-muted mb-4">Default audio language when starting a stream.</p>
+
+      <%= f.select :default_language,
+        options_for_select(
+          [["None", ""]] + User::STREAM_LANGUAGE_OPTIONS.to_a.map { |c, n| [n, c] },
+          @user.default_language
+        ),
+        {},
+        class: "input-field w-auto"
+      %>
+    </div>
+
     <%= f.submit "Save Settings", class: "btn-primary cursor-pointer" %>
   <% end %>
 </div>
