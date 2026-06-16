@@ -1,15 +1,13 @@
 # frozen_string_literal: true
 
 class ContentStreamingService
-  MAX_STREAM_ATTEMPTS = 10
-  BLOCKED_PATTERNS = /downloading|infringing|failed.infringement|removed|blocked/i
+  MAX_STREAM_ATTEMPTS = 15
 
   def initialize(user)
     @user = user
     @torrentio = TorrentioService.new(rd_api_key: user.realdebrid_api_key)
   end
 
-  # Start a stream — tries multiple streams, returns the first that resolves to a real URL
   def start_stream(imdb_id, type, season: nil, episode: nil)
     return ServiceResult.failure("RealDebrid API key not configured") unless @user.has_realdebrid_key?
 
@@ -22,27 +20,48 @@ class ContentStreamingService
     streams = streams_result.data
     return ServiceResult.failure("No streams available for this content") if streams.empty?
 
-    streams.first(MAX_STREAM_ATTEMPTS).each do |stream|
-      next unless stream[:resolve_url].present?
+    # Check all streams concurrently — much faster than sequential
+    candidates = streams.first(MAX_STREAM_ATTEMPTS).select { |s| s[:resolve_url].present? }
+    result = resolve_first_valid(candidates)
 
-      result = verify_resolve_url(stream[:resolve_url])
-      if result
-        return ServiceResult.success({
-          streaming_url: result[:streaming_url],
-          filename: result[:filename],
-          stream: stream,
-          imdb_id: imdb_id,
-          type: type,
-          season: season,
-          episode: episode
-        })
-      end
+    if result
+      ServiceResult.success({
+        streaming_url: result[:streaming_url],
+        filename: result[:filename],
+        stream: result[:stream],
+        imdb_id: imdb_id,
+        type: type,
+        season: season,
+        episode: episode
+      })
+    else
+      ServiceResult.failure("No instant streams available. All streams are blocked or unavailable.")
     end
-
-    ServiceResult.failure("No instant streams available. All streams are blocked or unavailable.")
   end
 
   private
+
+  BLOCKED_PATTERNS = /downloading|infringing|failed.infringement|removed|blocked/i
+
+  # Fire all resolve requests in parallel, return the first valid result
+  def resolve_first_valid(candidates)
+    mutex = Mutex.new
+    winner = nil
+    threads = candidates.map do |stream|
+      Thread.new do
+        break if mutex.synchronize { winner }
+
+        resolved = verify_resolve_url(stream[:resolve_url])
+        if resolved
+          mutex.synchronize do
+            winner ||= { **resolved, stream: stream }
+          end
+        end
+      end
+    end
+    threads.each(&:join)
+    winner
+  end
 
   def verify_resolve_url(resolve_url)
     response = Faraday.get(resolve_url)

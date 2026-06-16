@@ -25,11 +25,11 @@
     </div>
   </div>
 
-  <%# Video player — plays immediately %>
-  <div class="w-full h-full">
-    <video data-video-player-target="video" id="stream-player" playsinline controls autoplay class="w-full h-full">
-      <source src="<%= @streaming_url %>" type="video/mp4">
-      <track kind="captions" label="No captions" default>
-    </video>
-  </div>
+  <%# Native video — starts immediately without waiting for JS %>
+  <video data-video-player-target="video" id="stream-player"
+         playsinline autoplay controls
+         preload="auto"
+         src="<%= @streaming_url %>"
+         class="w-full h-full">
+  </video>
 </div>

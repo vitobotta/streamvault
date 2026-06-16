@@ -10,20 +10,24 @@ export default class extends Controller {
     this.uiHideTimer = null
     this.mouseMoveHandler = this.onMouseMove.bind(this)
 
+    // Show source info
     this.sourceInfoTarget.classList.remove("hidden")
     this.sourceUrlTarget.textContent = this.streamingUrlValue
     this.sourceFilenameTarget.textContent = this.filenameValue || "Unknown"
     this.showOverlayUi()
     this.element.addEventListener("mousemove", this.mouseMoveHandler)
 
-    this.player = new Plyr(this.videoTarget, {
-      controls: ['play-large', 'play', 'progress', 'current-time', 'duration', 'mute', 'volume', 'captions', 'settings', 'pip', 'airplay', 'fullscreen'],
-      settings: ['captions', 'quality', 'speed'],
-      keyboard: { focused: true, global: true }
+    // Init Plyr as enhancement — video already plays natively
+    requestAnimationFrame(() => {
+      this.player = new Plyr(this.videoTarget, {
+        controls: ['play-large', 'play', 'progress', 'current-time', 'duration', 'mute', 'volume', 'captions', 'settings', 'pip', 'airplay', 'fullscreen'],
+        settings: ['captions', 'quality', 'speed'],
+        keyboard: { focused: true, global: true }
+      })
+
+      this.player.on("ended", () => this.onVideoEnded())
     })
 
-    this.player.on("ready", () => this.player.play())
-    this.player.on("ended", () => this.onVideoEnded())
     this.startProgressTracking()
   }
 
@@ -34,7 +38,6 @@ export default class extends Controller {
     this.element.removeEventListener("mousemove", this.mouseMoveHandler)
   }
 
-  // Overlay UI auto-hide after 4s idle
   showOverlayUi() {
     this.backButtonTarget.style.opacity = "1"
     this.sourceInfoTarget.style.opacity = "1"
@@ -77,7 +80,8 @@ export default class extends Controller {
 
   startProgressTracking() {
     this.progressInterval = setInterval(() => {
-      if (this.player && !this.player.paused) this.saveProgress()
+      const video = this.player || this.videoTarget
+      if (video && !video.paused) this.saveProgress()
     }, 10000)
   }
 
@@ -89,9 +93,12 @@ export default class extends Controller {
   }
 
   async saveProgress() {
-    if (!this.player) return
-    const progressSeconds = Math.floor(this.player.currentTime)
-    const durationSeconds = Math.floor(this.player.duration)
+    const el = this.player || this.videoTarget
+    if (!el) return
+    const currentTime = this.player ? this.player.currentTime : this.videoTarget.currentTime
+    const duration = this.player ? this.player.duration : this.videoTarget.duration
+    const progressSeconds = Math.floor(currentTime)
+    const durationSeconds = Math.floor(duration)
     if (durationSeconds <= 0) return
 
     try {
