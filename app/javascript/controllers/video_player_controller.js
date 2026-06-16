@@ -5,7 +5,6 @@ export default class extends Controller {
   static values = { streamingUrl: String, filename: String, imdbId: String, type: String, season: String, episode: String, resumeAt: String, title: String }
 
   connect() {
-    this.player = null
     this.progressInterval = null
     this.uiHideTimer = null
     this.mouseMoveHandler = this.onMouseMove.bind(this)
@@ -17,36 +16,25 @@ export default class extends Controller {
     this.showOverlayUi()
     this.element.addEventListener("mousemove", this.mouseMoveHandler)
 
-    // Init Plyr first, then play
-    this.player = new Plyr(this.videoTarget, {
-      controls: ['play-large', 'play', 'progress', 'current-time', 'duration', 'mute', 'volume', 'captions', 'settings', 'pip', 'airplay', 'fullscreen'],
-      settings: ['captions', 'quality', 'speed'],
-      keyboard: { focused: true, global: true },
-      autoplay: true
-    })
-
-    this.player.on("ready", () => {
-      // Resume from last position
-      const resumeAt = parseInt(this.resumeAtValue) || 0
-      if (resumeAt > 0) {
-        this.player.currentTime = resumeAt
-      }
-      this.player.play()
-    })
-
-    this.player.on("ended", () => this.onVideoEnded())
-
-    this.startProgressTracking()
+    // Resume from last position
+    const resumeAt = parseInt(this.resumeAtValue) || 0
+    if (resumeAt > 0) {
+      this.videoTarget.addEventListener("loadeddata", () => {
+        this.videoTarget.currentTime = resumeAt
+      }, { once: true })
+    }
 
     // Save progress on page unload
     this.beforeUnloadHandler = () => this.saveProgressSync()
     window.addEventListener("beforeunload", this.beforeUnloadHandler)
+
+    // Track progress every 5s
+    this.startProgressTracking()
   }
 
   disconnect() {
     this.stopProgressTracking()
     this.clearUiHideTimer()
-    if (this.player) this.player.destroy()
     this.element.removeEventListener("mousemove", this.mouseMoveHandler)
     window.removeEventListener("beforeunload", this.beforeUnloadHandler)
   }
@@ -93,7 +81,7 @@ export default class extends Controller {
 
   startProgressTracking() {
     this.progressInterval = setInterval(() => {
-      if (this.player && !this.player.paused) this.saveProgress()
+      if (this.videoTarget && !this.videoTarget.paused) this.saveProgress()
     }, 5000)
   }
 
@@ -105,9 +93,10 @@ export default class extends Controller {
   }
 
   async saveProgress() {
-    if (!this.player) return
-    const progressSeconds = Math.floor(this.player.currentTime)
-    const durationSeconds = Math.floor(this.player.duration)
+    const video = this.videoTarget
+    if (!video) return
+    const progressSeconds = Math.floor(video.currentTime)
+    const durationSeconds = Math.floor(video.duration)
     if (durationSeconds <= 0) return
 
     try {
@@ -131,9 +120,10 @@ export default class extends Controller {
   }
 
   saveProgressSync() {
-    if (!this.player) return
-    const progressSeconds = Math.floor(this.player.currentTime)
-    const durationSeconds = Math.floor(this.player.duration)
+    const video = this.videoTarget
+    if (!video) return
+    const progressSeconds = Math.floor(video.currentTime)
+    const durationSeconds = Math.floor(video.duration)
     if (durationSeconds <= 0) return
 
     const csrfToken = document.querySelector("meta[name='csrf-token']")?.content
@@ -151,9 +141,5 @@ export default class extends Controller {
       }),
       keepalive: true
     })
-  }
-
-  onVideoEnded() {
-    this.saveProgress()
   }
 }

@@ -8,7 +8,7 @@
      data-video-player-resume-at-value="<%= @resume_at %>"
      data-video-player-title-value="<%= @title %>">
 
-  <%# Back button (auto-hides) — links to show page with season for shows %>
+  <%# Back button (auto-hides) %>
   <div class="absolute top-4 left-4 z-10 opacity-100 transition-opacity duration-500" data-video-player-target="backButton">
     <%= link_to content_path(type: @type, imdb_id: @imdb_id, season: @season), class: "flex items-center gap-2 px-3 py-2 bg-black/60 rounded-lg text-white hover:bg-black/80 transition-colors" do %>
       <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
@@ -27,11 +27,12 @@
     </div>
   </div>
 
-  <%# Video — no autoplay/controls; Plyr takes over after init %>
+  <%# Native video with browser controls — most reliable playback %>
   <video data-video-player-target="video" id="stream-player"
-         playsinline
+         controls autoplay playsinline
          preload="auto"
          src="<%= @streaming_url %>"
-         class="w-full h-full">
+         class="w-full h-full"
+         style="object-fit: contain;">
   </video>
 </div>

@@ -199,11 +199,6 @@ body {
   overflow: hidden;
 }
 
-.player-container .plyr {
-  width: 100%;
-  height: 100%;
-  max-height: 100vh;
-}
 
 .player-container video {
   width: 100%;
