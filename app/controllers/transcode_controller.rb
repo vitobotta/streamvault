@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-# Separate controller for FFmpeg transcoding — uses ActionController::Live
 class TranscodeController < ApplicationController
   include ActionController::Live
 
@@ -14,13 +13,12 @@ class TranscodeController < ApplicationController
       return
     end
 
-    # RealDebrid requires auth for streaming URLs
     headers = {}
     if current_user.has_realdebrid_key?
       headers["Authorization"] = "Bearer #{current_user.realdebrid_api_key}"
     end
 
-    send_stream(type: "video/mp4", disposition: "inline") do |stream|
+    send_stream(type: "video/mp4", filename: "stream.mp4", disposition: "inline") do |stream|
       TranscodeService.transcode_to_fmp4(input_url, headers: headers) do |chunk|
         stream.write(chunk)
       end
