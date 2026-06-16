@@ -38,6 +38,9 @@ Rails.application.routes.draw do
     end
   end
 
+  # FFmpeg transcode proxy (MKV → fMP4 with AAC audio)
+  get "transcode", to: "transcode#stream", as: :transcode_stream
+
   # Settings
   get "settings", to: "settings#show", as: :settings
   patch "settings", to: "settings#update"

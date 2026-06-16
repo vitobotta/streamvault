@@ -16,6 +16,7 @@ class StreamingController < ApplicationController
 
     if result.success?
       resume_at = find_resume_position(params[:imdb_id], params[:type], params[:season], params[:episode])
+      needs_transcode = TranscodeService.needs_transcode?(result.data[:filename])
 
       redirect_to streaming_path(
         "play",
@@ -26,7 +27,8 @@ class StreamingController < ApplicationController
         season: params[:season],
         episode: params[:episode],
         title: params[:title],
-        resume_at: resume_at
+        resume_at: resume_at,
+        needs_transcode: needs_transcode
       )
     else
       redirect_back fallback_location: root_path, alert: result.error_message
@@ -43,6 +45,12 @@ class StreamingController < ApplicationController
     @episode = params[:episode]
     @title = params[:title] || "Now Playing"
     @resume_at = params[:resume_at]
+    @needs_transcode = params[:needs_transcode] == "true"
+
+    # If transcode needed, use our FFmpeg proxy URL
+    if @needs_transcode && @streaming_url.present?
+      @streaming_url = transcode_stream_path(url: @streaming_url)
+    end
   end
 
   # PATCH /streaming/:id/progress — save watch progress
@@ -55,7 +63,6 @@ class StreamingController < ApplicationController
       type: params[:type] || "movie",
       season: params[:season]&.to_i,
       episode: params[:episode]&.to_i,
-      poster_url: params[:poster_url],
       title: params[:title]
     )
 

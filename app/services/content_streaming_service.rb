@@ -45,18 +45,19 @@ class ContentStreamingService
   def resolve_first_valid(candidates)
     mutex = Mutex.new
     winner = nil
-    threads = candidates.map do |stream|
-      Thread.new do
-        break if mutex.synchronize { winner }
 
-        resolved = verify_resolve_url(stream[:resolve_url])
+    threads = candidates.map do |stream|
+      Thread.new(stream) do |s|
+        already_done = mutex.synchronize { !!winner }
+        next if already_done
+
+        resolved = verify_resolve_url(s[:resolve_url])
         if resolved
-          mutex.synchronize do
-            winner ||= { **resolved, stream: stream }
-          end
+          mutex.synchronize { winner ||= { **resolved, stream: s } }
         end
       end
     end
+
     threads.each(&:join)
     winner
   end
@@ -72,7 +73,6 @@ class ContentStreamingService
       return nil if filename.match?(BLOCKED_PATTERNS)
       { streaming_url: location, filename: filename }
     elsif [200, 206].include?(response.status)
-      # 200 = direct stream, 206 = partial content (streamable)
       filename = resolve_url.split("/").last.to_s
       return nil if filename.match?(BLOCKED_PATTERNS)
       { streaming_url: resolve_url, filename: filename }

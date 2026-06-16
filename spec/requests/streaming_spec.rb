@@ -25,7 +25,40 @@ RSpec.describe "Streaming", type: :request do
     context "when authenticated with RealDebrid key" do
       before { sign_in user }
 
-      it "starts a stream and redirects to player page with resolved URL" do
+      it "starts a stream and redirects to player page" do
+        stub_request(:get, "https://v3-cinemeta.strem.io/meta/movie/tt1375666.json")
+          .to_return(
+            status: 200,
+            body: { "meta" => { "id" => "tt1375666", "name" => "Inception" } }.to_json,
+            headers: { 'Content-Type' => 'application/json' }
+          )
+
+        stub_request(:get, %r{torrentio\.strem\.fun/([^/]+/)?stream/movie/tt1375666\.json})
+          .to_return(
+            status: 200,
+            body: {
+              "streams" => [
+                { "title" => "Inception 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/abc123/null/0/Inception.mp4", "behaviorHints" => { "filename" => "Inception.mp4" } }
+              ]
+            }.to_json,
+            headers: { 'Content-Type' => 'application/json' }
+          )
+
+        stub_request(:get, "https://torrentio.strem.fun/resolve/realdebrid/test_key/abc123/null/0/Inception.mp4")
+          .to_return(status: 302, headers: { "Location" => "https://download.real-debrid.com/d/file123/Inception.mp4" })
+
+        post streaming_index_path, params: { imdb_id: "tt1375666", type: "movie", title: "Inception" }
+        expect(response).to redirect_to(streaming_path("play",
+          streaming_url: "https://download.real-debrid.com/d/file123/Inception.mp4",
+          filename: "Inception.mp4",
+          imdb_id: "tt1375666",
+          type: "movie",
+          title: "Inception",
+          needs_transcode: false
+        ))
+      end
+
+      it "marks MKV streams for transcoding" do
         stub_request(:get, "https://v3-cinemeta.strem.io/meta/movie/tt1375666.json")
           .to_return(
             status: 200,
@@ -53,7 +86,8 @@ RSpec.describe "Streaming", type: :request do
           filename: "Inception.mkv",
           imdb_id: "tt1375666",
           type: "movie",
-          title: "Inception"
+          title: "Inception",
+          needs_transcode: true
         ))
       end
 
@@ -71,27 +105,26 @@ RSpec.describe "Streaming", type: :request do
             body: {
               "streams" => [
                 { "title" => "Inception 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/blocked/null/0/Inception.mkv", "behaviorHints" => { "filename" => "Inception.mkv" } },
-                { "title" => "Inception 720p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/ok/null/0/Inception720.mkv", "behaviorHints" => { "filename" => "Inception720.mkv" } }
+                { "title" => "Inception 720p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/ok/null/0/Inception720.mp4", "behaviorHints" => { "filename" => "Inception720.mp4" } }
               ]
             }.to_json,
             headers: { 'Content-Type' => 'application/json' }
           )
 
-        # First stream: copyright blocked
         stub_request(:get, "https://torrentio.strem.fun/resolve/realdebrid/test_key/blocked/null/0/Inception.mkv")
           .to_return(status: 302, headers: { "Location" => "https://torrentio.strem.fun/videos/downloading_v2.mp4" })
 
-        # Second stream: works
-        stub_request(:get, "https://torrentio.strem.fun/resolve/realdebrid/test_key/ok/null/0/Inception720.mkv")
-          .to_return(status: 302, headers: { "Location" => "https://download.real-debrid.com/d/file456/Inception720.mkv" })
+        stub_request(:get, "https://torrentio.strem.fun/resolve/realdebrid/test_key/ok/null/0/Inception720.mp4")
+          .to_return(status: 302, headers: { "Location" => "https://download.real-debrid.com/d/file456/Inception720.mp4" })
 
         post streaming_index_path, params: { imdb_id: "tt1375666", type: "movie", title: "Inception" }
         expect(response).to redirect_to(streaming_path("play",
-          streaming_url: "https://download.real-debrid.com/d/file456/Inception720.mkv",
-          filename: "Inception720.mkv",
+          streaming_url: "https://download.real-debrid.com/d/file456/Inception720.mp4",
+          filename: "Inception720.mp4",
           imdb_id: "tt1375666",
           type: "movie",
-          title: "Inception"
+          title: "Inception",
+          needs_transcode: false
         ))
       end
     end
@@ -102,15 +135,29 @@ RSpec.describe "Streaming", type: :request do
 
     it "renders the player page with video source" do
       get streaming_path("play",
-        streaming_url: "https://download.real-debrid.com/d/file123/Inception.mkv",
-        filename: "Inception.mkv",
+        streaming_url: "https://download.real-debrid.com/d/file123/Inception.mp4",
+        filename: "Inception.mp4",
         imdb_id: "tt1375666",
         type: "movie",
-        title: "Inception"
+        title: "Inception",
+        needs_transcode: false
       )
       expect(response).to have_http_status(:ok)
       expect(response.body).to include("video-player")
       expect(response.body).to include("download.real-debrid.com")
+    end
+
+    it "uses transcode proxy for MKV files" do
+      get streaming_path("play",
+        streaming_url: "https://download.real-debrid.com/d/file123/Inception.mkv",
+        filename: "Inception.mkv",
+        imdb_id: "tt1375666",
+        type: "movie",
+        title: "Inception",
+        needs_transcode: true
+      )
+      expect(response).to have_http_status(:ok)
+      expect(response.body).to include("transcode")
     end
   end
 
