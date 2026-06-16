@@ -83,25 +83,12 @@
         <h2 class="text-xl font-bold text-white mt-8 mb-4">Available Streams</h2>
         <div class="space-y-2">
           <% @streams.each do |stream| %>
-            <% container = stream[:container] || "unknown" %>
-            <% container_badge_class = container == "mp4" ? "badge-success" : container == "mkv" ? "badge-warning" : "badge-accent" %>
             <div class="flex items-center justify-between p-3 bg-sv-surface rounded-lg">
               <div class="min-w-0 flex-1 flex items-center gap-1.5 flex-wrap">
                 <% if stream[:rd_plus] %><span class="badge badge-success">RD+</span><% end %>
                 <span class="badge badge-accent"><%= stream[:quality] %></span>
-                <span class="badge <%= container_badge_class %>"><%= container.upcase %></span>
                 <% stream[:languages]&.each do |lang| %>
                   <span class="px-1.5 py-0.5 rounded text-xs font-medium bg-sv-surface-hover text-sv-text-muted"><%= lang %></span>
-                <% end %>
-                <% if stream[:video_codec] == "incompatible" %>
-                  <span class="px-1.5 py-0.5 rounded text-xs font-medium bg-red-900/40 text-red-300">!<%= stream[:video_codec] %></span>
-                <% elsif stream[:video_codec] != "unknown" %>
-                  <span class="px-1.5 py-0.5 rounded text-xs font-medium bg-sv-surface-hover text-sv-text-muted"><%= stream[:video_codec] %></span>
-                <% end %>
-                <% if stream[:audio_codec] == "incompatible" %>
-                  <span class="px-1.5 py-0.5 rounded text-xs font-medium bg-red-900/40 text-red-300">!<%= stream[:audio_codec] %></span>
-                <% elsif stream[:audio_codec] != "unknown" %>
-                  <span class="px-1.5 py-0.5 rounded text-xs font-medium bg-sv-surface-hover text-sv-text-muted"><%= stream[:audio_codec] %></span>
                 <% end %>
                 <span class="text-sm text-white ml-1 truncate sv-stream-title"><%= stream[:title] || stream[:name] %></span>
                 <span class="text-xs text-sv-text-muted ml-2 shrink-0"><%= stream[:size] %></span>

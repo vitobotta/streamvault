@@ -1,20 +1,12 @@
 <% if @streams.present? %>
   <div class="space-y-1.5">
     <% @streams.each do |stream| %>
-      <% container = stream[:container] || "unknown" %>
-      <% container_badge_class = container == "mp4" ? "badge-success" : container == "mkv" ? "badge-warning" : "badge-accent" %>
       <div class="flex items-center justify-between p-2 bg-sv-surface-hover rounded-lg">
         <div class="min-w-0 flex-1 flex items-center gap-1.5 flex-wrap">
           <% if stream[:rd_plus] %><span class="badge badge-success text-xs">RD+</span><% end %>
           <span class="badge badge-accent text-xs"><%= stream[:quality] %></span>
-          <span class="badge <%= container_badge_class %> text-xs"><%= container.upcase %></span>
           <% stream[:languages]&.each do |lang| %>
             <span class="px-1.5 py-0.5 rounded text-xs font-medium bg-sv-surface text-sv-text-muted"><%= lang %></span>
-          <% end %>
-          <% if stream[:audio_codec] == "incompatible" %>
-            <span class="px-1.5 py-0.5 rounded text-xs font-medium bg-red-900/40 text-red-300">!<%= stream[:audio_codec] %></span>
-          <% elsif stream[:audio_codec] != "unknown" %>
-            <span class="px-1.5 py-0.5 rounded text-xs font-medium bg-sv-surface text-sv-text-muted"><%= stream[:audio_codec] %></span>
           <% end %>
           <span class="text-xs text-white ml-1 sv-stream-title"><%= stream[:title] || stream[:name] %></span>
           <span class="text-xs text-sv-text-muted ml-1.5 shrink-0"><%= stream[:size] %></span>

@@ -4,7 +4,6 @@ class TorrentioService
   TORRENTIO_URL = ENV.fetch("TORRENTIO_API_BASE_URL", "https://torrentio.strem.fun")
   CINEMETA_URL = "https://v3-cinemeta.strem.io"
   QUALITY_SORT = { "4K" => 0, "1080p" => 1, "720p" => 2, "480p" => 3, "Unknown" => 4 }.freeze
-  CONTAINER_COMPAT = { "mp4" => 0, "webm" => 0, "mov" => 1, "mkv" => 2, "avi" => 2, "unknown" => 2 }.freeze
 
   LANGUAGE_PATTERNS = {
     "ENG" => /\b(ENG|ENGLISH|EN)\b/i,
@@ -24,11 +23,6 @@ class TorrentioService
     "TURKISH" => /\b(TURKISH|TUR|TR)\b/i,
     "SWEDISH" => /\b(SWEDISH|SWE|SV)\b/i
   }.freeze
-
-  BROWSER_VIDEO_CODECS = /x264|h\.?264|x265|h\.?265|hevc|avc|vp9|av1/i
-  BROWSER_AUDIO_CODECS = /aac|ac3|eac3|dd[p+]?(?:\b|\d)|opus|mp3|flac/i
-  INCOMPATIBLE_VIDEO = /mpeg-?2|vc-?1|wmv|realvideo/i
-  INCOMPATIBLE_AUDIO = /dts[-\s]?(?:hd|ma)|truehd|pcm|lpcm/i
 
   def initialize(rd_api_key: nil)
     @rd_api_key = rd_api_key
@@ -148,16 +142,13 @@ class TorrentioService
     ServiceResult.success([])
   end
 
-  # Sort: browser-compatible containers first, then RD+, then quality, then size
+  # Sort: RD+ first, then quality, then size (audio/video handled by FFmpeg transcode)
   def sort_streams(streams)
     streams.sort_by do |s|
-      container_compat = CONTAINER_COMPAT[s[:container]] || 1
-      video_compat = s[:video_codec] == "incompatible" ? 1 : 0
-      audio_compat = s[:audio_codec] == "incompatible" ? 1 : 0
       rd_score = s[:rd_plus] ? 0 : 1
       quality_score = QUALITY_SORT[s[:quality]] || 4
       size_bytes = s[:raw_size].is_a?(Numeric) ? s[:raw_size] : 0
-      [container_compat, video_compat, audio_compat, rd_score, quality_score, -size_bytes]
+      [rd_score, quality_score, -size_bytes]
     end
   end
 
@@ -178,7 +169,6 @@ class TorrentioService
       title_text = s["title"].to_s
       filename = s.dig("behaviorHints", "filename").to_s
       size_bytes = parse_size_bytes(title_text)
-      container = extract_container(filename, title_text)
       {
         title: s["title"],
         info_hash: s["infoHash"],
@@ -192,18 +182,8 @@ class TorrentioService
         filename: filename,
         resolve_url: s["url"],
         languages: extract_languages(title_text),
-        video_codec: extract_video_codec(title_text),
-        audio_codec: extract_audio_codec(title_text),
-        container: container
       }
     end
-  end
-
-  def extract_container(filename, title)
-    source = filename.presence || title
-    return "unknown" if source.blank?
-    match = source.match(/\.(mkv|mp4|avi|webm|mov)\b/i)
-    match ? match[1].downcase : "unknown"
   end
 
   def extract_languages(title)
@@ -211,20 +191,6 @@ class TorrentioService
     langs = LANGUAGE_PATTERNS.select { |_, pattern| title.match?(pattern) }.keys
     langs = LANGUAGE_PATTERNS.keys if title.match?(/\bMULTi|MULTIPLE|MULTI\b/i)
     langs.presence || ["ENG"]
-  end
-
-  def extract_video_codec(title)
-    return "unknown" if title.blank?
-    return "incompatible" if title.match?(INCOMPATIBLE_VIDEO)
-    match = title.match(BROWSER_VIDEO_CODECS)
-    match ? match[0].upcase : "unknown"
-  end
-
-  def extract_audio_codec(title)
-    return "unknown" if title.blank?
-    return "incompatible" if title.match?(INCOMPATIBLE_AUDIO)
-    match = title.match(BROWSER_AUDIO_CODECS)
-    match ? match[0].upcase : "unknown"
   end
 
   def parse_size_bytes(title)
