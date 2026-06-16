@@ -13,9 +13,20 @@
           <% if @metadata[:runtime] %> · <%= @metadata[:runtime] %><% end %>
           <% if @metadata[:genre] %> · <%= @metadata[:genre] %><% end %>
         </p>
-        <% if @metadata[:imdb_rating] %>
-          <p class="text-sv-warning mt-1">⭐ <%= @metadata[:imdb_rating] %>/10</p>
-        <% end %>
+        <div class="flex items-center gap-3 mt-1 flex-wrap">
+          <% if @metadata[:rated] %>
+            <span class="px-2 py-0.5 border border-sv-text-muted rounded text-xs text-sv-text-muted font-medium"><%= @metadata[:rated] %></span>
+          <% end %>
+          <% if @metadata[:imdb_rating] %>
+            <span class="text-sv-warning text-sm font-medium">⭐ <%= @metadata[:imdb_rating] %>/10</span>
+          <% end %>
+          <% if @metadata[:rt_rating] %>
+            <span class="text-sm font-medium" style="color: #fa320a;">🍅 <%= @metadata[:rt_rating] %></span>
+          <% end %>
+          <% if @metadata[:metascore] %>
+            <span class="px-1.5 py-0.5 text-xs font-bold rounded" style="background: #00cf4a; color: #000;">Metascore <%= @metadata[:metascore] %></span>
+          <% end %>
+        </div>
         <% if @metadata[:plot] %>
           <p class="text-sv-text mt-4"><%= @metadata[:plot] %></p>
         <% end %>
@@ -93,9 +104,13 @@
               <div class="w-8 text-center text-sv-text-muted text-sm font-medium shrink-0"><%= ep[:episode] %></div>
               <div class="flex-1 min-w-0">
                 <h3 class="text-sm font-medium text-white truncate"><%= ep[:title] || "Episode #{ep[:episode]}" %></h3>
-                <% if ep[:released] %>
-                  <p class="text-xs text-sv-text-muted"><%= ep[:released] %></p>
-                <% end %>
+                <p class="text-xs text-sv-text-muted">
+                    <%= ep[:released] %>
+                    <% if ep[:runtime] %> · <%= ep[:runtime] %><% end %>
+                  </p>
+                  <% if ep[:overview].present? %>
+                    <p class="text-xs text-sv-text-muted mt-0.5 line-clamp-2"><%= ep[:overview] %></p>
+                  <% end %>
                 <% if progress %>
                   <div class="mt-1 h-1 bg-sv-border rounded-full overflow-hidden">
                     <div class="h-full bg-sv-accent rounded-full" style="width: <%= progress.progress_percentage %>%"></div>

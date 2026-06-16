@@ -65,8 +65,11 @@ RSpec.configure do |config|
   # WebMock configuration
   config.before(:each) do
     WebMock.reset!
-    # Block all HTTP requests by default; stub per-test
     WebMock.disable_net_connect!(allow_localhost: true)
+
+    # Default OMDB stub — returns not found unless test overrides
+    stub_request(:get, /www\.omdbapi\.com/)
+      .to_return(status: 200, body: { "Response" => "False", "Error" => "ID not found!" }.to_json, headers: { 'Content-Type' => 'application/json' })
   end
 
   # ActionPolicy RSpec matchers are loaded via 'action_policy/rspec'

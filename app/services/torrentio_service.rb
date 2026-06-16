@@ -74,7 +74,10 @@ class TorrentioService
     response = @cinemeta.get("meta/#{cinemeta_type}/#{imdb_id}.json")
 
     if response.success? && response.body.is_a?(Hash) && response.body["meta"]
-      ServiceResult.success(normalize_cinemeta_meta(response.body["meta"], type))
+      result = normalize_cinemeta_meta(response.body["meta"], type)
+      # Enrich with OMDB data (age rating, RT rating)
+      result.merge!(fetch_omdb_ratings(imdb_id))
+      ServiceResult.success(result)
     else
       ServiceResult.failure("Metadata not found")
     end
@@ -231,6 +234,31 @@ class TorrentioService
       total_seasons: extract_total_seasons(meta),
       episodes: extract_episodes(meta)
     }
+  end
+
+
+  # Fetch age rating and RT rating from OMDB
+  def fetch_omdb_ratings(imdb_id)
+    api_key = ENV.fetch("OMDB_API_KEY", "")
+    return {} if api_key.blank? || api_key == "your_omdb_api_key_here"
+
+    response = Faraday.get("https://www.omdbapi.com/", { i: imdb_id, apikey: api_key, tomatoes: "true" })
+    data = JSON.parse(response.body)
+    return {} unless data["Response"] == "True"
+
+    rt_rating = nil
+    if data["Ratings"].is_a?(Array)
+      rt = data["Ratings"].find { |r| r["Source"] == "Rotten Tomatoes" }
+      rt_rating = rt["Value"] if rt
+    end
+
+    {
+      rated: data["Rated"] != "N/A" ? data["Rated"] : nil,
+      rt_rating: rt_rating,
+      metascore: data["Metascore"] != "N/A" ? data["Metascore"] : nil
+    }
+  rescue StandardError
+    {}
   end
 
   def extract_total_seasons(meta)
