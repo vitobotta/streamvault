@@ -54,7 +54,7 @@ RSpec.describe "Streaming", type: :request do
           imdb_id: "tt1375666",
           type: "movie",
           title: "Inception",
-          needs_transcode: false
+          needs_transcode: true
         ))
       end
 
@@ -124,7 +124,7 @@ RSpec.describe "Streaming", type: :request do
           imdb_id: "tt1375666",
           type: "movie",
           title: "Inception",
-          needs_transcode: false
+          needs_transcode: true
         ))
       end
     end
@@ -140,7 +140,7 @@ RSpec.describe "Streaming", type: :request do
         imdb_id: "tt1375666",
         type: "movie",
         title: "Inception",
-        needs_transcode: false
+        needs_transcode: true
       )
       expect(response).to have_http_status(:ok)
       expect(response.body).to include("video-player")
