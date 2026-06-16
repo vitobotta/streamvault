@@ -4,6 +4,7 @@ class TorrentioService
   TORRENTIO_URL = ENV.fetch("TORRENTIO_API_BASE_URL", "https://torrentio.strem.fun")
   CINEMETA_URL = "https://v3-cinemeta.strem.io"
   QUALITY_SORT = { "4K" => 0, "1080p" => 1, "720p" => 2, "480p" => 3, "Unknown" => 4 }.freeze
+  CONTAINER_COMPAT = { "mp4" => 0, "webm" => 0, "mov" => 1, "mkv" => 2, "avi" => 2, "unknown" => 1 }.freeze
 
   LANGUAGE_PATTERNS = {
     "ENG" => /\b(ENG|ENGLISH|EN)\b/i,
@@ -147,14 +148,16 @@ class TorrentioService
     ServiceResult.success([])
   end
 
+  # Sort: browser-compatible containers first, then RD+, then quality, then size
   def sort_streams(streams)
     streams.sort_by do |s|
+      container_compat = CONTAINER_COMPAT[s[:container]] || 1
       video_compat = s[:video_codec] == "incompatible" ? 1 : 0
       audio_compat = s[:audio_codec] == "incompatible" ? 1 : 0
       rd_score = s[:rd_plus] ? 0 : 1
       quality_score = QUALITY_SORT[s[:quality]] || 4
       size_bytes = s[:raw_size].is_a?(Numeric) ? s[:raw_size] : 0
-      [video_compat, audio_compat, rd_score, quality_score, -size_bytes]
+      [container_compat, video_compat, audio_compat, rd_score, quality_score, -size_bytes]
     end
   end
 
@@ -173,7 +176,9 @@ class TorrentioService
   def parse_streams(raw_streams)
     raw_streams.map do |s|
       title_text = s["title"].to_s
+      filename = s.dig("behaviorHints", "filename").to_s
       size_bytes = parse_size_bytes(title_text)
+      container = extract_container(filename, title_text)
       {
         title: s["title"],
         info_hash: s["infoHash"],
@@ -184,13 +189,21 @@ class TorrentioService
         size: size_bytes ? format_size(size_bytes) : "Unknown",
         raw_size: size_bytes || 0,
         rd_plus: s["sources"].is_a?(Array) && s["sources"].any?,
-        filename: s.dig("behaviorHints", "filename"),
+        filename: filename,
         resolve_url: s["url"],
         languages: extract_languages(title_text),
         video_codec: extract_video_codec(title_text),
-        audio_codec: extract_audio_codec(title_text)
+        audio_codec: extract_audio_codec(title_text),
+        container: container
       }
     end
+  end
+
+  def extract_container(filename, title)
+    source = filename.presence || title
+    return "unknown" if source.blank?
+    match = source.match(/\.(mkv|mp4|avi|webm|mov)\b/i)
+    match ? match[1].downcase : "unknown"
   end
 
   def extract_languages(title)

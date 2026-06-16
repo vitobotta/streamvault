@@ -83,10 +83,13 @@
         <h2 class="text-xl font-bold text-white mt-8 mb-4">Available Streams</h2>
         <div class="space-y-2">
           <% @streams.each do |stream| %>
+            <% container = stream[:container] || "unknown" %>
+            <% container_badge_class = container == "mp4" ? "badge-success" : container == "mkv" ? "badge-warning" : "badge-accent" %>
             <div class="flex items-center justify-between p-3 bg-sv-surface rounded-lg">
               <div class="min-w-0 flex-1 flex items-center gap-1.5 flex-wrap">
                 <% if stream[:rd_plus] %><span class="badge badge-success">RD+</span><% end %>
                 <span class="badge badge-accent"><%= stream[:quality] %></span>
+                <span class="badge <%= container_badge_class %>"><%= container.upcase %></span>
                 <% stream[:languages]&.each do |lang| %>
                   <span class="px-1.5 py-0.5 rounded text-xs font-medium bg-sv-surface-hover text-sv-text-muted"><%= lang %></span>
                 <% end %>
