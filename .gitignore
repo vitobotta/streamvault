@@ -38,3 +38,4 @@
 
 # Coverage report (SimpleCov)
 /coverage
+.DS_Store
