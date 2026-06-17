@@ -63,24 +63,28 @@ class TranscodeService
     # Limit analyze duration to reduce time-to-first-byte for MKV over HTTP.
     # Minimal probe limits — just enough to read the MKV/MP4 header
     # and identify streams. Default is 5M+5s which causes long delays
-    # on large remote files. 500K reads the header in ~1 packet.
-    cmd += ["-analyzeduration", "500000", "-probesize", "500000"]
+    cmd = [FFMPEG_PATH, "-loglevel", "error"]
+    # Minimal probe limits — ffmpeg needs to read the container header
+    # and identify streams. 0/32K is the absolute minimum ffmpeg accepts;
+    # it still reads enough to parse MKV/M2TS headers.
+    cmd += ["-analyzeduration", "0", "-probesize", "32768"]
     cmd += ["-headers", header_str + "\r\n"] if header_str.present?
     # Input seeking (before -i): fast, uses the container's seek table.
-    # For MKV over HTTP, ffmpeg sends a Range request to approximately
-    # the right byte position.  Must be before -i to avoid decoding and
-    # discarding frames.
     cmd += ["-ss", start_seconds.to_s] if start_seconds.to_f > 0
     cmd += ["-i", input_url]
+    # Map only first video + first audio stream. Without -map, ffmpeg
+    # processes ALL audio streams (some REMUX files have 8+ audio tracks),
+    # which increases analysis time and output size.
+    cmd += ["-map", "0:v:0", "-map", "0:a:0"]
     cmd += ["-c:v", "copy"]
     cmd += ["-c:a", "aac", "-b:a", "192k", "-ac", "2"]
     cmd += [
       "-f", "mp4",
       "-movflags", FMP4_FLAGS,
-      # Fragment duration: 0.5s balances time-to-first-byte vs overhead.
-      # Smaller fragments start playback faster but have more container
-      # overhead; larger fragments are more efficient but delay first frame.
-      "-frag_duration", "500000",  # microseconds (0.5s)
+      # Very small fragments (0.1s) for fastest time-to-first-byte.
+      # The browser gets the first fMP4 fragment almost immediately
+      # after ffmpeg finds the first keyframe.
+      "-frag_duration", "100000",  # 0.1s (microseconds)
       "-fflags", "+genpts",
       "pipe:1"
     ]
@@ -91,15 +95,12 @@ class TranscodeService
     wr.close
     err_wr.close
 
-    # Drain stderr in background to:
-    # 1. Prevent pipe-buffer deadlock (ffmpeg blocks on stderr write
-    #    if the 64 KB kernel buffer fills and we never read it).
-    # 2. Capture diagnostics for TranscodeError when ffmpeg fails.
+    # Drain stderr in background to prevent pipe-buffer deadlock and
+    # capture diagnostics for TranscodeError when ffmpeg fails.
     stderr_buf = +""
     stderr_thread = Thread.new do
       loop { stderr_buf << err_rd.readpartial(4096) }
     rescue EOFError, IOError, Errno::EBADF
-      # pipe closed or process killed — thread exits
     end
 
     begin
