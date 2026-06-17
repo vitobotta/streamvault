@@ -13,7 +13,7 @@ export default class extends Controller {
     return {
       streamingUrl: String, filename: String, imdbId: String, type: String,
       season: String, episode: String, resumeAt: String, startSeconds: Number,
-      needsTranscode: Boolean, title: String
+      needsTranscode: Boolean, title: String, duration: Number
     }
   }
 
@@ -50,15 +50,21 @@ export default class extends Controller {
       }, { once: true })
     }
 
-    // Probe duration for transcode streams (fMP4 with empty_moov has
-    // duration=0, so the browser can't show a seek bar or total duration).
-    // We call ffprobe via a separate endpoint and use the result to
-    // drive the custom seek bar.
+    // Duration: if the server already probed it (passed via data attr),
+    // use it directly — no need for a separate AJAX round-trip.
+    // Fallback: probe via /transcode/duration (for seeks that restart
+    // ffmpeg with a different URL, where the server didn't pre-probe).
     if (this.needsTranscodeValue) {
       // Show the resume position immediately — the video starts at
       // startSeconds (ffmpeg -ss) but timeupdate hasn't fired yet.
       this.currentTimeTarget.textContent = this.formatTime(this.startSecondsValue)
-      this.probeDuration()
+      if (this.durationValue > 0) {
+        this.knownDuration = this.durationValue
+        this.updateDurationDisplay()
+        this.onTimeUpdate()
+      } else {
+        this.probeDuration()
+      }
     } else {
       // Direct stream — browser knows the duration natively
       this.videoTarget.addEventListener("loadedmetadata", () => {

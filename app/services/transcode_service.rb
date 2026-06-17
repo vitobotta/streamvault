@@ -2,6 +2,7 @@
 
 require "open3"
 require "timeout"
+require "json"
 
 # Remuxes/transcodes streams via FFmpeg for browser playback.
 # Video is copied (no re-encoding), audio → AAC.
@@ -67,8 +68,10 @@ class TranscodeService
 
     cmd = [FFMPEG_PATH, "-loglevel", "error"]
     # Limit analyze duration to reduce time-to-first-byte for MKV over HTTP.
-    # Without this, ffmpeg may buffer 5+ seconds of data before producing output.
-    cmd += ["-analyzeduration", "2M", "-probesize", "2M"]
+    # Minimal probe limits — just enough to read the MKV/MP4 header
+    # and identify streams. Default is 5M+5s which causes long delays
+    # on large remote files. 500K reads the header in ~1 packet.
+    cmd += ["-analyzeduration", "500000", "-probesize", "500000"]
     cmd += ["-headers", header_str + "\r\n"] if header_str.present?
     # Input seeking (before -i): fast, uses the container's seek table.
     # For MKV over HTTP, ffmpeg sends a Range request to approximately
@@ -141,53 +144,57 @@ class TranscodeService
     end
   end
 
-  # Probe the duration of a stream URL using ffprobe.
-  # Returns the duration in seconds (float), or 0 if it can't be determined.
-  # Uses the probe cache to avoid repeated ffprobe calls for the same URL.
-  def self.probe_duration(input_url, headers: {})
+  # Probe both duration and audio codec in a single ffprobe call.
+  # Returns { duration:, codec: } — one HTTP round-trip instead of two.
+  # Uses the probe cache to avoid repeated calls for the same URL.
+  def self.probe_stream(input_url, headers: {})
     cached = cache_get(input_url)
-    return cached[:duration] if cached && cached[:duration]
+    if cached && cached[:duration] && cached.key?(:codec)
+      return { duration: cached[:duration], codec: cached[:codec] }
+    end
 
     header_str = headers.map { |k, v| "#{k}: #{v}" }.join("\r\n")
 
     cmd = [FFPROBE_PATH, "-v", "error"]
     cmd += ["-headers", header_str + "\r\n"] if header_str.present?
-    cmd += ["-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            input_url]
+    cmd += [
+      "-show_entries", "format=duration:stream=index:stream=codec_name:stream=codec_type",
+      "-of", "json",
+      input_url
+    ]
 
-    stdout, _, status = Timeout.timeout(15) { Open3.capture3(*cmd) }
-    return 0 unless status.success?
+    stdout, _, status = Timeout.timeout(10) { Open3.capture3(*cmd) }
+    return { duration: 0, codec: nil } unless status.success?
 
-    duration = stdout.strip.to_f
+    data = JSON.parse(stdout) rescue nil
+    return { duration: 0, codec: nil } unless data
+
+    duration = data.dig("format", "duration").to_f
     duration = duration > 0 ? duration : 0
-    cache_store(input_url, duration: duration)
-    duration
+
+    # Find first audio stream's codec
+    codec = nil
+    streams = data["streams"] || []
+    audio_stream = streams.find { |s| s["codec_type"] == "audio" }
+    codec = audio_stream&.dig("codec_name")&.downcase
+    codec = nil if codec == "unknown" || codec.blank?
+
+    cache_store(input_url, duration: duration, codec: codec)
+    { duration: duration, codec: codec }
   rescue Timeout::Error, StandardError
-    0
+    { duration: 0, codec: nil }
+  end
+
+  # Probe the duration of a stream URL using ffprobe.
+  # Delegates to probe_stream (single ffprobe call, cached).
+  def self.probe_duration(input_url, headers: {})
+    probe_stream(input_url, headers: headers)[:duration]
   end
 
   # Probe the audio codec of a stream URL using ffprobe.
-  # Returns the codec name (e.g. "aac", "ac3", "truehd") or nil if unknown.
-  # Uses the probe cache to avoid repeated ffprobe calls.
+  # Delegates to probe_stream (single ffprobe call, cached).
   def self.probe_audio_codec(input_url, headers: "")
-    cached = cache_get(input_url)
-    return cached[:codec] if cached
-
-    cmd = [FFPROBE_PATH, "-v", "error"]
-    cmd += ["-headers", headers + "\r\n"] if headers.present?
-    cmd += ["-select_streams", "a:0",
-            "-show_entries", "stream=codec_name",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            input_url]
-
-    stdout, _, status = Timeout.timeout(10) { Open3.capture3(*cmd) }
-    codec = status.success? ? stdout.strip.downcase : nil
-    codec = nil if codec == "unknown" || codec.blank?
-    cache_store(input_url, codec: codec)
-    codec
-  rescue Timeout::Error, StandardError
-    nil
+    probe_stream(input_url)[:codec]
   end
 
   # ── Probe cache ───────────────────────────────────────────────────
