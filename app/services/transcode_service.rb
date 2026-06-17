@@ -59,6 +59,7 @@ class TranscodeService
     # the ~5% CPU cost of AAC encoding. The probe is only useful for
     # pure remux (0% CPU), but the network latency dwarfs the savings.
 
+    cmd = [FFMPEG_PATH, "-loglevel", "error"]
     # Moderate probe limits — enough for MKV and MPEG-TS (M2TS).
     # M2TS needs more data than MKV because PAT/PMT tables are
     # interleaved every ~100ms in 188-byte packets. 32K was too
