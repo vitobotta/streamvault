@@ -27,19 +27,25 @@ class TorrentioService
   def initialize(rd_api_key: nil)
     @rd_api_key = rd_api_key
 
+    proxy = ENV["TORRENTIO_PROXY"]
+
     @torrentio = Faraday.new(url: TORRENTIO_URL) do |f|
       f.request :json
       f.response :json
+      f.response :follow_redirects
       f.adapter Faraday.default_adapter
       f.options.timeout = 15
       f.options.open_timeout = 5
+      f.proxy = proxy if proxy.present?
     end
 
     @cinemeta = Faraday.new(url: CINEMETA_URL) do |f|
       f.response :json
+      f.response :follow_redirects
       f.adapter Faraday.default_adapter
       f.options.timeout = 10
       f.options.open_timeout = 5
+      f.proxy = proxy if proxy.present?
     end
   end
 
@@ -76,14 +82,17 @@ class TorrentioService
     elsif response.status == 404
       ServiceResult.success([])
     else
-      ServiceResult.failure("Failed to fetch streams", response.status)
+      Rails.logger.error("[TorrentioService] streams request failed: HTTP #{response.status} for #{path}")
+      ServiceResult.failure("Failed to fetch streams (HTTP #{response.status})")
     end
   rescue Faraday::TimeoutError
+    Rails.logger.error("[TorrentioService] streams request timed out for #{path}")
     ServiceResult.failure("Stream request timed out")
-  rescue Faraday::ConnectionFailed
+  rescue Faraday::ConnectionFailed => e
+    Rails.logger.error("[TorrentioService] streams connection failed: #{e.message}")
     ServiceResult.failure("Could not connect to stream service")
   rescue StandardError => e
-    Rails.logger.error("TorrentioService#streams error: #{e.message}")
+    Rails.logger.error("[TorrentioService] streams error: #{e.message}")
     ServiceResult.failure("An unexpected error occurred")
   end
 

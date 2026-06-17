@@ -27,6 +27,7 @@ gem "devise"
 gem "action_policy"
 # HTTP client for external APIs
 gem "faraday"
+gem "faraday-follow_redirects"
 
 # Environment variables
 gem "dotenv-rails", groups: [:development, :test]

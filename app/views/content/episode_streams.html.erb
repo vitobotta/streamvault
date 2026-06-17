@@ -1,4 +1,6 @@
-<% if @streams.present? %>
+<% if @streams_error.present? %>
+  <p class="text-sm text-sv-warning"><%= @streams_error %></p>
+<% elsif @streams.present? %>
   <div class="space-y-1.5">
     <% @streams.each do |stream| %>
       <div class="flex items-center justify-between p-2 bg-sv-surface-hover rounded-lg">

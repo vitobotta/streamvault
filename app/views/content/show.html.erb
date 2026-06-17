@@ -99,6 +99,31 @@
             </div>
           <% end %>
         </div>
+      <% if @streams_error.present? %>
+        <div class="mt-8 p-4 bg-sv-surface rounded-lg border border-sv-border text-center">
+          <p class="text-sv-warning"><%= @streams_error %></p>
+          <p class="text-sv-text-muted mt-1 text-sm">If this persists, the stream provider may be blocking this server's IP. Consider setting <code>TORRENTIO_PROXY</code> or <code>TORRENTIO_API_BASE_URL</code> env vars.</p>
+        </div>
+      <% elsif @streams.present? %>
+        <h2 class="text-xl font-bold text-white mt-8 mb-4">Available Streams</h2>
+        <div class="space-y-2">
+          <% @streams.each do |stream| %>
+            <div class="flex items-center justify-between p-3 bg-sv-surface rounded-lg">
+              <div class="min-w-0 flex-1 flex items-center gap-1.5 flex-wrap">
+                <% if stream[:rd_plus] %><span class="badge badge-success">RD+</span><% end %>
+                <span class="badge badge-accent"><%= stream[:quality] %></span>
+                <% stream[:languages]&.each do |lang| %>
+                  <span class="px-1.5 py-0.5 rounded text-xs font-medium bg-sv-surface-hover text-sv-text-muted"><%= lang %></span>
+                <% end %>
+                <span class="text-sm text-white ml-1 truncate sv-stream-title"><%= stream[:title] || stream[:name] %></span>
+                <span class="text-xs text-sv-text-muted ml-2 shrink-0"><%= stream[:size] %></span>
+              </div>
+              <div class="flex items-center gap-3 shrink-0 ml-3">
+                <%= button_to "Watch", streaming_index_path, params: { imdb_id: @imdb_id, type: @type, title: @metadata[:title] }, class: "btn-primary text-sm", data: { turbo: false } %>
+              </div>
+            </div>
+          <% end %>
+        </div>
       <% else %>
         <div class="mt-8 p-4 bg-sv-surface rounded-lg border border-sv-border text-center">
           <p class="text-sv-text-muted">No streams available for this content.</p>

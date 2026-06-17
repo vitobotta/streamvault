@@ -16,6 +16,7 @@ class ContentController < ApplicationController
       content_title = @metadata&.dig(:title)
       streams_result = torrentio.streams(@imdb_id, @type, title: content_title, preferred_languages: current_user.preferred_stream_languages)
       @streams = streams_result.success? ? streams_result.data : []
+      @streams_error = streams_result.failure? ? streams_result.error_message : nil
     end
 
     @in_library = current_user.library_entries.exists?(imdb_id: @imdb_id)
@@ -54,6 +55,7 @@ class ContentController < ApplicationController
     filter_title = "#{@show_title} #{@episode_title}"
     streams_result = torrentio.streams(@imdb_id, "show", season: @season, episode: @episode, title: filter_title, preferred_languages: current_user.preferred_stream_languages)
     @streams = streams_result.success? ? streams_result.data : []
+    @streams_error = streams_result.failure? ? streams_result.error_message : nil
 
     render layout: false
   end
