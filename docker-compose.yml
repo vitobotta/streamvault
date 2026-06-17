@@ -21,7 +21,11 @@ services:
   web:
     build:
       context: .
-      dockerfile: Dockerfile.dev
+      args:
+        # Run as root for volume mount permissions in local dev.
+        # Production (Kamal) builds without these args → non-root rails user.
+        RUN_AS_ROOT: "true"
+        APP_UID: "0:0"
     env_file: .env
     ports:
       - "${PORT:-3000}:80"

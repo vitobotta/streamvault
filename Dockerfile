@@ -9,6 +9,9 @@
 
 # Make sure RUBY_VERSION matches the Ruby version in .ruby-version
 ARG RUBY_VERSION=4.0.5
+# When building for local Docker Compose (volume mounts), set RUN_AS_ROOT=true
+# to skip the non-root user creation. Production (Kamal) builds without it.
+ARG RUN_AS_ROOT=false
 FROM docker.io/library/ruby:$RUBY_VERSION-slim AS base
 
 # Rails app lives here
@@ -60,14 +63,20 @@ RUN SECRET_KEY_BASE_DUMMY=1 ./bin/rails assets:precompile
 # Final stage for app image
 FROM base
 
-# Run and own only the runtime files as a non-root user for security
-RUN groupadd --system --gid 1000 rails && \
-    useradd rails --uid 1000 --gid 1000 --create-home --shell /bin/bash
-USER 1000:1000
+# Re-declare args for this stage (global ARGs aren't available in RUN)
+ARG RUN_AS_ROOT=false
+ARG APP_UID=1000:1000
+# Run and own only the runtime files as a non-root user for security.
+# Skipped when RUN_AS_ROOT=true (local Docker Compose with volume mounts).
+RUN if [ "$RUN_AS_ROOT" != "true" ]; then \
+      groupadd --system --gid 1000 rails && \
+      useradd rails --uid 1000 --gid 1000 --create-home --shell /bin/bash; \
+    fi
+# When RUN_AS_ROOT=true, stay as root (uid 0) for volume mount permissions.
+USER ${APP_UID}
 
-# Copy built artifacts: gems, application
-COPY --chown=rails:rails --from=build "${BUNDLE_PATH}" "${BUNDLE_PATH}"
-COPY --chown=rails:rails --from=build /rails /rails
+COPY --chown=${APP_UID} --from=build "${BUNDLE_PATH}" "${BUNDLE_PATH}"
+COPY --chown=${APP_UID} --from=build /rails /rails
 
 # Entrypoint prepares the database.
 ENTRYPOINT ["/rails/bin/docker-entrypoint"]
