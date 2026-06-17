@@ -1,16 +1,20 @@
 import { Controller } from "@hotwired/stimulus"
 
 export default class extends Controller {
-  staticTargets = [
-    "video", "controls", "seekBar", "seekFilled", "seekBuffered", "seekHandle",
-    "playButton", "playIcon", "pauseIcon", "currentTime", "durationDisplay",
-    "volumeIcon", "muteIcon", "seekingOverlay",
-    "sourceInfo", "sourceToggle", "sourceDetails", "sourceUrl", "sourceFilename", "backButton"
-  ]
-  staticValues = {
-    streamingUrl: String, filename: String, imdbId: String, type: String,
-    season: String, episode: String, resumeAt: String, startSeconds: Number,
-    needsTranscode: Boolean, title: String
+  static get targets() {
+    return [
+      "video", "controls", "seekBar", "seekFilled", "seekBuffered", "seekHandle",
+      "playButton", "playIcon", "pauseIcon", "currentTime", "durationDisplay",
+      "volumeIcon", "muteIcon", "seekingOverlay",
+      "sourceInfo", "sourceToggle", "sourceDetails", "sourceUrl", "sourceFilename", "backButton"
+    ]
+  }
+  static get values() {
+    return {
+      streamingUrl: String, filename: String, imdbId: String, type: String,
+      season: String, episode: String, resumeAt: String, startSeconds: Number,
+      needsTranscode: Boolean, title: String
+    }
   }
 
   connect() {
@@ -27,7 +31,6 @@ export default class extends Controller {
     this.sourceFilenameTarget.textContent = this.filenameValue || "Unknown"
     this.showOverlayUi()
     this.element.addEventListener("mousemove", this.mouseMoveHandler)
-
     // Video event listeners
     this.videoTarget.addEventListener("play", () => this.updatePlayIcon())
     this.videoTarget.addEventListener("pause", () => this.updatePlayIcon())
