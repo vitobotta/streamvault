@@ -55,12 +55,16 @@ export default class extends Controller {
     // We call ffprobe via a separate endpoint and use the result to
     // drive the custom seek bar.
     if (this.needsTranscodeValue) {
+      // Show the resume position immediately — the video starts at
+      // startSeconds (ffmpeg -ss) but timeupdate hasn't fired yet.
+      this.currentTimeTarget.textContent = this.formatTime(this.startSecondsValue)
       this.probeDuration()
     } else {
       // Direct stream — browser knows the duration natively
       this.videoTarget.addEventListener("loadedmetadata", () => {
         this.knownDuration = this.videoTarget.duration
         this.updateDurationDisplay()
+        this.onTimeUpdate()
       })
     }
 
@@ -79,8 +83,6 @@ export default class extends Controller {
     window.removeEventListener("beforeunload", this.beforeUnloadHandler)
   }
 
-  // ── Duration probing ──────────────────────────────────────────────
-
   async probeDuration() {
     try {
       const rawUrl = this.extractRawUrl()
@@ -91,6 +93,9 @@ export default class extends Controller {
       if (data.duration > 0) {
         this.knownDuration = data.duration
         this.updateDurationDisplay()
+        // Now that we know the duration, position the seek bar at the
+        // current playback point (which starts at startSecondsValue).
+        this.onTimeUpdate()
       }
     } catch (e) {
       console.warn("Duration probe failed:", e)
