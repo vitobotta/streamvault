@@ -30,13 +30,6 @@ class TranscodeService
 
   class TranscodeError < StandardError; end
 
-  # Always transcode — audio is remuxed to AAC for browser compatibility.
-  # Video is copied (no re-encoding). With the Tailscale proxy setup,
-  # the app runs on a home machine with a residential IP, so RealDebrid
-  # CDN bandwidth limits are not a concern.
-  def self.needs_transcode?(_filename)
-    true
-  end
 
   # Stream transcoded/remuxed fMP4 from FFmpeg.
   # Probes the source audio codec first: if it's AAC or MP3 (browser-

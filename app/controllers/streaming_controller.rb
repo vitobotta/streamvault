@@ -32,7 +32,6 @@ class StreamingController < ApplicationController
 
     if result.success?
       resume_at = find_resume_position(params[:imdb_id], params[:type], params[:season], params[:episode])
-      needs_transcode = TranscodeService.needs_transcode?(result.data[:filename])
 
       redirect_to streaming_path(
         "play",
@@ -44,7 +43,6 @@ class StreamingController < ApplicationController
         episode: params[:episode],
         title: params[:title],
         resume_at: resume_at,
-        needs_transcode: needs_transcode,
         duration: 0
       )
     else
@@ -60,14 +58,13 @@ class StreamingController < ApplicationController
     @episode = params[:episode]
     @title = params[:title] || "Now Playing"
     @resume_at = params[:resume_at]
-    @needs_transcode = params[:needs_transcode] == "true"
     @duration = params[:duration].to_f
 
-    # If transcode needed, use our FFmpeg proxy URL.
-    # Pass resume_at as start_seconds so ffmpeg seeks to the right
-    # position (-ss) — the stream starts at the resume point and the
-    # browser never needs to seek (which would cancel and re-request).
-    if @needs_transcode && @streaming_url.present?
+    # Build the FFmpeg proxy URL. Pass resume_at as start_seconds so
+    # ffmpeg seeks to the right position (-ss) — the stream starts at
+    # the resume point and the browser never needs to seek (which
+    # would cancel and re-request).
+    if @streaming_url.present?
       transcode_params = { url: @streaming_url }
       transcode_params[:start_seconds] = @resume_at if @resume_at.present? && @resume_at.to_f > 0
       @streaming_url = transcode_stream_path(transcode_params)

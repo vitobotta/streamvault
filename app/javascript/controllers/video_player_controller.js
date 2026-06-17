@@ -13,7 +13,7 @@ export default class extends Controller {
     return {
       streamingUrl: String, filename: String, imdbId: String, type: String,
       season: String, episode: String, resumeAt: String, startSeconds: Number,
-      needsTranscode: Boolean, title: String, duration: Number
+      title: String, duration: Number
     }
   }
 
@@ -41,29 +41,14 @@ export default class extends Controller {
     this.videoTarget.addEventListener("playing", () => this.hideSeekingOverlay())
     this.videoTarget.addEventListener("canplay", () => this.hideSeekingOverlay())
 
-    // Resume from last position (direct streams only — transcode streams
-    // already start at the resume position via ffmpeg -ss)
-    const resumeAt = parseInt(this.resumeAtValue) || 0
-    if (resumeAt > 0 && this.startSecondsValue === 0) {
-      this.videoTarget.addEventListener("loadeddata", () => {
-        this.videoTarget.currentTime = resumeAt
-      }, { once: true })
-    }
+    // Resume: transcode streams already start at the resume position
+    // via ffmpeg -ss, so no client-side seek needed.
 
-    // Duration: always probe in the background via AJAX — never block
-    // video playback. The video starts immediately; the seek bar
-    // populates when the probe completes (usually a few seconds).
-    if (this.needsTranscodeValue) {
-      this.currentTimeTarget.textContent = this.formatTime(this.startSecondsValue)
-      this.probeDuration()
-    } else {
-      // Direct stream — browser knows the duration natively
-      this.videoTarget.addEventListener("loadedmetadata", () => {
-        this.knownDuration = this.videoTarget.duration
-        this.updateDurationDisplay()
-        this.onTimeUpdate()
-      })
-    }
+    // Duration: probe in the background via AJAX — never block video
+    // playback. The video starts immediately; the seek bar populates
+    // when the probe completes (usually a few seconds).
+    this.currentTimeTarget.textContent = this.formatTime(this.startSecondsValue)
+    this.probeDuration()
 
     // Save progress on page unload
     this.beforeUnloadHandler = () => this.saveProgressSync()
@@ -200,13 +185,7 @@ export default class extends Controller {
 
     const targetSeconds = Math.floor(percent * this.knownDuration)
 
-    if (!this.needsTranscodeValue) {
-      // Direct stream — native seek
-      this.videoTarget.currentTime = targetSeconds
-      return
-    }
-
-    // Transcode — restart ffmpeg at the new position
+    // Restart ffmpeg at the new position
     if (targetSeconds === this.startSecondsValue) return
 
     this.isSeeking = true
