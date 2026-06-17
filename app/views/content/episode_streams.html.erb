@@ -6,7 +6,6 @@
       <div class="flex items-center justify-between p-2 bg-sv-surface-hover rounded-lg">
         <div class="min-w-0 flex-1 flex items-center gap-1.5 flex-wrap">
           <% if stream[:rd_plus] %><span class="badge badge-success text-xs">RD+</span><% end %>
-          <% if stream[:browser_playable] %><span class="badge badge-info text-xs">Direct Play</span><% end %>
           <span class="badge badge-accent text-xs"><%= stream[:quality] %></span>
           <% stream[:languages]&.each do |lang| %>
             <span class="px-1.5 py-0.5 rounded text-xs font-medium bg-sv-surface text-sv-text-muted"><%= lang %></span>

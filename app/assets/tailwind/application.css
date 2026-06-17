@@ -155,10 +155,6 @@ body {
   color: var(--color-sv-accent);
 }
 
-.badge-info {
-  background-color: oklch(0.30 0.08 230);
-  color: oklch(0.85 0.12 230);
-}
 
 .badge-success {
   background-color: oklch(0.30 0.08 155);

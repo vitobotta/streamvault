@@ -151,15 +151,13 @@ class TorrentioService
     ServiceResult.success([])
   end
 
-  # Sort: browser-playable first (saves VPS bandwidth — direct stream
-  # from RealDebrid to browser), then RD+, then quality, then size.
+  # Sort: RD+ first, then quality, then size (audio/video handled by FFmpeg transcode)
   def sort_streams(streams)
     streams.sort_by do |s|
-      playable_score = s[:browser_playable] ? 0 : 1
       rd_score = s[:rd_plus] ? 0 : 1
       quality_score = QUALITY_SORT[s[:quality]] || 4
       size_bytes = s[:raw_size].is_a?(Numeric) ? s[:raw_size] : 0
-      [playable_score, rd_score, quality_score, -size_bytes]
+      [rd_score, quality_score, -size_bytes]
     end
   end
 
@@ -193,7 +191,6 @@ class TorrentioService
         filename: filename,
         resolve_url: rewrite_resolve_url(s["url"]),
         languages: extract_languages(title_text),
-        browser_playable: TranscodeService.browser_playable?(filename),
       }
     end
   end
