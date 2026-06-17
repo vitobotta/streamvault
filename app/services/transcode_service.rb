@@ -31,15 +31,19 @@ class TranscodeService
   class TranscodeError < StandardError; end
 
   # Only transcode formats the browser can't play natively.
- # MP4 files with H.264/H.265 video + AAC audio play directly in the
- # browser — no ffmpeg needed, no VPS bandwidth used. The browser
- # downloads directly from RealDebrid (residential IP, no bandwidth
- # limit). MKV, M2TS, AVI, etc. need transcoding via the VPS.
- BROWSER_PLAYABLE_EXTENSIONS = %w[.mp4 .m4v .webm].freeze
+  # MP4 files with H.264/H.265 video + AAC audio play directly in the
+  # browser — no ffmpeg needed, no VPS bandwidth used. The browser
+  # downloads directly from RealDebrid (residential IP, no bandwidth
+  # limit). MKV, M2TS, AVI, etc. need transcoding via the VPS.
+  BROWSER_PLAYABLE_EXTENSIONS = %w[.mp4 .m4v .webm].freeze
+
+  def self.browser_playable?(filename)
+    ext = File.extname(filename.to_s).downcase
+    BROWSER_PLAYABLE_EXTENSIONS.include?(ext)
+  end
 
   def self.needs_transcode?(filename)
-    ext = File.extname(filename.to_s).downcase
-    !BROWSER_PLAYABLE_EXTENSIONS.include?(ext)
+    !browser_playable?(filename)
   end
 
   # Stream transcoded/remuxed fMP4 from FFmpeg.
