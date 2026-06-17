@@ -79,12 +79,11 @@ Rails.application.configure do
   # Only use :id for inspections in production.
   config.active_record.attributes_for_inspect = [ :id ]
 
-  # Enable DNS rebinding protection and other `Host` header attacks.
-  # config.hosts = [
-  #   "example.com",     # Allow requests from example.com
-  #   /.*\.example\.com/ # Allow requests from subdomains like `www.example.com`
-  # ]
-  #
-  # Skip DNS rebinding protection for the default health check endpoint.
-  # config.host_authorization = { exclude: ->(request) { request.path == "/up" } }
+  # Enable DNS rebinding protection. When APP_DOMAIN is set, only
+ # requests with that Host header are allowed. The health check
+ # endpoint is always excluded so Kamal deploy probes work.
+ if ENV["APP_DOMAIN"].present?
+   config.hosts << ENV["APP_DOMAIN"]
+ end
+ config.host_authorization = { exclude: ->(request) { request.path == "/up" } }
 end
