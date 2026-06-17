@@ -39,6 +39,7 @@ Rails.application.routes.draw do
   end
 
   # FFmpeg transcode proxy (MKV → fMP4 with AAC audio)
+  get "transcode/duration", to: "transcode#duration", as: :transcode_duration
   get "transcode", to: "transcode#stream", as: :transcode_stream
 
   # Settings

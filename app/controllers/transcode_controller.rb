@@ -48,4 +48,21 @@ class TranscodeController < ApplicationController
       response.stream.close
     end
   end
+
+  # GET /transcode/duration?url=... — probe file duration via ffprobe
+  def duration
+    input_url = params[:url]
+    if input_url.blank?
+      render json: { duration: 0 }, status: :bad_request
+      return
+    end
+
+    headers = {}
+    if current_user.has_realdebrid_key?
+      headers["Authorization"] = "Bearer #{current_user.realdebrid_api_key}"
+    end
+
+    dur = TranscodeService.probe_duration(input_url, headers: headers)
+    render json: { duration: dur }
+  end
 end

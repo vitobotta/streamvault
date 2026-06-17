@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "open3"
+require "timeout"
+
 # Remuxes/transcodes streams via FFmpeg for browser playback.
 # Video is copied (no re-encoding), audio → AAC.
 #
@@ -99,6 +102,27 @@ class TranscodeService
     end
   end
 
+  # Probe the duration of a stream URL using ffprobe.
+  # Returns the duration in seconds (float), or 0 if it can't be determined.
+  # This reads only the container headers — no decoding — so it's fast
+  # even for large files over HTTP.
+  def self.probe_duration(input_url, headers: {})
+    header_str = headers.map { |k, v| "#{k}: #{v}" }.join("\r\n")
+
+    cmd = ["ffprobe", "-v", "error"]
+    cmd += ["-headers", header_str + "\r\n"] if header_str.present?
+    cmd += ["-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            input_url]
+
+    stdout, _, status = Timeout.timeout(15) { Open3.capture3(*cmd) }
+    return 0 unless status.success?
+
+    duration = stdout.strip.to_f
+    duration > 0 ? duration : 0
+  rescue Timeout::Error, StandardError
+    0
+  end
   # ── Helpers ───────────────────────────────────────────────────────
 
   def self.stderr_summary(buf)

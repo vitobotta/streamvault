@@ -7,6 +7,7 @@
      data-video-player-episode-value="<%= @episode %>"
      data-video-player-resume-at-value="<%= @resume_at %>"
      data-video-player-start-seconds-value="<%= @needs_transcode && @resume_at.present? ? @resume_at : 0 %>"
+     data-video-player-needs-transcode-value="<%= @needs_transcode %>"
      data-video-player-title-value="<%= @title %>">
 
   <%# Back button (auto-hides) %>
@@ -28,12 +29,60 @@
     </div>
   </div>
 
-  <%# Native video with browser controls — most reliable playback %>
+  <%# Video element — no native controls, custom UI below %>
   <video data-video-player-target="video" id="stream-player"
-         controls autoplay playsinline
-         preload="auto"
+         autoplay playsinline
          src="<%= @streaming_url %>"
          class="w-full h-full"
          style="object-fit: contain;">
   </video>
+
+  <%# Custom controls bar %>
+  <div data-video-player-target="controls"
+       class="absolute bottom-0 left-0 right-0 z-10 bg-gradient-to-t from-black/90 via-black/50 to-transparent pt-16 pb-3 px-4 opacity-100 transition-opacity duration-500">
+
+    <%# Seek bar %>
+    <div data-video-player-target="seekBar"
+         data-action="click->video-player#seek mousedown->video-player#startSeekDrag mouseup->video-player#stopSeekDrag mouseleave->video-player#stopSeekDrag touchstart->video-player#startSeekDrag touchend->video-player#stopSeekDrag"
+         class="group relative h-1.5 bg-white/20 rounded-full cursor-pointer mb-3 hover:h-2.5 transition-all">
+      <div data-video-player-target="seekBuffered" class="absolute inset-y-0 left-0 bg-white/30 rounded-full" style="width: 0%"></div>
+      <div data-video-player-target="seekFilled" class="absolute inset-y-0 left-0 bg-indigo-500 rounded-full" style="width: 0%"></div>
+      <div data-video-player-target="seekHandle" class="absolute w-3 h-3 bg-white rounded-full shadow opacity-0 group-hover:opacity-100 transition-opacity" style="left: 0%; top: 50%; transform: translate(-50%, -50%)"></div>
+    </div>
+
+    <%# Controls row %>
+    <div class="flex items-center gap-3 text-white text-sm">
+      <%# Play/pause %>
+      <button data-action="click->video-player#togglePlay" data-video-player-target="playButton" class="hover:text-indigo-400 transition-colors">
+        <svg data-video-player-target="playIcon" class="w-6 h-6 hidden" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+        <svg data-video-player-target="pauseIcon" class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+      </button>
+
+      <%# Time display %>
+      <span data-video-player-target="currentTime" class="tabular-nums">0:00</span>
+      <span class="text-white/40">/</span>
+      <span data-video-player-target="durationDisplay" class="text-white/60 tabular-nums">--:--</span>
+
+      <div class="flex-1"></div>
+
+      <%# Volume %>
+      <button data-action="click->video-player#toggleMute" class="hover:text-indigo-400 transition-colors">
+        <svg data-video-player-target="volumeIcon" class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
+        <svg data-video-player-target="muteIcon" class="w-5 h-5 hidden" fill="currentColor" viewBox="0 0 24 24"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>
+      </button>
+
+      <%# Fullscreen %>
+      <button data-action="click->video-player#toggleFullscreen" class="hover:text-indigo-400 transition-colors">
+        <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <%# Seeking overlay (shown while ffmpeg restarts after a seek) %>
+  <div data-video-player-target="seekingOverlay" class="hidden absolute inset-0 flex items-center justify-center bg-black/60 z-20">
+    <div class="flex flex-col items-center gap-3">
+      <div class="w-12 h-12 border-4 border-white/20 border-t-indigo-500 rounded-full animate-spin"></div>
+      <span class="text-white/80 text-sm">Seeking…</span>
+    </div>
+  </div>
 </div>

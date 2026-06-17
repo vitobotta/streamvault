@@ -1,12 +1,24 @@
 import { Controller } from "@hotwired/stimulus"
 
 export default class extends Controller {
-  staticTargets = ["video", "sourceInfo", "sourceToggle", "sourceDetails", "sourceUrl", "sourceFilename", "backButton"]
-  staticValues = { streamingUrl: String, filename: String, imdbId: String, type: String, season: String, episode: String, resumeAt: String, startSeconds: Number, title: String }
+  staticTargets = [
+    "video", "controls", "seekBar", "seekFilled", "seekBuffered", "seekHandle",
+    "playButton", "playIcon", "pauseIcon", "currentTime", "durationDisplay",
+    "volumeIcon", "muteIcon", "seekingOverlay",
+    "sourceInfo", "sourceToggle", "sourceDetails", "sourceUrl", "sourceFilename", "backButton"
+  ]
+  staticValues = {
+    streamingUrl: String, filename: String, imdbId: String, type: String,
+    season: String, episode: String, resumeAt: String, startSeconds: Number,
+    needsTranscode: Boolean, title: String
+  }
 
   connect() {
     this.progressInterval = null
     this.uiHideTimer = null
+    this.knownDuration = 0
+    this.isSeeking = false
+    this.isDragging = false
     this.mouseMoveHandler = this.onMouseMove.bind(this)
 
     // Show source info
@@ -16,16 +28,37 @@ export default class extends Controller {
     this.showOverlayUi()
     this.element.addEventListener("mousemove", this.mouseMoveHandler)
 
-    // Resume from last position.
-    // When transcoding, the stream already starts at the resume position
-    // (ffmpeg -ss), so we must NOT set currentTime — that would trigger
-    // a seek, which cancels and re-requests the stream (causing stutter).
-    // For direct streams (no transcode), seek client-side as before.
+    // Video event listeners
+    this.videoTarget.addEventListener("play", () => this.updatePlayIcon())
+    this.videoTarget.addEventListener("pause", () => this.updatePlayIcon())
+    this.videoTarget.addEventListener("timeupdate", () => this.onTimeUpdate())
+    this.videoTarget.addEventListener("progress", () => this.onProgress())
+    this.videoTarget.addEventListener("volumechange", () => this.updateVolumeIcon())
+    this.videoTarget.addEventListener("waiting", () => this.showSeekingOverlay())
+    this.videoTarget.addEventListener("playing", () => this.hideSeekingOverlay())
+    this.videoTarget.addEventListener("canplay", () => this.hideSeekingOverlay())
+
+    // Resume from last position (direct streams only — transcode streams
+    // already start at the resume position via ffmpeg -ss)
     const resumeAt = parseInt(this.resumeAtValue) || 0
     if (resumeAt > 0 && this.startSecondsValue === 0) {
       this.videoTarget.addEventListener("loadeddata", () => {
         this.videoTarget.currentTime = resumeAt
       }, { once: true })
+    }
+
+    // Probe duration for transcode streams (fMP4 with empty_moov has
+    // duration=0, so the browser can't show a seek bar or total duration).
+    // We call ffprobe via a separate endpoint and use the result to
+    // drive the custom seek bar.
+    if (this.needsTranscodeValue) {
+      this.probeDuration()
+    } else {
+      // Direct stream — browser knows the duration natively
+      this.videoTarget.addEventListener("loadedmetadata", () => {
+        this.knownDuration = this.videoTarget.duration
+        this.updateDurationDisplay()
+      })
     }
 
     // Save progress on page unload
@@ -43,15 +76,226 @@ export default class extends Controller {
     window.removeEventListener("beforeunload", this.beforeUnloadHandler)
   }
 
+  // ── Duration probing ──────────────────────────────────────────────
+
+  async probeDuration() {
+    try {
+      const rawUrl = this.extractRawUrl()
+      if (!rawUrl) return
+
+      const response = await fetch(`/transcode/duration?url=${encodeURIComponent(rawUrl)}`)
+      const data = await response.json()
+      if (data.duration > 0) {
+        this.knownDuration = data.duration
+        this.updateDurationDisplay()
+      }
+    } catch (e) {
+      console.warn("Duration probe failed:", e)
+    }
+  }
+
+  extractRawUrl() {
+    try {
+      const url = new URL(this.streamingUrlValue, window.location.origin)
+      return url.searchParams.get("url")
+    } catch {
+      return null
+    }
+  }
+
+  // ── Play / pause ──────────────────────────────────────────────────
+
+  togglePlay() {
+    if (this.videoTarget.paused) {
+      this.videoTarget.play()
+    } else {
+      this.videoTarget.pause()
+    }
+  }
+
+  updatePlayIcon() {
+    if (this.videoTarget.paused) {
+      this.playIconTarget.classList.remove("hidden")
+      this.pauseIconTarget.classList.add("hidden")
+    } else {
+      this.playIconTarget.classList.add("hidden")
+      this.pauseIconTarget.classList.remove("hidden")
+    }
+  }
+
+  // ── Volume / mute ─────────────────────────────────────────────────
+
+  toggleMute() {
+    this.videoTarget.muted = !this.videoTarget.muted
+  }
+
+  updateVolumeIcon() {
+    if (this.videoTarget.muted || this.videoTarget.volume === 0) {
+      this.volumeIconTarget.classList.add("hidden")
+      this.muteIconTarget.classList.remove("hidden")
+    } else {
+      this.volumeIconTarget.classList.remove("hidden")
+      this.muteIconTarget.classList.add("hidden")
+    }
+  }
+
+  // ── Fullscreen ────────────────────────────────────────────────────
+
+  toggleFullscreen() {
+    if (document.fullscreenElement) {
+      document.exitFullscreen()
+    } else {
+      this.element.requestFullscreen()
+    }
+  }
+
+  // ── Seek bar ──────────────────────────────────────────────────────
+
+  // The seek bar shows the position within the full movie (not within
+  // the current transcode fragment).  For transcode streams, seeking
+  // restarts ffmpeg with -ss at the new position.
+  seek(event) {
+    if (this.isDragging) return // drag handler manages this
+    const percent = this.seekPercentFromEvent(event)
+    this.performSeek(percent)
+  }
+
+  startSeekDrag(event) {
+    this.isDragging = true
+    event.preventDefault()
+    this.dragMoveHandler = (e) => this.onSeekDragMove(e)
+    document.addEventListener("mousemove", this.dragMoveHandler)
+    document.addEventListener("touchmove", this.dragMoveHandler)
+  }
+
+  onSeekDragMove(event) {
+    if (!this.isDragging) return
+    const percent = this.seekPercentFromEvent(event)
+    this.updateSeekVisuals(percent)
+  }
+
+  stopSeekDrag(event) {
+    if (!this.isDragging) return
+    this.isDragging = false
+    document.removeEventListener("mousemove", this.dragMoveHandler)
+    document.removeEventListener("touchmove", this.dragMoveHandler)
+    const percent = this.seekPercentFromEvent(event)
+    this.performSeek(percent)
+  }
+
+  seekPercentFromEvent(event) {
+    const rect = this.seekBarTarget.getBoundingClientRect()
+    const clientX = event.touches ? event.touches[0].clientX : event.clientX
+    const percent = (clientX - rect.left) / rect.width
+    return Math.max(0, Math.min(1, percent))
+  }
+
+  performSeek(percent) {
+    if (this.knownDuration <= 0) return
+
+    const targetSeconds = Math.floor(percent * this.knownDuration)
+
+    if (!this.needsTranscodeValue) {
+      // Direct stream — native seek
+      this.videoTarget.currentTime = targetSeconds
+      return
+    }
+
+    // Transcode — restart ffmpeg at the new position
+    if (targetSeconds === this.startSecondsValue) return
+
+    this.isSeeking = true
+    this.showSeekingOverlay()
+    this.startSecondsValue = targetSeconds
+
+    const url = new URL(this.streamingUrlValue, window.location.origin)
+    if (targetSeconds > 0) {
+      url.searchParams.set("start_seconds", targetSeconds)
+    } else {
+      url.searchParams.delete("start_seconds")
+    }
+
+    this.videoTarget.src = url.pathname + url.search
+    this.videoTarget.load()
+    this.videoTarget.play()
+  }
+
+  // ── Time / progress updates ───────────────────────────────────────
+
+  onTimeUpdate() {
+    const currentPos = this.videoTarget.currentTime + this.startSecondsValue
+    const duration = this.effectiveDuration()
+
+    this.currentTimeTarget.textContent = this.formatTime(currentPos)
+    if (duration > 0) {
+      this.updateSeekVisuals(currentPos / duration)
+    }
+  }
+
+  onProgress() {
+    const video = this.videoTarget
+    if (!video.buffered.length || this.knownDuration <= 0) return
+
+    const bufferedEnd = video.buffered.end(video.buffered.length - 1)
+    const totalWithOffset = bufferedEnd + this.startSecondsValue
+    const percent = (totalWithOffset / this.knownDuration) * 100
+    this.seekBufferedTarget.style.width = `${Math.min(100, percent)}%`
+  }
+
+  updateSeekVisuals(fraction) {
+    const percent = Math.max(0, Math.min(1, fraction)) * 100
+    this.seekFilledTarget.style.width = `${percent}%`
+    this.seekHandleTarget.style.left = `${percent}%`
+  }
+
+  effectiveDuration() {
+    if (this.knownDuration > 0) return this.knownDuration
+    const d = this.videoTarget.duration
+    return (d && isFinite(d)) ? d + this.startSecondsValue : 0
+  }
+
+  updateDurationDisplay() {
+    const duration = this.effectiveDuration()
+    this.durationDisplayTarget.textContent = duration > 0 ? this.formatTime(duration) : "--:--"
+  }
+
+  formatTime(seconds) {
+    if (!seconds || !isFinite(seconds) || seconds < 0) return "0:00"
+    const h = Math.floor(seconds / 3600)
+    const m = Math.floor((seconds % 3600) / 60)
+    const s = Math.floor(seconds % 60)
+    if (h > 0) return `${h}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`
+    return `${m}:${s.toString().padStart(2, "0")}`
+  }
+
+  // ── Seeking overlay ───────────────────────────────────────────────
+
+  showSeekingOverlay() {
+    if (this.isSeeking) {
+      this.seekingOverlayTarget.classList.remove("hidden")
+    }
+  }
+
+  hideSeekingOverlay() {
+    this.isSeeking = false
+    this.seekingOverlayTarget.classList.add("hidden")
+  }
+
+  // ── Overlay UI (auto-hide) ────────────────────────────────────────
+
   showOverlayUi() {
     this.backButtonTarget.style.opacity = "1"
     this.sourceInfoTarget.style.opacity = "1"
+    this.controlsTarget.style.opacity = "1"
     this.scheduleUiHide()
   }
 
   hideOverlayUi() {
-    this.backButtonTarget.style.opacity = "0"
-    this.sourceInfoTarget.style.opacity = "0"
+    if (!this.videoTarget.paused) {
+      this.backButtonTarget.style.opacity = "0"
+      this.sourceInfoTarget.style.opacity = "0"
+      this.controlsTarget.style.opacity = "0"
+    }
   }
 
   scheduleUiHide() {
@@ -67,9 +311,7 @@ export default class extends Controller {
   }
 
   onMouseMove() {
-    this.backButtonTarget.style.opacity = "1"
-    this.sourceInfoTarget.style.opacity = "1"
-    this.scheduleUiHide()
+    this.showOverlayUi()
   }
 
   toggleSourceInfo() {
@@ -78,10 +320,13 @@ export default class extends Controller {
     if (!this.sourceDetailsTarget.classList.contains("hidden")) {
       this.backButtonTarget.style.opacity = "1"
       this.sourceInfoTarget.style.opacity = "1"
+      this.controlsTarget.style.opacity = "1"
     } else {
       this.scheduleUiHide()
     }
   }
+
+  // ── Progress tracking ─────────────────────────────────────────────
 
   startProgressTracking() {
     this.progressInterval = setInterval(() => {
@@ -96,15 +341,11 @@ export default class extends Controller {
     }
   }
 
-  // Progress is reported as currentTime + startSeconds so that when
-  // transcoding with -ss (stream starts at e.g. 77s), the saved
-  // progress reflects the actual position in the movie, not the
-  // position within the transcoded fragment.
   async saveProgress() {
     const video = this.videoTarget
     if (!video) return
     const progressSeconds = Math.floor(video.currentTime + this.startSecondsValue)
-    const durationSeconds = Math.floor(video.duration + this.startSecondsValue)
+    const durationSeconds = Math.floor(this.effectiveDuration())
     if (durationSeconds <= 0) return
 
     try {
@@ -131,7 +372,7 @@ export default class extends Controller {
     const video = this.videoTarget
     if (!video) return
     const progressSeconds = Math.floor(video.currentTime + this.startSecondsValue)
-    const durationSeconds = Math.floor(video.duration + this.startSecondsValue)
+    const durationSeconds = Math.floor(this.effectiveDuration())
     if (durationSeconds <= 0) return
 
     const csrfToken = document.querySelector("meta[name='csrf-token']")?.content
