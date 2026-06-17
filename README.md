@@ -27,61 +27,78 @@ A personal media streaming platform built with Rails 8. Search content via Torre
 - **Encryption**: Active Record Encryption (for API keys)
 - **Testing**: RSpec, FactoryBot, WebMock, Cuprite, SimpleCov
 
-## Setup
+## Deployment
 
 ### Prerequisites
 
-- Ruby 4.0.5+
-- SQLite3
-- Bundler
+- Docker with Docker Compose
 
-### Installation
+### Steps
 
 ```bash
-# Clone and install
+# Clone the repository
+git clone https://github.com/vitobotta/StreamVault.git
 cd StreamVault
-bundle install
 
-# Set up database
-bin/rails db:create db:migrate
-
-# Configure environment
+# Create environment config
 cp .env.example .env
-# Edit .env with your keys:
-#   - ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY
-#   - ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY
-#   - ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT
-#   - OMDB_API_KEY (get from omdbapi.com)
-#   - TORRENTIO_API_BASE_URL (default: https://torrentio.strem.fun)
-#   - REALDEBRID_API_BASE_URL (default: https://api.real-debrid.com/rest/1.0)
 
-# Build Tailwind CSS
-bin/rails tailwindcss:build
+# Edit .env and fill in all values — see the table below for details
+nano .env
 
-# Start server
-bin/dev
+# Build and start the container
+docker compose up -d --build
+```
+
+The app is available at `http://localhost:${PORT:-3000}`.
+
+Assets are precompiled inside the image during build — no local Ruby or Node installation needed. The SQLite database is persisted in a Docker volume (`storage_data`) and survives container rebuilds.
+
+### Create an Admin User
+
+```bash
+docker compose exec web bin/rails c
+> User.create!(email: "you@example.com", password: "password", password_confirmation: "password")
+```
+
+### Auto-start on Boot
+
+Containers restart automatically after crashes and system reboots (`restart: unless-stopped`). Ensure the Docker daemon is enabled at boot:
+
+```bash
+sudo systemctl enable docker
+```
+
+### Updates
+
+```bash
+git pull
+docker compose up -d --build
 ```
 
 ### Environment Variables
 
 | Variable | Description | Default |
 |---|---|---|
-| `ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY` | Encryption key for API keys | Required |
-| `ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY` | Deterministic encryption key | Required |
-| `ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT` | Key derivation salt | Required |
-| `OMDB_API_KEY` | OMDB API key for search | Required |
+| `RAILS_MASTER_KEY` | Master key for credentials decryption (from `config/master.key`) | Required |
+| `SECRET_KEY_BASE` | Session cookie secret (generate with `bin/rails secret`) | Required |
+| `ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY` | Encryption key for API keys (generate with `openssl rand -hex 32`) | Required |
+| `ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY` | Deterministic encryption key (generate with `openssl rand -hex 32`) | Required |
+| `ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT` | Key derivation salt (generate with `openssl rand -hex 32`) | Required |
+| `APP_DOMAIN` | Domain the app is served from (for Rails host authorization) | Required |
+| `PORT` | Host port to expose the app on | `3000` |
 | `TORRENTIO_API_BASE_URL` | Torrentio API base URL | `https://torrentio.strem.fun` |
 | `REALDEBRID_API_BASE_URL` | RealDebrid API base URL | `https://api.real-debrid.com/rest/1.0` |
+| `OMDB_API_KEY` | OMDB API key for ratings metadata | Required |
+
+> **Torrentio note**: The public `torrentio.strem.fun` instance is behind Cloudflare and may block your server's IP. If you get 403 errors, run a self-hosted proxy (see the `torrentio-proxy/` directory) and set `TORRENTIO_API_BASE_URL` to your proxy URL.
 
 ## Testing
 
 ```bash
-# Run all tests
+# Run all tests (requires local Ruby + bundler setup)
+bundle install
 bundle exec rspec
-
-# Run with coverage
-bundle exec rspec
-# Coverage report: coverage/index.html
 
 # Run specific test types
 bundle exec rspec spec/models/      # Model specs
