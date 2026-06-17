@@ -18,18 +18,36 @@ require "timeout"
 # leaves the browser spinner spinning forever.
 class TranscodeService
   FFMPEG_PATH = "ffmpeg"
+  FFPROBE_PATH = "ffprobe"
   FMP4_FLAGS = "+frag_keyframe+empty_moov+default_base_moof+negative_cts_offsets"
   SHUTDOWN_GRACE_SECONDS = 3
   STDERR_MAX_BYTES = 8192
+  # Audio codecs that browsers can play in MP4 container without transcoding.
+  # If the source audio is one of these, we copy it instead of encoding to AAC.
+  BROWSER_COMPATIBLE_AUDIO = %w[aac mp3].freeze
+  # Cache probe results to avoid repeated ffprobe round-trips for the same URL.
+  # Key: input_url, Value: { codec:, duration:, expires_at: }
+  @probe_cache = {}
+  PROBE_CACHE_TTL = 300 # 5 minutes
 
   class TranscodeError < StandardError; end
 
-  # Always transcode — guarantees audio works for all streams
-  def self.needs_transcode?(_filename)
+  # Transcode only when the audio codec isn't browser-compatible.
+  # If the source already has AAC or MP3 audio, a pure remux (copy both
+  # video and audio) is enough — zero CPU cost, fastest possible path.
+  def self.needs_transcode?(filename)
+    # We can't know the audio codec from the filename alone, so always
+    # return true.  The actual decision happens in transcode_to_fmp4
+    # via a probe — if the audio is already AAC/MP3, we copy instead
+    # of encode.
     true
   end
 
-  # Stream transcoded fMP4 from FFmpeg.
+  # Stream transcoded/remuxed fMP4 from FFmpeg.
+  # Probes the source audio codec first: if it's AAC or MP3 (browser-
+  # compatible), copies both video and audio (pure remux, ~0 CPU).
+  # Otherwise copies video and transcodes audio → AAC.
+  #
   # Accepts optional headers hash for auth and start_seconds for seeking.
   #
   # Raises TranscodeError if ffmpeg exits before producing any output
@@ -38,23 +56,44 @@ class TranscodeService
   # ensure block kills ffmpeg.
   def self.transcode_to_fmp4(input_url, headers: {}, start_seconds: 0, &block)
     header_str = headers.map { |k, v| "#{k}: #{v}" }.join("\r\n")
+    audio_codec = probe_audio_codec(input_url, headers: header_str)
+    copy_audio = BROWSER_COMPATIBLE_AUDIO.include?(audio_codec)
+
+    if copy_audio
+      Rails.logger.info("[Transcode] Pure remux (audio=#{audio_codec}, no encoding)")
+    else
+      Rails.logger.info("[Transcode] Audio transcode (source=#{audio_codec || "unknown"} → aac)")
+    end
 
     cmd = [FFMPEG_PATH, "-loglevel", "error"]
+    # Limit analyze duration to reduce time-to-first-byte for MKV over HTTP.
+    # Without this, ffmpeg may buffer 5+ seconds of data before producing output.
+    cmd += ["-analyzeduration", "2M", "-probesize", "2M"]
     cmd += ["-headers", header_str + "\r\n"] if header_str.present?
     # Input seeking (before -i): fast, uses the container's seek table.
     # For MKV over HTTP, ffmpeg sends a Range request to approximately
     # the right byte position.  Must be before -i to avoid decoding and
     # discarding frames.
     cmd += ["-ss", start_seconds.to_s] if start_seconds.to_f > 0
+    cmd += ["-i", input_url]
+    cmd += ["-c:v", "copy"]
+    if copy_audio
+      cmd += ["-c:a", "copy"]
+    else
+      cmd += ["-c:a", "aac", "-b:a", "192k", "-ac", "2"]
+      # Use all available threads for audio encoding (AAC encoder is
+      # single-threaded, but this doesn't hurt and helps with future codecs).
+      cmd += ["-threads", "0"]
+    end
     cmd += [
-      "-i", input_url,
-      "-c:v", "copy",           # Copy video (no re-encoding)
-      "-c:a", "aac",            # Transcode audio to AAC
-      "-b:a", "192k",
-      "-ac", "2",               # Stereo
       "-f", "mp4",
-      "-movflags", FMP4_FLAGS,  # Fragmented MP4 for streaming
-      "pipe:1"                  # Output to stdout
+      "-movflags", FMP4_FLAGS,
+      # Fragment duration: 0.5s balances time-to-first-byte vs overhead.
+      # Smaller fragments start playback faster but have more container
+      # overhead; larger fragments are more efficient but delay first frame.
+      "-frag_duration", "500000",  # microseconds (0.5s)
+      "-fflags", "+genpts",
+      "pipe:1"
     ]
 
     rd, wr = IO.pipe
@@ -104,12 +143,14 @@ class TranscodeService
 
   # Probe the duration of a stream URL using ffprobe.
   # Returns the duration in seconds (float), or 0 if it can't be determined.
-  # This reads only the container headers — no decoding — so it's fast
-  # even for large files over HTTP.
+  # Uses the probe cache to avoid repeated ffprobe calls for the same URL.
   def self.probe_duration(input_url, headers: {})
+    cached = cache_get(input_url)
+    return cached[:duration] if cached && cached[:duration]
+
     header_str = headers.map { |k, v| "#{k}: #{v}" }.join("\r\n")
 
-    cmd = ["ffprobe", "-v", "error"]
+    cmd = [FFPROBE_PATH, "-v", "error"]
     cmd += ["-headers", header_str + "\r\n"] if header_str.present?
     cmd += ["-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1",
@@ -119,10 +160,54 @@ class TranscodeService
     return 0 unless status.success?
 
     duration = stdout.strip.to_f
-    duration > 0 ? duration : 0
+    duration = duration > 0 ? duration : 0
+    cache_store(input_url, duration: duration)
+    duration
   rescue Timeout::Error, StandardError
     0
   end
+
+  # Probe the audio codec of a stream URL using ffprobe.
+  # Returns the codec name (e.g. "aac", "ac3", "truehd") or nil if unknown.
+  # Uses the probe cache to avoid repeated ffprobe calls.
+  def self.probe_audio_codec(input_url, headers: "")
+    cached = cache_get(input_url)
+    return cached[:codec] if cached
+
+    cmd = [FFPROBE_PATH, "-v", "error"]
+    cmd += ["-headers", headers + "\r\n"] if headers.present?
+    cmd += ["-select_streams", "a:0",
+            "-show_entries", "stream=codec_name",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            input_url]
+
+    stdout, _, status = Timeout.timeout(10) { Open3.capture3(*cmd) }
+    codec = status.success? ? stdout.strip.downcase : nil
+    codec = nil if codec == "unknown" || codec.blank?
+    cache_store(input_url, codec: codec)
+    codec
+  rescue Timeout::Error, StandardError
+    nil
+  end
+
+  # ── Probe cache ───────────────────────────────────────────────────
+
+  def self.cache_get(url)
+    entry = @probe_cache[url]
+    return nil unless entry
+    if Time.now > entry[:expires_at]
+      @probe_cache.delete(url)
+      return nil
+    end
+    entry
+  end
+  private_class_method :cache_get
+
+  def self.cache_store(url, **fields)
+    existing = @probe_cache[url] || { expires_at: Time.now + PROBE_CACHE_TTL }
+    @probe_cache[url] = existing.merge(fields).merge(expires_at: Time.now + PROBE_CACHE_TTL)
+  end
+  private_class_method :cache_store
   # ── Helpers ───────────────────────────────────────────────────────
 
   def self.stderr_summary(buf)
