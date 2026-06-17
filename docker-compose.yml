@@ -1,4 +1,9 @@
-# Run the main app locally with Docker Compose.
+# Run the app locally in production mode with Docker Compose.
+#
+# Assets are precompiled in the image — no tailwindcss:watch needed.
+# The local development files (app/assets/builds, public/assets) are
+# NOT mounted, so they don't interfere with the container's precompiled
+# production assets.
 #
 # Usage:
 #   docker compose up
@@ -6,10 +11,7 @@
 # All env vars are read from .env (encryption keys, API keys, etc).
 # Set PORT in .env to change the host port (default 3000).
 #
-# The app runs in development mode with SQLite (no Postgres needed).
-# ffmpeg is included for transcoding. Tailwind CSS is watched and
-# recompiled on file changes.
-#
+# Requires RAILS_MASTER_KEY in .env (same as config/master.key).
 # First run will create the database automatically (db:prepare).
 # Create a user by opening the Rails console:
 #   docker compose exec web bin/rails c
@@ -22,28 +24,20 @@ services:
       dockerfile: Dockerfile.dev
     env_file: .env
     ports:
-      - "${PORT:-3000}:3000"
+      - "${PORT:-3000}:80"
     volumes:
+      # Mount source code for live editing, but exclude asset directories
+      # so the container's precompiled assets aren't shadowed by local
+      # development assets.
       - .:/rails
       - bundle_cache:/usr/local/bundle
       - storage_data:/rails/storage
+      # Preserve container's precompiled assets over the mount
+      - /rails/public/assets
+      - /rails/app/assets/builds
     environment:
-      RAILS_ENV: development
+      RAILS_ENV: production
       BUNDLE_PATH: /usr/local/bundle
-    command: bin/rails server -b 0.0.0.0 -p 3000
-
-  css:
-    build:
-      context: .
-      dockerfile: Dockerfile.dev
-    env_file: .env
-    volumes:
-      - .:/rails
-      - bundle_cache:/usr/local/bundle
-    environment:
-      RAILS_ENV: development
-      BUNDLE_PATH: /usr/local/bundle
-    command: bin/rails tailwindcss:watch
 
 volumes:
   bundle_cache:
