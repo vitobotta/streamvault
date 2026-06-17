@@ -47,9 +47,14 @@ class StreamingController < ApplicationController
     @resume_at = params[:resume_at]
     @needs_transcode = params[:needs_transcode] == "true"
 
-    # If transcode needed, use our FFmpeg proxy URL
+    # If transcode needed, use our FFmpeg proxy URL.
+    # Pass resume_at as start_seconds so ffmpeg seeks to the right
+    # position (-ss) — the stream starts at the resume point and the
+    # browser never needs to seek (which would cancel and re-request).
     if @needs_transcode && @streaming_url.present?
-      @streaming_url = transcode_stream_path(url: @streaming_url)
+      transcode_params = { url: @streaming_url }
+      transcode_params[:start_seconds] = @resume_at if @resume_at.present? && @resume_at.to_f > 0
+      @streaming_url = transcode_stream_path(transcode_params)
     end
   end
 

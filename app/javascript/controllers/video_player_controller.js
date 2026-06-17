@@ -1,8 +1,8 @@
 import { Controller } from "@hotwired/stimulus"
 
 export default class extends Controller {
-  static targets = ["video", "sourceInfo", "sourceToggle", "sourceDetails", "sourceUrl", "sourceFilename", "backButton"]
-  static values = { streamingUrl: String, filename: String, imdbId: String, type: String, season: String, episode: String, resumeAt: String, title: String }
+  staticTargets = ["video", "sourceInfo", "sourceToggle", "sourceDetails", "sourceUrl", "sourceFilename", "backButton"]
+  staticValues = { streamingUrl: String, filename: String, imdbId: String, type: String, season: String, episode: String, resumeAt: String, startSeconds: Number, title: String }
 
   connect() {
     this.progressInterval = null
@@ -16,9 +16,13 @@ export default class extends Controller {
     this.showOverlayUi()
     this.element.addEventListener("mousemove", this.mouseMoveHandler)
 
-    // Resume from last position
+    // Resume from last position.
+    // When transcoding, the stream already starts at the resume position
+    // (ffmpeg -ss), so we must NOT set currentTime — that would trigger
+    // a seek, which cancels and re-requests the stream (causing stutter).
+    // For direct streams (no transcode), seek client-side as before.
     const resumeAt = parseInt(this.resumeAtValue) || 0
-    if (resumeAt > 0) {
+    if (resumeAt > 0 && this.startSecondsValue === 0) {
       this.videoTarget.addEventListener("loadeddata", () => {
         this.videoTarget.currentTime = resumeAt
       }, { once: true })
@@ -92,11 +96,15 @@ export default class extends Controller {
     }
   }
 
+  // Progress is reported as currentTime + startSeconds so that when
+  // transcoding with -ss (stream starts at e.g. 77s), the saved
+  // progress reflects the actual position in the movie, not the
+  // position within the transcoded fragment.
   async saveProgress() {
     const video = this.videoTarget
     if (!video) return
-    const progressSeconds = Math.floor(video.currentTime)
-    const durationSeconds = Math.floor(video.duration)
+    const progressSeconds = Math.floor(video.currentTime + this.startSecondsValue)
+    const durationSeconds = Math.floor(video.duration + this.startSecondsValue)
     if (durationSeconds <= 0) return
 
     try {
@@ -122,8 +130,8 @@ export default class extends Controller {
   saveProgressSync() {
     const video = this.videoTarget
     if (!video) return
-    const progressSeconds = Math.floor(video.currentTime)
-    const durationSeconds = Math.floor(video.duration)
+    const progressSeconds = Math.floor(video.currentTime + this.startSecondsValue)
+    const durationSeconds = Math.floor(video.duration + this.startSecondsValue)
     if (durationSeconds <= 0) return
 
     const csrfToken = document.querySelector("meta[name='csrf-token']")?.content

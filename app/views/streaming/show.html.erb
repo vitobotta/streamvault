@@ -6,6 +6,7 @@
      data-video-player-season-value="<%= @season %>"
      data-video-player-episode-value="<%= @episode %>"
      data-video-player-resume-at-value="<%= @resume_at %>"
+     data-video-player-start-seconds-value="<%= @needs_transcode && @resume_at.present? ? @resume_at : 0 %>"
      data-video-player-title-value="<%= @title %>">
 
   <%# Back button (auto-hides) %>
