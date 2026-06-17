@@ -1,17 +1,18 @@
-# Run the app locally in production mode with Docker Compose.
+# Run the app in production with Docker Compose.
 #
-# Assets are precompiled in the image — no tailwindcss:watch needed.
-# The local development files (app/assets/builds, public/assets) are
-# NOT mounted, so they don't interfere with the container's precompiled
-# production assets.
+# Assets are precompiled in the image during build. No volume mounts
+# for source code or assets — everything lives in the image.
 #
 # Usage:
-#   docker compose up
+#   docker compose up -d --build
 #
 # All env vars are read from .env (encryption keys, API keys, etc).
 # Set PORT in .env to change the host port (default 3000).
 #
-# Requires RAILS_MASTER_KEY in .env (same as config/master.key).
+# Requires in .env:
+#   RAILS_MASTER_KEY — same as config/master.key
+#   SECRET_KEY_BASE  — generate with: bin/rails secret
+#
 # First run will create the database automatically (db:prepare).
 # Create a user by opening the Rails console:
 #   docker compose exec web bin/rails c
@@ -21,28 +22,14 @@ services:
   web:
     build:
       context: .
-      args:
-        # Run as root for volume mount permissions in local dev.
-        # Production (Kamal) builds without these args → non-root rails user.
-        RUN_AS_ROOT: "true"
-        APP_UID: "0:0"
     env_file: .env
     ports:
       - "${PORT:-3000}:80"
     volumes:
-      # Mount source code for live editing, but exclude asset directories
-      # so the container's precompiled assets aren't shadowed by local
-      # development assets.
-      - .:/rails
-      - bundle_cache:/usr/local/bundle
       - storage_data:/rails/storage
-      # Preserve container's precompiled assets over the mount
-      - /rails/public/assets
-      - /rails/app/assets/builds
     environment:
       RAILS_ENV: production
-      BUNDLE_PATH: /usr/local/bundle
+    restart: unless-stopped
 
 volumes:
-  bundle_cache:
   storage_data:
