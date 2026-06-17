@@ -67,7 +67,7 @@ class ContentStreamingService
   end
 
   def verify_resolve_url(resolve_url)
-    response = Faraday.get(resolve_url)
+    response = resolve_faraday.get(resolve_url)
 
     if [301, 302, 303, 307, 308].include?(response.status)
       location = response.headers["location"]
@@ -85,5 +85,17 @@ class ContentStreamingService
     end
   rescue Faraday::TimeoutError, Faraday::ConnectionFailed
     nil
+  end
+
+  def resolve_faraday
+    @resolve_faraday ||= begin
+      proxy = ENV["TORRENTIO_PROXY"]
+      Faraday.new do |f|
+        f.adapter Faraday.default_adapter
+        f.options.timeout = 15
+        f.options.open_timeout = 5
+        f.proxy = proxy if proxy.present?
+      end
+    end
   end
 end

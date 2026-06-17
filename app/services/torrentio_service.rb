@@ -189,10 +189,21 @@ class TorrentioService
         raw_size: size_bytes || 0,
         rd_plus: s["sources"].is_a?(Array) && s["sources"].any?,
         filename: filename,
-        resolve_url: s["url"],
+        resolve_url: rewrite_resolve_url(s["url"]),
         languages: extract_languages(title_text),
       }
     end
+  end
+
+  # Rewrite resolve URLs to use the configured TORRENTIO_API_BASE_URL
+  # instead of the default torrentio.strem.fun host.  When a custom base
+  # URL is set (e.g. a Cloudflare Worker proxy), resolve URLs in the API
+  # response still point to torrentio.strem.fun — we rewrite them so the
+  # ContentStreamingService follow request goes through the proxy too.
+  def rewrite_resolve_url(url)
+    return url if url.blank?
+    return url if TORRENTIO_URL == "https://torrentio.strem.fun"
+    url.sub("https://torrentio.strem.fun", TORRENTIO_URL)
   end
 
   def extract_languages(title)
