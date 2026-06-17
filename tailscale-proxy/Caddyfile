@@ -1,0 +1,26 @@
+# Proxy all traffic from the VPS to your home computer via Tailscale.
+#
+# The VPS has a public IP (no Cloudflare) and terminates TLS.
+# Caddy reverse-proxies everything to your home machine's Tailscale IP,
+# where the Rails app + ffmpeg run unrestricted (residential IP for
+# RealDebrid downloads).
+#
+# Replace:
+#   - media.example.com  → your domain (DNS A record → VPS IP)
+#   - 100.x.x.x:3000     → your home machine's Tailscale IP + app port
+
+media.example.com {
+	reverse_proxy 100.x.x.x:3000 {
+		# Flush immediately for streaming responses (ffmpeg fMP4 output,
+		# SSE, etc). Without this, Caddy may buffer chunks and delay
+		# time-to-first-byte for video playback.
+		flush_interval -1
+	}
+
+	# Increase timeouts for long-running streaming connections.
+	# ffmpeg can take 10-30s to produce the first byte for large files.
+	transport http {
+		dial_timeout 30s
+		response_header_timeout 0
+	}
+}

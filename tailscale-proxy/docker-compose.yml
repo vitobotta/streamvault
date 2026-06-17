@@ -1,0 +1,42 @@
+# Caddy reverse proxy on a tiny VPS → home computer via Tailscale.
+#
+# Setup:
+#   1. Install Tailscale on both the VPS and your home computer:
+#      curl -fsSL https://tailscale.com/install.sh | sh
+#      sudo tailscale up
+#
+#   2. Get your home machine's Tailscale IP:
+#      tailscale ip -1    (run on your home machine)
+#
+#   3. Point DNS: media.example.com → VPS public IP (A record, no Cloudflare)
+#
+#   4. Edit Caddyfile: replace 100.x.x.x:3000 with your home Tailscale IP
+#      and media.example.com with your domain
+#
+#   5. Start:
+#      docker compose up -d --build
+#
+#   6. Run the Rails app on your home machine:
+#      RAILS_ENV=production bin/rails server -b 100.x.x.x -p 3000
+#      (bind to the Tailscale IP, not localhost)
+#
+# Caddy auto-provisions Let's Encrypt certificates for the domain.
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    # Tailscale must be running on the VPS host for Caddy to reach
+    # the home machine's Tailscale IP. No special network config needed —
+    # Caddy uses the host's network stack by default for outbound.
+
+volumes:
+  caddy_data:
+  caddy_config:
