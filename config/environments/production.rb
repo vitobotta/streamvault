@@ -46,11 +46,12 @@ Rails.application.configure do
   # Don't log any deprecations.
   config.active_support.report_deprecations = false
 
-  # Replace the default in-process memory cache store with a durable alternative.
-  # config.cache_store = :mem_cache_store
-
-  # Replace the default in-process and non-durable queuing backend for Active Job.
-  # config.active_job.queue_adapter = :resque
+  # Use the database-backed adapters for Rails.cache and Active Job.
+  # Both share the single primary Postgres database — no separate
+  # connections.  Action Cable is configured via config/cable.yml
+  # (also using solid_cable on the primary database).
+  config.cache_store = :solid_cache_store
+  config.active_job.queue_adapter = :solid_queue
 
   # Ignore bad email addresses and do not raise email delivery errors.
   # Set this to true and configure the email server for immediate delivery to raise delivery errors.
