@@ -23,7 +23,6 @@ class LibraryController < ApplicationController
     show_ids = @entries.select(&:show?).map(&:imdb_id)
     progress_rows = current_user.watch_history_entries
       .where("imdb_id IN (:ids) OR show_imdb_id IN (:ids)", ids: imdb_ids + show_ids)
-      .order(watched_at: :desc)
       .group(:show_imdb_id, :imdb_id)
       .select("COALESCE(show_imdb_id, imdb_id) as key, MAX(progress_percentage) as max_progress")
     @progress_map = progress_rows.index_by(&:key)

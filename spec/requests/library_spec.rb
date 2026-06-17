@@ -27,6 +27,18 @@ RSpec.describe "Library", type: :request do
         get library_index_path, params: { type: "movie" }
         expect(response).to have_http_status(:ok)
       end
+
+      it "builds progress map from watch history with grouped query" do
+        movie = create(:library_entry, user: user, content_type: :movie, imdb_id: "tt1375666")
+        show = create(:library_entry, user: user, content_type: :show, imdb_id: "tt1234567")
+        create(:watch_history_entry, user: user, imdb_id: "tt1375666", progress_percentage: 75)
+        create(:watch_history_entry, :episode, user: user, imdb_id: "tt9999999", show_imdb_id: "tt1234567", progress_percentage: 40)
+        create(:watch_history_entry, :episode, user: user, imdb_id: "tt8888888", show_imdb_id: "tt1234567", progress_percentage: 60)
+
+        get library_index_path
+
+        expect(response).to have_http_status(:ok)
+      end
     end
   end
 
