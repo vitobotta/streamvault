@@ -1,0 +1,42 @@
+# Torrentio proxy — runs on any VPS to bypass Cloudflare WAF.
+#
+# Quick start (HTTP only, for testing):
+#   docker compose up --build -d
+#   curl http://<vps-ip>:3000/stream/movie/tt0145487.json
+#
+# With HTTPS (recommended — StreamVault uses HTTPS URLs):
+#   1. Point a DNS A record (e.g. torrentio.yourdomain.com) at the VPS
+#   2. Set TORRENTIO_DOMAIN in .env or export it:
+#      export TORRENTIO_DOMAIN=torrentio.yourdomain.com
+#   3. docker compose --profile https up --build -d
+#   4. Caddy auto-provisions Let's Encrypt certs
+#   5. Set in StreamVault .env.vars production():
+#      TORRENTIO_API_BASE_URL=https://torrentio.yourdomain.com
+
+services:
+  torrentio-proxy:
+    build: .
+    restart: unless-stopped
+    environment:
+      - PORT=3000
+
+  # Caddy reverse proxy — terminates TLS, auto-provisions certs
+  caddy:
+    image: caddy:2
+    profiles: ["https"]
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      - TORRENTIO_DOMAIN=${TORRENTIO_DOMAIN:-localhost}
+    depends_on:
+      - torrentio-proxy
+
+volumes:
+  caddy_data:
+  caddy_config:
