@@ -18,18 +18,10 @@ class StreamingController < ApplicationController
       resume_at = find_resume_position(params[:imdb_id], params[:type], params[:season], params[:episode])
       needs_transcode = TranscodeService.needs_transcode?(result.data[:filename])
 
-      # Probe duration here so the player doesn't need a separate
-      # AJAX round-trip to /transcode/duration. The probe is cached
-      # so the transcode endpoint reuses it instantly.
-      duration = 0
-      if needs_transcode
-        headers = {}
-        if current_user.has_realdebrid_key?
-          headers["Authorization"] = "Bearer #{current_user.realdebrid_api_key}"
-        end
-        duration = TranscodeService.probe_duration(result.data[:streaming_url], headers: headers)
-      end
-
+      # Don't probe duration here — it blocks the redirect for 5-15s
+      # on large files (HTTP round-trip to RealDebrid CDN). Instead,
+      # pass duration=0 and let the player probe it via AJAX in the
+      # background while video plays immediately.
       redirect_to streaming_path(
         "play",
         streaming_url: result.data[:streaming_url],
@@ -41,7 +33,7 @@ class StreamingController < ApplicationController
         title: params[:title],
         resume_at: resume_at,
         needs_transcode: needs_transcode,
-        duration: duration
+        duration: 0
       )
     else
       redirect_back fallback_location: root_path, alert: result.error_message

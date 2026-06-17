@@ -50,21 +50,12 @@ export default class extends Controller {
       }, { once: true })
     }
 
-    // Duration: if the server already probed it (passed via data attr),
-    // use it directly — no need for a separate AJAX round-trip.
-    // Fallback: probe via /transcode/duration (for seeks that restart
-    // ffmpeg with a different URL, where the server didn't pre-probe).
+    // Duration: always probe in the background via AJAX — never block
+    // video playback. The video starts immediately; the seek bar
+    // populates when the probe completes (usually a few seconds).
     if (this.needsTranscodeValue) {
-      // Show the resume position immediately — the video starts at
-      // startSeconds (ffmpeg -ss) but timeupdate hasn't fired yet.
       this.currentTimeTarget.textContent = this.formatTime(this.startSecondsValue)
-      if (this.durationValue > 0) {
-        this.knownDuration = this.durationValue
-        this.updateDurationDisplay()
-        this.onTimeUpdate()
-      } else {
-        this.probeDuration()
-      }
+      this.probeDuration()
     } else {
       // Direct stream — browser knows the duration natively
       this.videoTarget.addEventListener("loadedmetadata", () => {

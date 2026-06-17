@@ -23,24 +23,19 @@ class TranscodeService
   FMP4_FLAGS = "+frag_keyframe+empty_moov+default_base_moof+negative_cts_offsets"
   SHUTDOWN_GRACE_SECONDS = 3
   STDERR_MAX_BYTES = 8192
-  # Audio codecs that browsers can play in MP4 container without transcoding.
-  # If the source audio is one of these, we copy it instead of encoding to AAC.
-  BROWSER_COMPATIBLE_AUDIO = %w[aac mp3].freeze
   # Cache probe results to avoid repeated ffprobe round-trips for the same URL.
-  # Key: input_url, Value: { codec:, duration:, expires_at: }
+  # Key: input_url, Value: { duration:, expires_at: }
   @probe_cache = {}
   PROBE_CACHE_TTL = 300 # 5 minutes
 
   class TranscodeError < StandardError; end
 
-  # Transcode only when the audio codec isn't browser-compatible.
-  # If the source already has AAC or MP3 audio, a pure remux (copy both
-  # video and audio) is enough — zero CPU cost, fastest possible path.
-  def self.needs_transcode?(filename)
-    # We can't know the audio codec from the filename alone, so always
-    # return true.  The actual decision happens in transcode_to_fmp4
-    # via a probe — if the audio is already AAC/MP3, we copy instead
-    # of encode.
+  # Always transcode — audio is remuxed to AAC for browser compatibility.
+  # Video is copied (no re-encoding). We don't probe the audio codec
+  # because the probe requires an HTTP round-trip to the RealDebrid CDN
+  # which adds 5-15s latency on a slow VPS — far more than the ~5% CPU
+  # cost of AAC encoding.
+  def self.needs_transcode?(_filename)
     true
   end
 
@@ -57,14 +52,12 @@ class TranscodeService
   # ensure block kills ffmpeg.
   def self.transcode_to_fmp4(input_url, headers: {}, start_seconds: 0, &block)
     header_str = headers.map { |k, v| "#{k}: #{v}" }.join("\r\n")
-    audio_codec = probe_audio_codec(input_url, headers: header_str)
-    copy_audio = BROWSER_COMPATIBLE_AUDIO.include?(audio_codec)
 
-    if copy_audio
-      Rails.logger.info("[Transcode] Pure remux (audio=#{audio_codec}, no encoding)")
-    else
-      Rails.logger.info("[Transcode] Audio transcode (source=#{audio_codec || "unknown"} → aac)")
-    end
+    # Always transcode audio to AAC. We skip the audio codec probe
+    # because the probe requires a full HTTP round-trip to the
+    # RealDebrid CDN, which adds 5-15s on a slow VPS — far more than
+    # the ~5% CPU cost of AAC encoding. The probe is only useful for
+    # pure remux (0% CPU), but the network latency dwarfs the savings.
 
     cmd = [FFMPEG_PATH, "-loglevel", "error"]
     # Limit analyze duration to reduce time-to-first-byte for MKV over HTTP.
@@ -80,14 +73,7 @@ class TranscodeService
     cmd += ["-ss", start_seconds.to_s] if start_seconds.to_f > 0
     cmd += ["-i", input_url]
     cmd += ["-c:v", "copy"]
-    if copy_audio
-      cmd += ["-c:a", "copy"]
-    else
-      cmd += ["-c:a", "aac", "-b:a", "192k", "-ac", "2"]
-      # Use all available threads for audio encoding (AAC encoder is
-      # single-threaded, but this doesn't hurt and helps with future codecs).
-      cmd += ["-threads", "0"]
-    end
+    cmd += ["-c:a", "aac", "-b:a", "192k", "-ac", "2"]
     cmd += [
       "-f", "mp4",
       "-movflags", FMP4_FLAGS,
@@ -144,57 +130,32 @@ class TranscodeService
     end
   end
 
-  # Probe both duration and audio codec in a single ffprobe call.
-  # Returns { duration:, codec: } — one HTTP round-trip instead of two.
-  # Uses the probe cache to avoid repeated calls for the same URL.
-  def self.probe_stream(input_url, headers: {})
+  # Probe the duration of a stream URL using ffprobe.
+  # Returns the duration in seconds (float), or 0 if it can't be determined.
+  # Uses the probe cache to avoid repeated ffprobe calls for the same URL.
+  # This is called by the player via AJAX (/transcode/duration) — it's
+  # non-blocking, the video plays while the probe runs in the background.
+  def self.probe_duration(input_url, headers: {})
     cached = cache_get(input_url)
-    if cached && cached[:duration] && cached.key?(:codec)
-      return { duration: cached[:duration], codec: cached[:codec] }
-    end
+    return cached[:duration] if cached && cached[:duration]
 
     header_str = headers.map { |k, v| "#{k}: #{v}" }.join("\r\n")
 
     cmd = [FFPROBE_PATH, "-v", "error"]
     cmd += ["-headers", header_str + "\r\n"] if header_str.present?
-    cmd += [
-      "-show_entries", "format=duration:stream=index:stream=codec_name:stream=codec_type",
-      "-of", "json",
-      input_url
-    ]
+    cmd += ["-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            input_url]
 
     stdout, _, status = Timeout.timeout(10) { Open3.capture3(*cmd) }
-    return { duration: 0, codec: nil } unless status.success?
+    return 0 unless status.success?
 
-    data = JSON.parse(stdout) rescue nil
-    return { duration: 0, codec: nil } unless data
-
-    duration = data.dig("format", "duration").to_f
+    duration = stdout.strip.to_f
     duration = duration > 0 ? duration : 0
-
-    # Find first audio stream's codec
-    codec = nil
-    streams = data["streams"] || []
-    audio_stream = streams.find { |s| s["codec_type"] == "audio" }
-    codec = audio_stream&.dig("codec_name")&.downcase
-    codec = nil if codec == "unknown" || codec.blank?
-
-    cache_store(input_url, duration: duration, codec: codec)
-    { duration: duration, codec: codec }
+    cache_store(input_url, duration: duration)
+    duration
   rescue Timeout::Error, StandardError
-    { duration: 0, codec: nil }
-  end
-
-  # Probe the duration of a stream URL using ffprobe.
-  # Delegates to probe_stream (single ffprobe call, cached).
-  def self.probe_duration(input_url, headers: {})
-    probe_stream(input_url, headers: headers)[:duration]
-  end
-
-  # Probe the audio codec of a stream URL using ffprobe.
-  # Delegates to probe_stream (single ffprobe call, cached).
-  def self.probe_audio_codec(input_url, headers: "")
-    probe_stream(input_url)[:codec]
+    0
   end
 
   # ── Probe cache ───────────────────────────────────────────────────
