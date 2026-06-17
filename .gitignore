@@ -40,3 +40,4 @@
 /coverage
 .DS_Store
 config/deploy.yml
+gotchas.md
