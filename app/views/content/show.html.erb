@@ -100,7 +100,7 @@
                 <span class="text-xs text-sv-text-muted ml-2 shrink-0"><%= stream[:size] %></span>
               </div>
               <div class="flex items-center gap-3 shrink-0 ml-3">
-                <%= button_to "Watch", streaming_index_path, params: { imdb_id: @imdb_id, type: @type, title: @metadata[:title] }, class: "btn-primary text-sm", data: { turbo: false } %>
+                <%= button_to "Watch", streaming_index_path, params: { imdb_id: @imdb_id, type: @type, title: @metadata[:title], resolve_url: stream[:resolve_url], filename: stream[:filename] }, class: "btn-primary text-sm", data: { turbo: false } %>
               </div>
             </div>
           <% end %>

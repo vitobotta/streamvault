@@ -24,8 +24,6 @@ class ContentStreamingService
     result = resolve_first_valid(candidates)
 
     if result
-      # Use the torrent filename from stream data (has correct extension like .mkv)
-      # not the RealDebrid URL filename (usually has no extension)
       torrent_filename = result[:stream][:filename].presence || result[:filename]
 
       ServiceResult.success({
@@ -39,6 +37,31 @@ class ContentStreamingService
       })
     else
       ServiceResult.failure("No instant streams available. All streams are blocked or unavailable.")
+    end
+  end
+
+  # Resolve a specific stream chosen by the user (via resolve_url).
+  # Unlike start_stream which races all candidates, this resolves
+  # exactly the stream the user clicked — respecting their choice
+  # of a Direct Play MP4 over an MKV that needs transcoding.
+  def resolve_single(resolve_url, filename:, imdb_id:, type:, season: nil, episode: nil)
+    return ServiceResult.failure("RealDebrid API key not configured") unless @user.has_realdebrid_key?
+
+    resolved = verify_resolve_url(resolve_url)
+    if resolved
+      torrent_filename = filename.presence || resolved[:filename]
+
+      ServiceResult.success({
+        streaming_url: resolved[:streaming_url],
+        filename: torrent_filename,
+        stream: { filename: torrent_filename },
+        imdb_id: imdb_id,
+        type: type,
+        season: season,
+        episode: episode
+      })
+    else
+      ServiceResult.failure("Could not resolve the selected stream. It may be blocked or unavailable.")
     end
   end
 

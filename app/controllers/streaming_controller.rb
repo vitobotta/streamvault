@@ -7,21 +7,33 @@ class StreamingController < ApplicationController
   # POST /streaming — start stream, redirect to player page
   def create
     service = ContentStreamingService.new(current_user)
-    result = service.start_stream(
-      params[:imdb_id],
-      params[:type],
-      season: params[:season]&.to_i,
-      episode: params[:episode]&.to_i
-    )
+
+    # When the user clicks a specific stream's "Watch" button, we
+    # receive its resolve_url and filename. Resolve that exact stream
+    # instead of re-fetching all streams and racing — the user chose
+    # this stream, respect the choice (e.g. a Direct Play MP4).
+    if params[:resolve_url].present?
+      result = service.resolve_single(
+        params[:resolve_url],
+        filename: params[:filename],
+        imdb_id: params[:imdb_id],
+        type: params[:type],
+        season: params[:season]&.to_i,
+        episode: params[:episode]&.to_i
+      )
+    else
+      result = service.start_stream(
+        params[:imdb_id],
+        params[:type],
+        season: params[:season]&.to_i,
+        episode: params[:episode]&.to_i
+      )
+    end
 
     if result.success?
       resume_at = find_resume_position(params[:imdb_id], params[:type], params[:season], params[:episode])
       needs_transcode = TranscodeService.needs_transcode?(result.data[:filename])
 
-      # Don't probe duration here — it blocks the redirect for 5-15s
-      # on large files (HTTP round-trip to RealDebrid CDN). Instead,
-      # pass duration=0 and let the player probe it via AJAX in the
-      # background while video plays immediately.
       redirect_to streaming_path(
         "play",
         streaming_url: result.data[:streaming_url],
