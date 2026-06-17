@@ -3,11 +3,12 @@
 # Usage:
 #   docker compose up
 #
+# All env vars are read from .env (encryption keys, API keys, etc).
+# Set PORT in .env to change the host port (default 3000).
+#
 # The app runs in development mode with SQLite (no Postgres needed).
 # ffmpeg is included for transcoding. Tailwind CSS is watched and
 # recompiled on file changes.
-#
-# The app is available at http://localhost:3000.
 #
 # First run will create the database automatically (db:prepare).
 # Create a user by opening the Rails console:
@@ -19,8 +20,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.dev
+    env_file: .env
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:3000"
     volumes:
       - .:/rails
       - bundle_cache:/usr/local/bundle
@@ -28,19 +30,13 @@ services:
     environment:
       RAILS_ENV: development
       BUNDLE_PATH: /usr/local/bundle
-      # Active Record Encryption keys (from .env)
-      ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY: ${ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY:-development_key_1}
-      ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY: ${ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY:-development_key_2}
-      ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT: ${ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT:-development_salt}
-      # External APIs (from .env, fallback to defaults)
-      TORRENTIO_API_BASE_URL: ${TORRENTIO_API_BASE_URL:-https://torrentio.strem.fun}
-      OMDB_API_KEY: ${OMDB_API_KEY:-}
     command: bin/rails server -b 0.0.0.0 -p 3000
 
   css:
     build:
       context: .
       dockerfile: Dockerfile.dev
+    env_file: .env
     volumes:
       - .:/rails
       - bundle_cache:/usr/local/bundle
