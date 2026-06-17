@@ -27,6 +27,9 @@ class TranscodeController < ApplicationController
     response.headers["Content-Disposition"] = "inline; filename=\"stream.mp4\""
     response.headers["Cache-Control"] = "no-cache"
     response.headers["Accept-Ranges"] = "none"
+    # Disable proxy buffering (kamal-proxy / nginx) so ffmpeg output
+    # reaches the browser immediately, not buffered in the proxy.
+    response.headers["X-Accel-Buffering"] = "no"
 
     begin
       TranscodeService.transcode_to_fmp4(input_url, headers: headers, start_seconds: start_seconds) do |chunk|

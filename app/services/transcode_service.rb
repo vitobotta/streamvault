@@ -59,32 +59,22 @@ class TranscodeService
     # the ~5% CPU cost of AAC encoding. The probe is only useful for
     # pure remux (0% CPU), but the network latency dwarfs the savings.
 
-    cmd = [FFMPEG_PATH, "-loglevel", "error"]
-    # Limit analyze duration to reduce time-to-first-byte for MKV over HTTP.
-    # Minimal probe limits — just enough to read the MKV/MP4 header
-    # and identify streams. Default is 5M+5s which causes long delays
-    cmd = [FFMPEG_PATH, "-loglevel", "error"]
-    # Minimal probe limits — ffmpeg needs to read the container header
-    # and identify streams. 0/32K is the absolute minimum ffmpeg accepts;
-    # it still reads enough to parse MKV/M2TS headers.
-    cmd += ["-analyzeduration", "0", "-probesize", "32768"]
+    # Moderate probe limits — enough for MKV and MPEG-TS (M2TS).
+    # M2TS needs more data than MKV because PAT/PMT tables are
+    # interleaved every ~100ms in 188-byte packets. 32K was too
+    # small and caused ffmpeg to hang on M2TS files. 5M (default)
+    # is too much for large remote files. 1M is the sweet spot.
+    cmd += ["-analyzeduration", "1000000", "-probesize", "1000000"]
     cmd += ["-headers", header_str + "\r\n"] if header_str.present?
     # Input seeking (before -i): fast, uses the container's seek table.
     cmd += ["-ss", start_seconds.to_s] if start_seconds.to_f > 0
     cmd += ["-i", input_url]
-    # Map only first video + first audio stream. Without -map, ffmpeg
-    # processes ALL audio streams (some REMUX files have 8+ audio tracks),
-    # which increases analysis time and output size.
-    cmd += ["-map", "0:v:0", "-map", "0:a:0"]
     cmd += ["-c:v", "copy"]
     cmd += ["-c:a", "aac", "-b:a", "192k", "-ac", "2"]
     cmd += [
       "-f", "mp4",
       "-movflags", FMP4_FLAGS,
-      # Very small fragments (0.1s) for fastest time-to-first-byte.
-      # The browser gets the first fMP4 fragment almost immediately
-      # after ffmpeg finds the first keyframe.
-      "-frag_duration", "100000",  # 0.1s (microseconds)
+      "-frag_duration", "100000",  # 0.1s for fast first fragment
       "-fflags", "+genpts",
       "pipe:1"
     ]
