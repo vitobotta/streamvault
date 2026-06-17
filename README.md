@@ -86,6 +86,9 @@ docker compose up -d --build
 | `ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY` | Deterministic encryption key (generate with `openssl rand -hex 32`) | Required |
 | `ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT` | Key derivation salt (generate with `openssl rand -hex 32`) | Required |
 | `APP_DOMAIN` | Domain the app is served from (for Rails host authorization) | Required |
+| `POSTGRES_USER` | Postgres database user | `streamvault` |
+| `POSTGRES_PASSWORD` | Postgres database password (generate with `openssl rand -hex 16`) | Required |
+| `POSTGRES_DB` | Postgres database name | `streamvault` |
 | `PORT` | Host port to expose the app on | `3000` |
 | `TORRENTIO_API_BASE_URL` | Torrentio API base URL | `https://torrentio.strem.fun` |
 | `REALDEBRID_API_BASE_URL` | RealDebrid API base URL | `https://api.real-debrid.com/rest/1.0` |

@@ -23,11 +23,29 @@ services:
     env_file: .env
     ports:
       - "${PORT:-3000}:80"
-    volumes:
-      - storage_data:/rails/storage
     environment:
       RAILS_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-streamvault}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-streamvault}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:17
+    env_file: .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-streamvault}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-streamvault}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-streamvault}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
 volumes:
-  storage_data:
+  db_data:
