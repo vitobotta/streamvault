@@ -35,3 +35,6 @@
 /config/*.key
 
 /app/assets/builds
+
+# Coverage report (SimpleCov)
+/coverage
