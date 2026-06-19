@@ -42,6 +42,7 @@ class StreamingController < ApplicationController
         season: params[:season],
         episode: params[:episode],
         title: params[:title],
+        poster_url: params[:poster_url],
         resume_at: resume_at,
         duration: 0
       )
@@ -57,6 +58,7 @@ class StreamingController < ApplicationController
     @season = params[:season]
     @episode = params[:episode]
     @title = params[:title] || "Now Playing"
+    @poster_url = params[:poster_url]
     @resume_at = params[:resume_at]
     @duration = params[:duration].to_f
 
@@ -81,7 +83,8 @@ class StreamingController < ApplicationController
       type: params[:type] || "movie",
       season: params[:season]&.to_i,
       episode: params[:episode]&.to_i,
-      title: params[:title]
+      title: params[:title],
+      poster_url: params[:poster_url]
     )
 
     if result.success?

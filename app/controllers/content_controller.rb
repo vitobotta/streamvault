@@ -46,6 +46,7 @@ class ContentController < ApplicationController
 
     meta = torrentio.metadata(@imdb_id, @type)
     @show_title = meta.success? ? meta.data[:title] : @imdb_id
+    @poster_url = meta.success? ? meta.data[:poster_url] : nil
     @episode_title = ""
     if meta.success? && meta.data[:episodes]
       ep = meta.data[:episodes].find { |e| e[:season] == @season && e[:episode] == @episode }

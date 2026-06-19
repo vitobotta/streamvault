@@ -153,6 +153,7 @@ class ProgressTrackingService
   end
 
   def self.fetch_poster(user, imdb_id, _type)
-    user.library_entries.find_by(imdb_id: imdb_id)&.poster_url
+    user.library_entries.find_by(imdb_id: imdb_id)&.poster_url ||
+      user.wishlist_entries.find_by(imdb_id: imdb_id)&.poster_url
   end
 end

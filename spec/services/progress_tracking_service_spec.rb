@@ -26,6 +26,26 @@ RSpec.describe ProgressTrackingService do
       result = described_class.save_progress(user, "tt1375666", nil, nil, type: "movie")
       expect(result).to be_failure
     end
+
+    it "stores the poster_url passed in explicitly" do
+      result = described_class.save_progress(user, "tt1375666", 3600, 7200, type: "movie", poster_url: "https://img.example.com/p.jpg")
+      expect(result).to be_success
+      expect(user.watch_history_entries.first.poster_url).to eq("https://img.example.com/p.jpg")
+    end
+
+    it "falls back to wishlist poster when poster_url not passed and not in library" do
+      create(:wishlist_entry, user: user, imdb_id: "tt1375666", poster_url: "https://img.example.com/wish.jpg")
+
+      result = described_class.save_progress(user, "tt1375666", 3600, 7200, type: "movie")
+      expect(result).to be_success
+      expect(user.watch_history_entries.first.poster_url).to eq("https://img.example.com/wish.jpg")
+    end
+
+    it "stores nil poster when not passed and not in library or wishlist" do
+      result = described_class.save_progress(user, "tt1375666", 3600, 7200, type: "movie")
+      expect(result).to be_success
+      expect(user.watch_history_entries.first.poster_url).to be_nil
+    end
   end
 
   describe ".get_progress" do

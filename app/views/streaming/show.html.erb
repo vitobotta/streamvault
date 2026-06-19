@@ -8,7 +8,8 @@
      data-video-player-resume-at-value="<%= @resume_at %>"
      data-video-player-start-seconds-value="<%= @resume_at.present? ? @resume_at : 0 %>"
      data-video-player-duration-value="<%= @duration || 0 %>"
-     data-video-player-title-value="<%= @title %>">
+     data-video-player-title-value="<%= @title %>"
+     data-video-player-poster-url-value="<%= @poster_url %>">
 
   <%# Back button (auto-hides) %>
   <div class="absolute top-4 left-4 z-10 opacity-100 transition-opacity duration-500" data-video-player-target="backButton">

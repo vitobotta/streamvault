@@ -13,7 +13,7 @@ export default class extends Controller {
     return {
       streamingUrl: String, filename: String, imdbId: String, type: String,
       season: String, episode: String, resumeAt: String, startSeconds: Number,
-      title: String, duration: Number
+      title: String, duration: Number, posterUrl: String
     }
   }
 
@@ -344,7 +344,8 @@ export default class extends Controller {
           type: this.typeValue,
           season: this.seasonValue,
           episode: this.episodeValue,
-          title: this.titleValue || null
+          title: this.titleValue || null,
+          poster_url: this.posterUrlValue || null
         })
       })
     } catch (e) {
@@ -370,7 +371,8 @@ export default class extends Controller {
         type: this.typeValue,
         season: this.seasonValue,
         episode: this.episodeValue,
-        title: this.titleValue || null
+        title: this.titleValue || null,
+        poster_url: this.posterUrlValue || null
       }),
       keepalive: true
     })

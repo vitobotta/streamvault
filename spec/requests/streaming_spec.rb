@@ -177,5 +177,34 @@ RSpec.describe "Streaming", type: :request do
       expect(response).to have_http_status(:ok)
       expect(user.watch_history_entries.count).to eq(1)
     end
+
+    it "persists poster_url passed from the player" do
+      patch progress_streaming_path("play"), params: {
+        imdb_id: "tt1375666",
+        progress_seconds: 3600,
+        duration_seconds: 7200,
+        type: "movie",
+        title: "Inception",
+        poster_url: "https://img.example.com/inception.jpg"
+      }
+
+      expect(response).to have_http_status(:ok)
+      entry = user.watch_history_entries.first
+      expect(entry.poster_url).to eq("https://img.example.com/inception.jpg")
+    end
+
+    it "falls back to wishlist poster when poster_url not sent" do
+      create(:wishlist_entry, user: user, imdb_id: "tt1375666", poster_url: "https://img.example.com/wish.jpg")
+
+      patch progress_streaming_path("play"), params: {
+        imdb_id: "tt1375666",
+        progress_seconds: 3600,
+        duration_seconds: 7200,
+        type: "movie"
+      }
+
+      expect(response).to have_http_status(:ok)
+      expect(user.watch_history_entries.first.poster_url).to eq("https://img.example.com/wish.jpg")
+    end
   end
 end
