@@ -180,6 +180,56 @@ RSpec.describe ContentStreamingService do
       expect(result.data[:filename]).to eq("Inception720.mp4")
     end
 
+    it "continues fallback resolution beyond the first small batch of candidates" do
+      cinemeta_stub
+
+      streams = (1..15).map do |index|
+        { "title" => "Inception blocked #{index}", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/blocked#{index}/null/0/Inception#{index}.mkv", "behaviorHints" => { "filename" => "Inception#{index}.mkv" } }
+      end
+      streams << { "title" => "Inception 720p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/ok16/null/0/Inception720.mp4", "behaviorHints" => { "filename" => "Inception720.mp4" } }
+
+      stub_request(:get, %r{torrentio\.strem\.fun/([^/]+/)?stream/movie/tt1375666\.json})
+        .to_return(
+          status: 200,
+          body: { "streams" => streams }.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+
+      stub_request(:get, %r{torrentio\.strem\.fun/resolve/realdebrid/test_key/blocked\d+/})
+        .to_return(status: 302, headers: { "Location" => "https://torrentio.strem.fun/videos/downloading_v2.mp4" })
+
+      stub_request(:get, "https://torrentio.strem.fun/resolve/realdebrid/test_key/ok16/null/0/Inception720.mp4")
+        .to_return(status: 302, headers: { "Location" => "https://download.real-debrid.com/d/file789/Inception720.mp4" })
+
+      result = service.resolve_single(
+        "https://torrentio.strem.fun/resolve/realdebrid/test_key/blocked1/null/0/Inception1.mkv",
+        filename: "Inception1.mkv",
+        imdb_id: "tt1375666",
+        type: "movie"
+      )
+
+      expect(result).to be_success
+      expect(result.data[:streaming_url]).to eq("https://download.real-debrid.com/d/file789/Inception720.mp4")
+      expect(result.data[:filename]).to eq("Inception720.mp4")
+    end
+
+    it "retries a transient resolve timeout before failing the selected stream" do
+      stub_request(:get, "https://torrentio.strem.fun/resolve/realdebrid/test_key/flaky/null/0/Inception.mp4")
+        .to_timeout
+        .then
+        .to_return(status: 302, headers: { "Location" => "https://download.real-debrid.com/d/file999/Inception.mp4" })
+
+      result = service.resolve_single(
+        "https://torrentio.strem.fun/resolve/realdebrid/test_key/flaky/null/0/Inception.mp4",
+        filename: "Inception.mp4",
+        imdb_id: "tt1375666",
+        type: "movie"
+      )
+
+      expect(result).to be_success
+      expect(result.data[:streaming_url]).to eq("https://download.real-debrid.com/d/file999/Inception.mp4")
+    end
+
     it "does not fetch arbitrary resolve URLs" do
       cinemeta_stub
 

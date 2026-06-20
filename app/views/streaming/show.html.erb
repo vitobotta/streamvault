@@ -39,6 +39,19 @@
          style="object-fit: contain;">
   </video>
 
+  <%# Initial playback overlay (hidden once media actually starts playing) %>
+  <div data-playback-startup-overlay
+       class="absolute inset-0 z-30 flex items-center justify-center bg-black/80 transition-opacity duration-200"
+       role="status"
+       aria-live="polite"
+       aria-hidden="false">
+    <div class="flex flex-col items-center gap-3 px-5 py-4 rounded-lg bg-sv-surface border border-sv-border shadow-xl">
+      <div class="w-12 h-12 border-4 border-white/20 border-t-indigo-500 rounded-full animate-spin"></div>
+      <span class="text-white text-sm font-medium">Starting playback</span>
+      <span class="text-sv-text-muted text-xs">Preparing stream...</span>
+    </div>
+  </div>
+
   <%# Custom controls bar %>
   <div data-video-player-target="controls"
        class="absolute bottom-0 left-0 right-0 z-10 bg-gradient-to-t from-black/90 via-black/50 to-transparent pt-16 pb-3 px-4 opacity-100 transition-opacity duration-500">
@@ -87,6 +100,30 @@
       <span class="text-white/80 text-sm">Seeking…</span>
     </div>
   </div>
+
+  <script>
+    (() => {
+      const script = document.currentScript
+      const container = script.closest(".player-container")
+      if (!container) return
+
+      const video = container.querySelector("[data-video-player-target='video']")
+      const overlay = container.querySelector("[data-playback-startup-overlay]")
+      if (!video || !overlay) return
+
+      const hide = () => {
+        overlay.classList.add("opacity-0", "pointer-events-none")
+        overlay.setAttribute("aria-hidden", "true")
+        setTimeout(() => overlay.classList.add("hidden"), 220)
+      }
+
+      video.addEventListener("playing", hide, { once: true })
+      if (!video.paused && video.currentTime > 0) hide()
+      setTimeout(() => {
+        if (!video.paused && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) hide()
+      }, 0)
+    })()
+  </script>
 
   <% if @duration.to_f >= StreamingController::MIN_KNOWN_DURATION_SECONDS %>
     <script>

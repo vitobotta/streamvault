@@ -1,7 +1,9 @@
 # frozen_string_literal: true
 
 class ContentStreamingService
-  MAX_STREAM_ATTEMPTS = 15
+  MAX_STREAM_ATTEMPTS = 50
+  RESOLVE_BATCH_SIZE = 10
+  RESOLVE_RETRIES = 1
 
   def initialize(user)
     @user = user
@@ -98,6 +100,15 @@ class ContentStreamingService
   end
 
   def resolve_first_valid(candidates)
+    candidates.each_slice(RESOLVE_BATCH_SIZE) do |batch|
+      winner = resolve_first_valid_batch(batch)
+      return winner if winner
+    end
+
+    nil
+  end
+
+  def resolve_first_valid_batch(candidates)
     mutex = Mutex.new
     winner = nil
 
@@ -118,7 +129,8 @@ class ContentStreamingService
   def verify_resolve_url(resolve_url)
     return nil unless allowed_resolve_url?(resolve_url)
 
-    response = resolve_faraday.get(resolve_url)
+    response = with_resolve_retries { resolve_faraday.get(resolve_url) }
+    return nil unless response
 
     if [ 301, 302, 303, 307, 308 ].include?(response.status)
       location = response.headers["location"]
@@ -135,8 +147,18 @@ class ContentStreamingService
     else
       nil
     end
-  rescue Faraday::TimeoutError, Faraday::ConnectionFailed
-    nil
+  end
+
+  def with_resolve_retries
+    attempts = 0
+
+    begin
+      attempts += 1
+      yield
+    rescue Faraday::TimeoutError, Faraday::ConnectionFailed
+      retry if attempts <= RESOLVE_RETRIES
+      nil
+    end
   end
 
   def allowed_resolve_url?(resolve_url)

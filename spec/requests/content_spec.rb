@@ -27,6 +27,9 @@ RSpec.describe "Content", type: :request do
 
         get content_path(type: "movie", imdb_id: "tt1375666")
         expect(response).to have_http_status(:ok)
+        expect(response.body).to include("stream-resolve-loading")
+        expect(response.body).to include("Finding a working stream")
+        expect(response.body).to include("StreamVaultPlaybackLoading")
       end
     end
   end

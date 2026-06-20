@@ -250,6 +250,8 @@ RSpec.describe "Streaming", type: :request do
       expect(response).to have_http_status(:ok)
       expect(response.body).to include("video-player")
       expect(response.body).to include("download.real-debrid.com")
+      expect(response.body).to include("data-playback-startup-overlay")
+      expect(response.body).to include("Starting playback")
     end
 
     it "uses transcode proxy for MKV files" do
