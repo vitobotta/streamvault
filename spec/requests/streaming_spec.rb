@@ -54,7 +54,7 @@ RSpec.describe "Streaming", type: :request do
           imdb_id: "tt1375666",
           type: "movie",
           title: "Inception",
-          needs_transcode: true
+          duration: 0
         ))
       end
 
@@ -87,7 +87,7 @@ RSpec.describe "Streaming", type: :request do
           imdb_id: "tt1375666",
           type: "movie",
           title: "Inception",
-          needs_transcode: true
+          duration: 0
         ))
       end
 
@@ -124,7 +124,51 @@ RSpec.describe "Streaming", type: :request do
           imdb_id: "tt1375666",
           type: "movie",
           title: "Inception",
-          needs_transcode: true
+          duration: 0
+        ))
+      end
+
+      it "falls back when the selected stream is blocked" do
+        stub_request(:get, "https://v3-cinemeta.strem.io/meta/movie/tt1375666.json")
+          .to_return(
+            status: 200,
+            body: { "meta" => { "id" => "tt1375666", "name" => "Inception" } }.to_json,
+            headers: { 'Content-Type' => 'application/json' }
+          )
+
+        stub_request(:get, %r{torrentio\.strem\.fun/([^/]+/)?stream/movie/tt1375666\.json})
+          .to_return(
+            status: 200,
+            body: {
+              "streams" => [
+                { "title" => "Inception 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/blocked/null/0/Inception.mkv", "behaviorHints" => { "filename" => "Inception.mkv" } },
+                { "title" => "Inception 720p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/ok/null/0/Inception720.mp4", "behaviorHints" => { "filename" => "Inception720.mp4" } }
+              ]
+            }.to_json,
+            headers: { 'Content-Type' => 'application/json' }
+          )
+
+        stub_request(:get, "https://torrentio.strem.fun/resolve/realdebrid/test_key/blocked/null/0/Inception.mkv")
+          .to_return(status: 302, headers: { "Location" => "https://torrentio.strem.fun/videos/downloading_v2.mp4" })
+
+        stub_request(:get, "https://torrentio.strem.fun/resolve/realdebrid/test_key/ok/null/0/Inception720.mp4")
+          .to_return(status: 302, headers: { "Location" => "https://download.real-debrid.com/d/file456/Inception720.mp4" })
+
+        post streaming_index_path, params: {
+          imdb_id: "tt1375666",
+          type: "movie",
+          title: "Inception",
+          resolve_url: "https://torrentio.strem.fun/resolve/realdebrid/test_key/blocked/null/0/Inception.mkv",
+          filename: "Inception.mkv"
+        }
+
+        expect(response).to redirect_to(streaming_path("play",
+          streaming_url: "https://download.real-debrid.com/d/file456/Inception720.mp4",
+          filename: "Inception720.mp4",
+          imdb_id: "tt1375666",
+          type: "movie",
+          title: "Inception",
+          duration: 0
         ))
       end
     end
