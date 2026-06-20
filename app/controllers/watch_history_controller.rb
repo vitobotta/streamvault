@@ -17,7 +17,18 @@ class WatchHistoryController < ApplicationController
 
   def destroy
     entry = current_user.watch_history_entries.find(params[:id])
-    entry.destroy
+
+    # A single content (movie or show) can have many watch_history_entries —
+    # ProgressTrackingService#create! writes a new row on every 5-second
+    # progress tick. Deleting only the latest row would let the next-oldest
+    # entry take its place, so the item reappears in Continue Watching.
+    # Remove ALL entries for the same content key instead.
+    if entry.show_imdb_id.present?
+      current_user.watch_history_entries.where(show_imdb_id: entry.show_imdb_id).destroy_all
+    else
+      current_user.watch_history_entries.where(imdb_id: entry.imdb_id).destroy_all
+    end
+
     redirect_back fallback_location: watch_history_index_path, status: :see_other, notice: "Removed from history."
   end
 
