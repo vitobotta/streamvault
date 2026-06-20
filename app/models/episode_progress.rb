@@ -10,10 +10,10 @@ class EpisodeProgress < ApplicationRecord
   validates :season_number, presence: true, numericality: { greater_than: 0 }
   validates :episode_number, presence: true, numericality: { greater_than: 0 }
   validates :progress_seconds, numericality: { greater_than_or_equal_to: 0 }
-  validates :duration_seconds, numericality: { greater_than: 0 }
+  validates :duration_seconds, numericality: { greater_than_or_equal_to: 0 }
   validates :last_watched_at, presence: true
   validates :show_imdb_id, uniqueness: {
-    scope: [:user_id, :season_number, :episode_number],
+    scope: [ :user_id, :season_number, :episode_number ],
     message: "progress for this episode already exists"
   }
 

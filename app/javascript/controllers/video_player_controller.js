@@ -1,5 +1,7 @@
 import { Controller } from "@hotwired/stimulus"
 
+const MIN_VALID_DURATION_SECONDS = 60
+
 export default class extends Controller {
   static get targets() {
     return [
@@ -20,7 +22,7 @@ export default class extends Controller {
   connect() {
     this.progressInterval = null
     this.uiHideTimer = null
-    this.knownDuration = 0
+    this.knownDuration = this.validDuration(this.durationValue) ? this.durationValue : 0
     this.isSeeking = false
     this.isDragging = false
     this.mouseMoveHandler = this.onMouseMove.bind(this)
@@ -48,6 +50,8 @@ export default class extends Controller {
     // playback. The video starts immediately; the seek bar populates
     // when the probe completes (usually a few seconds).
     this.currentTimeTarget.textContent = this.formatTime(this.startSecondsValue)
+    this.updateDurationDisplay()
+    this.onTimeUpdate()
     this.probeDuration()
 
     // Save progress on page unload
@@ -72,8 +76,9 @@ export default class extends Controller {
 
       const response = await fetch(`/transcode/duration?url=${encodeURIComponent(rawUrl)}`)
       const data = await response.json()
-      if (data.duration > 0) {
-        this.knownDuration = data.duration
+      const probedDuration = Number(data.duration)
+      if (this.validDuration(probedDuration)) {
+        this.knownDuration = probedDuration
         this.updateDurationDisplay()
         // Now that we know the duration, position the seek bar at the
         // current playback point (which starts at startSecondsValue).
@@ -191,6 +196,7 @@ export default class extends Controller {
     this.isSeeking = true
     this.showSeekingOverlay()
     this.startSecondsValue = targetSeconds
+    this.element.dataset.videoPlayerStartSecondsValue = targetSeconds.toString()
 
     const url = new URL(this.streamingUrlValue, window.location.origin)
     if (targetSeconds > 0) {
@@ -199,9 +205,13 @@ export default class extends Controller {
       url.searchParams.delete("start_seconds")
     }
 
-    this.videoTarget.src = url.pathname + url.search
+    const nextSrc = url.pathname + url.search
+    this.streamingUrlValue = nextSrc
+    this.videoTarget.src = nextSrc
     this.videoTarget.load()
     this.videoTarget.play()
+    this.currentTimeTarget.textContent = this.formatTime(targetSeconds)
+    this.updateSeekVisuals(targetSeconds / this.knownDuration)
   }
 
   // ── Time / progress updates ───────────────────────────────────────
@@ -235,12 +245,16 @@ export default class extends Controller {
   effectiveDuration() {
     if (this.knownDuration > 0) return this.knownDuration
     const d = this.videoTarget.duration
-    return (d && isFinite(d)) ? d + this.startSecondsValue : 0
+    return this.validDuration(d) ? d + this.startSecondsValue : 0
   }
 
   updateDurationDisplay() {
     const duration = this.effectiveDuration()
     this.durationDisplayTarget.textContent = duration > 0 ? this.formatTime(duration) : "--:--"
+  }
+
+  validDuration(seconds) {
+    return Number.isFinite(seconds) && seconds >= MIN_VALID_DURATION_SECONDS
   }
 
   formatTime(seconds) {
@@ -329,8 +343,8 @@ export default class extends Controller {
     const video = this.videoTarget
     if (!video) return
     const progressSeconds = Math.floor(video.currentTime + this.startSecondsValue)
-    const durationSeconds = Math.floor(this.effectiveDuration())
-    if (durationSeconds <= 0) return
+    const durationSeconds = this.saveableDurationSeconds()
+    if (progressSeconds <= 0) return
 
     try {
       const csrfToken = document.querySelector("meta[name='csrf-token']")?.content
@@ -357,8 +371,8 @@ export default class extends Controller {
     const video = this.videoTarget
     if (!video) return
     const progressSeconds = Math.floor(video.currentTime + this.startSecondsValue)
-    const durationSeconds = Math.floor(this.effectiveDuration())
-    if (durationSeconds <= 0) return
+    const durationSeconds = this.saveableDurationSeconds()
+    if (progressSeconds <= 0) return
 
     const csrfToken = document.querySelector("meta[name='csrf-token']")?.content
     fetch(`/streaming/play/progress`, {
@@ -376,5 +390,10 @@ export default class extends Controller {
       }),
       keepalive: true
     })
+  }
+
+  saveableDurationSeconds() {
+    const duration = Math.floor(this.effectiveDuration())
+    return duration > 0 ? duration : 0
   }
 }

@@ -1,7 +1,17 @@
 require "active_support/core_ext/integer/time"
+require "fileutils"
 
 Rails.application.configure do
   # Settings specified here will take precedence over those in config/application.rb.
+
+  # Precompiled assets in development shadow importmap/source files and can
+  # make Stimulus changes look broken until public/assets is removed.
+  precompiled_assets_dir = Rails.root.join("public/assets")
+  precompiled_assets_manifest = precompiled_assets_dir.join(".manifest.json")
+  if precompiled_assets_manifest.exist?
+    warn "[assets] Removing stale precompiled development assets from #{precompiled_assets_dir}"
+    FileUtils.rm_rf(precompiled_assets_dir)
+  end
 
   # Make code changes take effect immediately without server restart.
   config.enable_reloading = true

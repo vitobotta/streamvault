@@ -1,19 +1,23 @@
 # frozen_string_literal: true
 
+require "uri"
+
 class TranscodeController < ApplicationController
   include ActionController::Live
+
+  MAX_START_SECONDS = 24 * 60 * 60
 
   before_action :authenticate_user!
 
   # GET /transcode?url=...&start_seconds=... — FFmpeg transcode proxy
   def stream
-    input_url = params[:url]
-    if input_url.blank?
+    input_url = params[:url].to_s
+    unless valid_stream_url?(input_url)
       head :bad_request
       return
     end
 
-    start_seconds = params[:start_seconds].to_f
+    start_seconds = normalized_start_seconds(params[:start_seconds])
 
     headers = {}
     if current_user.has_realdebrid_key?
@@ -50,5 +54,21 @@ class TranscodeController < ApplicationController
     ensure
       response.stream.close
     end
+  end
+
+  private
+
+  def normalized_start_seconds(value)
+    seconds = value.to_f
+    return 0 unless seconds.finite? && seconds.positive?
+
+    [ seconds, MAX_START_SECONDS ].min
+  end
+
+  def valid_stream_url?(value)
+    uri = URI.parse(value)
+    uri.is_a?(URI::HTTP) && uri.host.present?
+  rescue URI::InvalidURIError
+    false
   end
 end

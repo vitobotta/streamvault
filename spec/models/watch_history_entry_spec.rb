@@ -10,7 +10,7 @@ RSpec.describe WatchHistoryEntry, type: :model do
     it { is_expected.to validate_presence_of(:title) }
     it { is_expected.to validate_presence_of(:watched_at) }
     it { is_expected.to validate_numericality_of(:progress_seconds).is_greater_than_or_equal_to(0) }
-    it { is_expected.to validate_numericality_of(:duration_seconds).is_greater_than(0) }
+    it { is_expected.to validate_numericality_of(:duration_seconds).is_greater_than_or_equal_to(0) }
     it { is_expected.to validate_numericality_of(:progress_percentage).is_greater_than_or_equal_to(0).is_less_than_or_equal_to(100) }
 
     it { is_expected.to define_enum_for(:content_type).with_values(movie: 0, episode: 1) }

@@ -1,6 +1,9 @@
 # frozen_string_literal: true
 
 class StreamingController < ApplicationController
+  MIN_KNOWN_DURATION_SECONDS = 60
+  MAX_KNOWN_DURATION_SECONDS = 24 * 60 * 60
+
   before_action :authenticate_user!
   before_action :verify_realdebrid_key!, except: [:progress]
 
@@ -31,7 +34,9 @@ class StreamingController < ApplicationController
     end
 
     if result.success?
-      resume_at = find_resume_position(params[:imdb_id], params[:type], params[:season], params[:episode])
+      progress_entry = find_progress_entry(params[:imdb_id], params[:type], params[:season], params[:episode])
+      resume_at = progress_entry&.progress_seconds
+      duration = find_duration_seconds(progress_entry, params[:imdb_id], params[:type], params[:season], params[:episode])
 
       redirect_to streaming_path(
         "play",
@@ -44,7 +49,7 @@ class StreamingController < ApplicationController
         title: params[:title],
         poster_url: params[:poster_url],
         resume_at: resume_at,
-        duration: 0
+        duration: duration
       )
     else
       redirect_back fallback_location: root_path, alert: result.error_message
@@ -60,7 +65,13 @@ class StreamingController < ApplicationController
     @title = params[:title] || "Now Playing"
     @poster_url = params[:poster_url]
     @resume_at = params[:resume_at]
-    @duration = params[:duration].to_f
+    @duration = normalized_duration_seconds(params[:duration])
+
+    if @duration.zero?
+      progress_entry = find_progress_entry(@imdb_id, @type, @season, @episode)
+      @duration = normalized_duration_seconds(progress_entry&.duration_seconds)
+      @duration = metadata_duration_seconds(@imdb_id, @type, @season, @episode) if @duration.zero? && params.key?(:duration)
+    end
 
     # Build the FFmpeg proxy URL. Pass resume_at as start_seconds so
     # ffmpeg seeks to the right position (-ss) — the stream starts at
@@ -102,20 +113,57 @@ class StreamingController < ApplicationController
     end
   end
 
-  def find_resume_position(imdb_id, type, season, episode)
+  def find_progress_entry(imdb_id, type, season, episode)
     if type == "show" && season.present? && episode.present?
-      ep = current_user.episode_progresses.find_by(
+      return current_user.episode_progresses.find_by(
         show_imdb_id: imdb_id,
         season_number: season.to_i,
         episode_number: episode.to_i
       )
-      return ep&.progress_seconds
     end
 
-    entry = current_user.watch_history_entries
+    current_user.watch_history_entries
       .where(imdb_id: imdb_id)
       .order(watched_at: :desc)
       .first
-    entry&.progress_seconds
+  end
+
+  def find_duration_seconds(progress_entry, imdb_id, type, season, episode)
+    saved_duration = normalized_duration_seconds(progress_entry&.duration_seconds)
+    return saved_duration if saved_duration.positive?
+
+    requested_duration = request_duration_seconds
+    return requested_duration if requested_duration.positive?
+
+    metadata_duration_seconds(imdb_id, type, season, episode)
+  end
+
+  def request_duration_seconds
+    duration = params[:duration].presence || params[:duration_seconds].presence
+    normalized_duration_seconds(duration)
+  end
+
+  def metadata_duration_seconds(imdb_id, type, season, episode)
+    meta_result = TorrentioService.new(rd_api_key: current_user.realdebrid_api_key).metadata(imdb_id, type)
+    return 0 if meta_result.failure?
+
+    if type == "show" && season.present? && episode.present?
+      selected_episode = meta_result.data[:episodes]&.find do |ep|
+        ep[:season].to_i == season.to_i && ep[:episode].to_i == episode.to_i
+      end
+      return normalized_duration_seconds(selected_episode&.dig(:runtime_seconds))
+    end
+
+    normalized_duration_seconds(meta_result.data[:runtime_seconds])
+  rescue StandardError => e
+    Rails.logger.warn("[Streaming] duration metadata lookup failed: #{e.message}")
+    0
+  end
+
+  def normalized_duration_seconds(value)
+    seconds = value.to_i
+    return seconds if seconds >= MIN_KNOWN_DURATION_SECONDS && seconds <= MAX_KNOWN_DURATION_SECONDS
+
+    0
   end
 end

@@ -48,9 +48,11 @@ class ContentController < ApplicationController
     @show_title = meta.success? ? meta.data[:title] : @imdb_id
     @poster_url = meta.success? ? meta.data[:poster_url] : nil
     @episode_title = ""
+    @episode_duration_seconds = nil
     if meta.success? && meta.data[:episodes]
       ep = meta.data[:episodes].find { |e| e[:season] == @season && e[:episode] == @episode }
       @episode_title = ep&.dig(:title).to_s
+      @episode_duration_seconds = ep&.dig(:runtime_seconds)
     end
 
     filter_title = "#{@show_title} #{@episode_title}"

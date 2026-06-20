@@ -282,6 +282,7 @@ class TorrentioService
       rated: meta["certification"],
       imdb_rating: meta["imdbRating"],
       runtime: meta["runtime"],
+      runtime_seconds: parse_runtime_seconds(meta["runtime"]),
       total_seasons: extract_total_seasons(meta),
       episodes: extract_episodes(meta)
     }
@@ -328,8 +329,35 @@ class TorrentioService
         released: v["released"]&.to_date&.to_s,
         imdb_id: v["id"],
         overview: v["overview"],
-        runtime: v["runtime"]
+        runtime: v["runtime"],
+        runtime_seconds: parse_runtime_seconds(v["runtime"])
       }
     end
+  end
+
+  def parse_runtime_seconds(runtime)
+    value = runtime.to_s.strip
+    return nil if value.blank?
+
+    if (iso = value.match(/\APT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?\z/i))
+      hours = iso[1].to_i
+      minutes = iso[2].to_i
+      seconds = iso[3].to_i
+      total = (hours * 3600) + (minutes * 60) + seconds
+      return total.positive? ? total : nil
+    end
+
+    hours = value[/(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hour|hours)\b/i, 1].to_f
+    minutes = value[/(\d+(?:\.\d+)?)\s*(?:m|min|mins|minute|minutes)\b/i, 1].to_f
+
+    if hours.positive? || minutes.positive?
+      total = ((hours * 3600) + (minutes * 60)).round
+      return total.positive? ? total : nil
+    end
+
+    numeric_minutes = value[/\A(\d+(?:\.\d+)?)\z/, 1]&.to_f
+    return (numeric_minutes * 60).round if numeric_minutes&.positive?
+
+    nil
   end
 end

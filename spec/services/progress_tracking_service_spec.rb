@@ -46,6 +46,23 @@ RSpec.describe ProgressTrackingService do
       expect(result).to be_success
       expect(user.watch_history_entries.first.poster_url).to be_nil
     end
+
+    it "creates a continue-watching entry when duration is not known yet" do
+      result = described_class.save_progress(user, "tt1375666", 12, 0, type: "movie", title: "Inception")
+
+      expect(result).to be_success
+      entry = user.watch_history_entries.first
+      expect(entry.duration_seconds).to eq(0)
+      expect(entry.progress_percentage).to eq(1)
+      expect(described_class.continue_watching(user).data.first[:imdb_id]).to eq("tt1375666")
+    end
+
+    it "clamps progress percentage when progress exceeds duration" do
+      result = described_class.save_progress(user, "tt1375666", 120, 60, type: "movie", title: "Inception")
+
+      expect(result).to be_success
+      expect(user.watch_history_entries.first.progress_percentage).to eq(100)
+    end
   end
 
   describe ".get_progress" do

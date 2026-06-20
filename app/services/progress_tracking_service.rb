@@ -5,7 +5,16 @@ class ProgressTrackingService
   def self.save_progress(user, imdb_id, progress_seconds, duration_seconds, type:, season: nil, episode: nil, poster_url: nil, title: nil)
     return ServiceResult.failure("Invalid progress data") if progress_seconds.blank? || duration_seconds.blank?
 
-    progress_pct = duration_seconds.positive? ? ((progress_seconds.to_f / duration_seconds) * 100).round : 0
+    progress_seconds = [ progress_seconds.to_i, 0 ].max
+    duration_seconds = [ duration_seconds.to_i, 0 ].max
+    progress_pct =
+      if duration_seconds.positive?
+        ((progress_seconds.to_f / duration_seconds) * 100).round.clamp(0, 100)
+      elsif progress_seconds.positive?
+        1
+      else
+        0
+      end
 
     resolved_title = title.presence || fetch_title(user, imdb_id, type)
     resolved_poster = poster_url.presence || fetch_poster(user, imdb_id, type)
@@ -137,13 +146,14 @@ class ProgressTrackingService
     entry = user.library_entries.find_by(imdb_id: imdb_id)
     return unless entry
 
-    new_status = if progress_pct >= 95
-                   :finished
-                 elsif progress_pct.positive?
-                   :watching
-                 else
-                   entry.watch_status
-                 end
+    new_status =
+      if progress_pct >= 95
+        :finished
+      elsif progress_pct.positive?
+        :watching
+      else
+        entry.watch_status
+      end
 
     entry.update!(watch_status: new_status) if new_status != entry.watch_status
   end

@@ -16,7 +16,7 @@ RSpec.describe EpisodeProgress, type: :model do
     it { is_expected.to validate_numericality_of(:season_number).is_greater_than(0) }
     it { is_expected.to validate_numericality_of(:episode_number).is_greater_than(0) }
     it { is_expected.to validate_numericality_of(:progress_seconds).is_greater_than_or_equal_to(0) }
-    it { is_expected.to validate_numericality_of(:duration_seconds).is_greater_than(0) }
+    it { is_expected.to validate_numericality_of(:duration_seconds).is_greater_than_or_equal_to(0) }
     it { is_expected.to validate_uniqueness_of(:show_imdb_id).scoped_to(:user_id, :season_number, :episode_number).with_message("progress for this episode already exists") }
   end
 

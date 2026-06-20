@@ -14,7 +14,7 @@
           <span class="text-xs text-sv-text-muted ml-1.5 shrink-0"><%= stream[:size] %></span>
         </div>
         <div class="flex items-center gap-3 shrink-0 ml-3">
-          <%= button_to "Watch", streaming_index_path, params: { imdb_id: @imdb_id, type: "show", season: @season, episode: @episode, title: "#{@show_title} S#{@season.to_s.rjust(2,'0')}E#{@episode.to_s.rjust(2,'0')}", poster_url: @poster_url, resolve_url: stream[:resolve_url], filename: stream[:filename] }, class: "btn-primary text-xs px-2 py-1", data: { turbo: false } %>
+          <%= button_to "Watch", streaming_index_path, params: { imdb_id: @imdb_id, type: "show", season: @season, episode: @episode, title: "#{@show_title} S#{@season.to_s.rjust(2,'0')}E#{@episode.to_s.rjust(2,'0')}", poster_url: @poster_url, duration: @episode_duration_seconds, resolve_url: stream[:resolve_url], filename: stream[:filename] }, class: "btn-primary text-xs px-2 py-1", data: { turbo: false } %>
         </div>
       </div>
     <% end %>

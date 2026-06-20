@@ -58,6 +58,67 @@ RSpec.describe "Streaming", type: :request do
         ))
       end
 
+      it "passes metadata runtime to the player duration" do
+        stub_request(:get, "https://v3-cinemeta.strem.io/meta/movie/tt1375666.json")
+          .to_return(
+            status: 200,
+            body: { "meta" => { "id" => "tt1375666", "name" => "Inception", "runtime" => "148 min" } }.to_json,
+            headers: { 'Content-Type' => 'application/json' }
+          )
+
+        stub_request(:get, "https://torrentio.strem.fun/resolve/realdebrid/test_key/abc123/null/0/Inception.mp4")
+          .to_return(status: 302, headers: { "Location" => "https://download.real-debrid.com/d/file123/Inception.mp4" })
+
+        post streaming_index_path, params: {
+          imdb_id: "tt1375666",
+          type: "movie",
+          title: "Inception",
+          resolve_url: "https://torrentio.strem.fun/resolve/realdebrid/test_key/abc123/null/0/Inception.mp4",
+          filename: "Inception.mp4"
+        }
+
+        expect(response).to redirect_to(streaming_path("play",
+          streaming_url: "https://download.real-debrid.com/d/file123/Inception.mp4",
+          filename: "Inception.mp4",
+          imdb_id: "tt1375666",
+          type: "movie",
+          title: "Inception",
+          duration: 8880
+        ))
+      end
+
+      it "prefers saved progress duration over metadata runtime" do
+        create(:watch_history_entry, user: user, imdb_id: "tt1375666", progress_seconds: 3600, duration_seconds: 7200)
+
+        stub_request(:get, "https://v3-cinemeta.strem.io/meta/movie/tt1375666.json")
+          .to_return(
+            status: 200,
+            body: { "meta" => { "id" => "tt1375666", "name" => "Inception", "runtime" => "148 min" } }.to_json,
+            headers: { 'Content-Type' => 'application/json' }
+          )
+
+        stub_request(:get, "https://torrentio.strem.fun/resolve/realdebrid/test_key/abc123/null/0/Inception.mp4")
+          .to_return(status: 302, headers: { "Location" => "https://download.real-debrid.com/d/file123/Inception.mp4" })
+
+        post streaming_index_path, params: {
+          imdb_id: "tt1375666",
+          type: "movie",
+          title: "Inception",
+          resolve_url: "https://torrentio.strem.fun/resolve/realdebrid/test_key/abc123/null/0/Inception.mp4",
+          filename: "Inception.mp4"
+        }
+
+        expect(response).to redirect_to(streaming_path("play",
+          streaming_url: "https://download.real-debrid.com/d/file123/Inception.mp4",
+          filename: "Inception.mp4",
+          imdb_id: "tt1375666",
+          type: "movie",
+          title: "Inception",
+          resume_at: 3600,
+          duration: 7200
+        ))
+      end
+
       it "marks MKV streams for transcoding" do
         stub_request(:get, "https://v3-cinemeta.strem.io/meta/movie/tt1375666.json")
           .to_return(
@@ -203,6 +264,62 @@ RSpec.describe "Streaming", type: :request do
       expect(response).to have_http_status(:ok)
       expect(response.body).to include("transcode")
     end
+
+    it "renders the known duration before JavaScript initializes" do
+      get streaming_path("play",
+        streaming_url: "https://download.real-debrid.com/d/file123/Inception.mp4",
+        filename: "Inception.mp4",
+        imdb_id: "tt1375666",
+        type: "movie",
+        title: "Inception",
+        duration: 8880
+      )
+
+      expect(response).to have_http_status(:ok)
+      expect(response.body).to include(%(data-video-player-duration-value="8880"))
+      expect(response.body).to include(%(data-video-player-progress-url-value="/streaming/play/progress"))
+      expect(response.body).to include(">2:28:00</span>")
+      expect(response.body).to include("new MutationObserver")
+      expect(response.body).to include("performKnownDurationSeek")
+      expect(response.body).to include("progressFallbackAttached")
+    end
+
+    it "backfills duration for old player URLs that still have duration zero" do
+      stub_request(:get, "https://v3-cinemeta.strem.io/meta/movie/tt1375666.json")
+        .to_return(
+          status: 200,
+          body: { "meta" => { "id" => "tt1375666", "name" => "Inception", "runtime" => "148 min" } }.to_json,
+          headers: { 'Content-Type' => 'application/json' }
+        )
+
+      get streaming_path("play",
+        streaming_url: "https://download.real-debrid.com/d/file123/Inception.mp4",
+        filename: "Inception.mp4",
+        imdb_id: "tt1375666",
+        type: "movie",
+        title: "Inception",
+        duration: 0
+      )
+
+      expect(response).to have_http_status(:ok)
+      expect(response.body).to include(%(data-video-player-duration-value="8880"))
+      expect(response.body).to include(">2:28:00</span>")
+    end
+
+    it "renders progress fallback when duration is unknown" do
+      get streaming_path("play",
+        streaming_url: "https://download.real-debrid.com/d/file123/Inception.mp4",
+        filename: "Inception.mp4",
+        imdb_id: "tt1375666",
+        type: "movie",
+        title: "Inception"
+      )
+
+      expect(response).to have_http_status(:ok)
+      expect(response.body).to include(%(data-video-player-progress-url-value="/streaming/play/progress"))
+      expect(response.body).to include("progressFallbackAttached")
+      expect(response.body).to include("duration_seconds: durationSeconds()")
+    end
   end
 
   describe "PATCH /streaming/:id/progress" do
@@ -249,6 +366,22 @@ RSpec.describe "Streaming", type: :request do
 
       expect(response).to have_http_status(:ok)
       expect(user.watch_history_entries.first.poster_url).to eq("https://img.example.com/wish.jpg")
+    end
+
+    it "saves first progress tick before duration is known" do
+      patch progress_streaming_path("play"), params: {
+        imdb_id: "tt1375666",
+        progress_seconds: 12,
+        duration_seconds: 0,
+        type: "movie",
+        title: "Inception"
+      }
+
+      expect(response).to have_http_status(:ok)
+      entry = user.watch_history_entries.first
+      expect(entry.title).to eq("Inception")
+      expect(entry.duration_seconds).to eq(0)
+      expect(entry.progress_percentage).to eq(1)
     end
   end
 end

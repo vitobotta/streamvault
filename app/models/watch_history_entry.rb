@@ -12,7 +12,7 @@ class WatchHistoryEntry < ApplicationRecord
   validates :title, presence: true
   validates :watched_at, presence: true
   validates :progress_seconds, numericality: { greater_than_or_equal_to: 0 }
-  validates :duration_seconds, numericality: { greater_than: 0 }
+  validates :duration_seconds, numericality: { greater_than_or_equal_to: 0 }
   validates :progress_percentage, numericality: { greater_than_or_equal_to: 0, less_than_or_equal_to: 100 }
 
   # Scopes

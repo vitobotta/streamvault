@@ -124,6 +124,7 @@ RSpec.describe TorrentioService do
       expect(result.data[:title]).to eq("Inception")
       expect(result.data[:imdb_rating]).to eq("8.8")
       expect(result.data[:genre]).to eq("Action, Sci-Fi")
+      expect(result.data[:runtime_seconds]).to eq(8880)
     end
 
     it "returns show metadata with episodes" do
@@ -141,8 +142,8 @@ RSpec.describe TorrentioService do
               "genres" => ["Crime", "Drama"],
               "imdbRating" => "9.5",
               "videos" => [
-                { "season" => 1, "episode" => 1, "name" => "Pilot", "released" => "2008-01-20" },
-                { "season" => 1, "episode" => 2, "name" => "Cat's in the Bag...", "released" => "2008-01-27" },
+                { "season" => 1, "episode" => 1, "name" => "Pilot", "released" => "2008-01-20", "runtime" => "58 min" },
+                { "season" => 1, "episode" => 2, "name" => "Cat's in the Bag...", "released" => "2008-01-27", "runtime" => "PT48M" },
                 { "season" => 2, "episode" => 1, "name" => "Seven Thirty-Seven", "released" => "2009-03-08" }
               ]
             }
@@ -156,6 +157,8 @@ RSpec.describe TorrentioService do
       expect(result.data[:episodes].length).to eq(3)
       expect(result.data[:total_seasons]).to eq(2)
       expect(result.data[:episodes].first[:title]).to eq("Pilot")
+      expect(result.data[:episodes].first[:runtime_seconds]).to eq(3480)
+      expect(result.data[:episodes].second[:runtime_seconds]).to eq(2880)
     end
   end
 end

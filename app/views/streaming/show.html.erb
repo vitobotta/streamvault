@@ -9,7 +9,8 @@
      data-video-player-start-seconds-value="<%= @resume_at.present? ? @resume_at : 0 %>"
      data-video-player-duration-value="<%= @duration || 0 %>"
      data-video-player-title-value="<%= @title %>"
-     data-video-player-poster-url-value="<%= @poster_url %>">
+     data-video-player-poster-url-value="<%= @poster_url %>"
+     data-video-player-progress-url-value="<%= progress_streaming_path("play") %>">
 
   <%# Back button (auto-hides) %>
   <div class="absolute top-4 left-4 z-10 opacity-100 transition-opacity duration-500" data-video-player-target="backButton">
@@ -60,9 +61,9 @@
       </button>
 
       <%# Time display %>
-      <span data-video-player-target="currentTime" class="tabular-nums">0:00</span>
+      <span data-video-player-target="currentTime" class="tabular-nums"><%= player_time(@resume_at) %></span>
       <span class="text-white/40">/</span>
-      <span data-video-player-target="durationDisplay" class="text-white/60 tabular-nums">--:--</span>
+      <span data-video-player-target="durationDisplay" class="text-white/60 tabular-nums"><%= @duration.to_f.positive? ? player_time(@duration) : "--:--" %></span>
 
       <div class="flex-1"></div>
 
@@ -86,4 +87,243 @@
       <span class="text-white/80 text-sm">Seeking…</span>
     </div>
   </div>
+
+  <% if @duration.to_f >= StreamingController::MIN_KNOWN_DURATION_SECONDS %>
+    <script>
+      (() => {
+        const script = document.currentScript
+        const container = script.closest(".player-container")
+        if (!container) return
+
+        const durationSeconds = Number(container.dataset.videoPlayerDurationValue)
+        if (!Number.isFinite(durationSeconds) || durationSeconds < 60) return
+
+        const video = container.querySelector("[data-video-player-target='video']")
+        const currentTime = container.querySelector("[data-video-player-target='currentTime']")
+        const durationDisplay = container.querySelector("[data-video-player-target='durationDisplay']")
+        const seekBar = container.querySelector("[data-video-player-target='seekBar']")
+        const seekFilled = container.querySelector("[data-video-player-target='seekFilled']")
+        const seekHandle = container.querySelector("[data-video-player-target='seekHandle']")
+        const durationLabel = durationDisplay?.textContent?.trim()
+        let suppressNextClick = false
+
+        const currentStartSeconds = () => {
+          const datasetSeconds = Number(container.dataset.videoPlayerStartSecondsValue)
+          if (Number.isFinite(datasetSeconds) && datasetSeconds >= 0) return datasetSeconds
+
+          try {
+            const videoUrl = new URL(video.currentSrc || video.src, window.location.origin)
+            const urlSeconds = Number(videoUrl.searchParams.get("start_seconds"))
+            return Number.isFinite(urlSeconds) && urlSeconds >= 0 ? urlSeconds : 0
+          } catch {
+            return 0
+          }
+        }
+
+        const seekPercentFromEvent = (event) => {
+          if (!seekBar) return 0
+          const rect = seekBar.getBoundingClientRect()
+          const point = event.changedTouches?.[0] || event.touches?.[0] || event
+          const percent = (point.clientX - rect.left) / rect.width
+          return Math.max(0, Math.min(1, percent))
+        }
+
+        const setSeekVisuals = (percent) => {
+          const boundedPercent = Math.max(0, Math.min(1, percent)) * 100
+          if (seekFilled) seekFilled.style.width = `${boundedPercent}%`
+          if (seekHandle) seekHandle.style.left = `${boundedPercent}%`
+        }
+
+        const performKnownDurationSeek = (percent) => {
+          if (!video) return
+
+          const targetSeconds = Math.floor(percent * durationSeconds)
+          container.dataset.videoPlayerStartSecondsValue = targetSeconds.toString()
+
+          const url = new URL(container.dataset.videoPlayerStreamingUrlValue || video.currentSrc || video.src, window.location.origin)
+          if (targetSeconds > 0) {
+            url.searchParams.set("start_seconds", targetSeconds)
+          } else {
+            url.searchParams.delete("start_seconds")
+          }
+
+          const nextSrc = `${url.pathname}${url.search}`
+          container.dataset.videoPlayerStreamingUrlValue = nextSrc
+          video.src = nextSrc
+          video.load()
+          video.play()
+
+          if (currentTime) currentTime.textContent = formatTime(targetSeconds)
+          setSeekVisuals(targetSeconds / durationSeconds)
+          restoreDuration()
+        }
+
+        const stopStaleControllerSeek = (event) => {
+          event.preventDefault()
+          event.stopImmediatePropagation()
+        }
+
+        const formatTime = (seconds) => {
+          if (!Number.isFinite(seconds) || seconds < 0) return "0:00"
+          const wholeSeconds = Math.floor(seconds)
+          const hours = Math.floor(wholeSeconds / 3600)
+          const minutes = Math.floor((wholeSeconds % 3600) / 60)
+          const restSeconds = wholeSeconds % 60
+          if (hours > 0) {
+            return `${hours}:${minutes.toString().padStart(2, "0")}:${restSeconds.toString().padStart(2, "0")}`
+          }
+          return `${minutes}:${restSeconds.toString().padStart(2, "0")}`
+        }
+
+        const restoreDuration = () => {
+          if (durationDisplay && durationLabel) {
+            const text = durationDisplay.textContent.trim()
+            if (text === "" || text === "0:00" || text === "--:--") {
+              durationDisplay.textContent = durationLabel
+            }
+          }
+
+          if (!video) return
+          const position = video.currentTime + currentStartSeconds()
+          if (currentTime) currentTime.textContent = formatTime(position)
+
+          const percent = Math.max(0, Math.min(100, (position / durationSeconds) * 100))
+          if (seekFilled) seekFilled.style.width = `${percent}%`
+          if (seekHandle) seekHandle.style.left = `${percent}%`
+        }
+
+        const restoreAfterPlaybackHandlers = () => setTimeout(restoreDuration, 0)
+        restoreDuration()
+
+        if (durationDisplay) {
+          new MutationObserver(restoreAfterPlaybackHandlers).observe(durationDisplay, {
+            childList: true,
+            characterData: true,
+            subtree: true
+          })
+        }
+
+        ;["loadedmetadata", "durationchange", "timeupdate", "play", "playing", "canplay"].forEach((eventName) => {
+          video?.addEventListener(eventName, restoreAfterPlaybackHandlers)
+        })
+
+        if (seekBar) {
+          let dragging = false
+
+          const onPointerMove = (event) => {
+            if (!dragging) return
+            event.preventDefault()
+            setSeekVisuals(seekPercentFromEvent(event))
+          }
+
+          const onPointerUp = (event) => {
+            if (!dragging) return
+            dragging = false
+            document.removeEventListener("mousemove", onPointerMove)
+            document.removeEventListener("mouseup", onPointerUp)
+            document.removeEventListener("touchmove", onPointerMove)
+            document.removeEventListener("touchend", onPointerUp)
+            stopStaleControllerSeek(event)
+            suppressNextClick = true
+            performKnownDurationSeek(seekPercentFromEvent(event))
+            setTimeout(() => { suppressNextClick = false }, 0)
+          }
+
+          const onPointerDown = (event) => {
+            dragging = true
+            stopStaleControllerSeek(event)
+            setSeekVisuals(seekPercentFromEvent(event))
+            document.addEventListener("mousemove", onPointerMove)
+            document.addEventListener("mouseup", onPointerUp)
+            document.addEventListener("touchmove", onPointerMove, { passive: false })
+            document.addEventListener("touchend", onPointerUp)
+          }
+
+          seekBar.addEventListener("mousedown", onPointerDown, true)
+          seekBar.addEventListener("touchstart", onPointerDown, { capture: true, passive: false })
+          seekBar.addEventListener("click", (event) => {
+            stopStaleControllerSeek(event)
+            if (suppressNextClick) return
+            performKnownDurationSeek(seekPercentFromEvent(event))
+          }, true)
+        }
+      })()
+    </script>
+  <% end %>
+
+  <script>
+    (() => {
+      const script = document.currentScript
+      const container = script.closest(".player-container")
+      if (!container || container.dataset.progressFallbackAttached === "true") return
+      container.dataset.progressFallbackAttached = "true"
+
+      const video = container.querySelector("[data-video-player-target='video']")
+      if (!video) return
+
+      const progressUrl = container.dataset.videoPlayerProgressUrlValue || "/streaming/play/progress"
+      let lastSavedAt = 0
+      let lastSavedSeconds = -1
+
+      const numberFrom = (value) => {
+        const number = Number(value)
+        return Number.isFinite(number) ? number : 0
+      }
+
+      const currentStartSeconds = () => {
+        try {
+          const videoUrl = new URL(video.currentSrc || video.src, window.location.origin)
+          const urlSeconds = numberFrom(videoUrl.searchParams.get("start_seconds"))
+          if (urlSeconds > 0) return urlSeconds
+        } catch {
+        }
+
+        const datasetSeconds = numberFrom(container.dataset.videoPlayerStartSecondsValue)
+        return datasetSeconds > 0 ? datasetSeconds : 0
+      }
+
+      const durationSeconds = () => {
+        const duration = numberFrom(container.dataset.videoPlayerDurationValue)
+        return duration >= 60 ? Math.floor(duration) : 0
+      }
+
+      const saveProgress = (force = false, keepalive = false) => {
+        const progressSeconds = Math.floor(numberFrom(video.currentTime) + currentStartSeconds())
+        if (progressSeconds <= 0) return
+
+        const now = Date.now()
+        if (!force && now - lastSavedAt < 5000) return
+        if (!force && progressSeconds === lastSavedSeconds) return
+
+        lastSavedAt = now
+        lastSavedSeconds = progressSeconds
+
+        const csrfToken = document.querySelector("meta[name='csrf-token']")?.content
+        fetch(progressUrl, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+          body: JSON.stringify({
+            imdb_id: container.dataset.videoPlayerImdbIdValue,
+            progress_seconds: progressSeconds,
+            duration_seconds: durationSeconds(),
+            type: container.dataset.videoPlayerTypeValue || "movie",
+            season: container.dataset.videoPlayerSeasonValue || null,
+            episode: container.dataset.videoPlayerEpisodeValue || null,
+            title: container.dataset.videoPlayerTitleValue || null,
+            poster_url: container.dataset.videoPlayerPosterUrlValue || null
+          }),
+          keepalive
+        }).catch(() => {})
+      }
+
+      video.addEventListener("playing", () => setTimeout(() => saveProgress(true), 1000))
+      video.addEventListener("timeupdate", () => saveProgress(false))
+      video.addEventListener("seeked", () => saveProgress(true))
+      window.addEventListener("pagehide", () => saveProgress(true, true))
+      window.addEventListener("beforeunload", () => saveProgress(true, true))
+      setInterval(() => {
+        if (!video.paused) saveProgress(false)
+      }, 5000)
+    })()
+  </script>
 </div>
