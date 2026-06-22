@@ -24,7 +24,7 @@
 
         <% if devise_mapping.rememberable? %>
           <div class="flex items-center gap-2 mb-6">
-            <%= f.check_box :remember_me, class: "rounded border-sv-border bg-sv-surface text-sv-accent focus:ring-sv-accent" %>
+            <%= f.check_box :remember_me, { class: "rounded border-sv-border bg-sv-surface text-sv-accent focus:ring-sv-accent", checked: true }, "1", "0" %>
             <%= f.label :remember_me, class: "text-sm text-sv-text-muted" %>
           </div>
         <% end %>
