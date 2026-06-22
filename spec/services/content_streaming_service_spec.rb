@@ -40,7 +40,7 @@ RSpec.describe ContentStreamingService do
           status: 200,
           body: {
             "streams" => [
-              { "title" => "Inception 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/abc123/null/0/Inception.mkv", "behaviorHints" => { "filename" => "Inception.mkv" } }
+              { "title" => "Inception ENG 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/abc123/null/0/Inception.mkv", "behaviorHints" => { "filename" => "Inception.mkv" } }
             ]
           }.to_json,
           headers: { 'Content-Type' => 'application/json' }
@@ -62,8 +62,8 @@ RSpec.describe ContentStreamingService do
           status: 200,
           body: {
             "streams" => [
-              { "title" => "Inception 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/blocked/null/0/Inception.mkv", "behaviorHints" => { "filename" => "Inception.mkv" } },
-              { "title" => "Inception 720p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/ok/null/0/Inception720.mkv", "behaviorHints" => { "filename" => "Inception720.mkv" } }
+              { "title" => "Inception ENG 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/blocked/null/0/Inception.mkv", "behaviorHints" => { "filename" => "Inception.mkv" } },
+              { "title" => "Inception ENG 720p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/ok/null/0/Inception720.mkv", "behaviorHints" => { "filename" => "Inception720.mkv" } }
             ]
           }.to_json,
           headers: { 'Content-Type' => 'application/json' }
@@ -89,7 +89,7 @@ RSpec.describe ContentStreamingService do
           status: 200,
           body: {
             "streams" => [
-              { "title" => "Inception 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/blocked1/null/0/Inception.mkv", "behaviorHints" => { "filename" => "Inception.mkv" } }
+              { "title" => "Inception ENG 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/blocked1/null/0/Inception.mkv", "behaviorHints" => { "filename" => "Inception.mkv" } }
             ]
           }.to_json,
           headers: { 'Content-Type' => 'application/json' }
@@ -111,8 +111,8 @@ RSpec.describe ContentStreamingService do
           status: 200,
           body: {
             "streams" => [
-              { "title" => "Inception 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/inf/null/0/Inception.mkv", "behaviorHints" => { "filename" => "Inception.mkv" } },
-              { "title" => "Inception 720p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/ok/null/0/Inception720.mkv", "behaviorHints" => { "filename" => "Inception720.mkv" } }
+              { "title" => "Inception ENG 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/inf/null/0/Inception.mkv", "behaviorHints" => { "filename" => "Inception.mkv" } },
+              { "title" => "Inception ENG 720p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/ok/null/0/Inception720.mkv", "behaviorHints" => { "filename" => "Inception720.mkv" } }
             ]
           }.to_json,
           headers: { "Content-Type" => "application/json" }
@@ -127,6 +127,53 @@ RSpec.describe ContentStreamingService do
       result = service.start_stream("tt1375666", "movie")
       expect(result).to be_success
       expect(result.data[:streaming_url]).to eq("https://download.real-debrid.com/d/def/Inception720.mkv")
+    end
+
+    it "chooses the default language before another preferred language" do
+      user.update!(preferred_languages: %w[ENG FRENCH], default_language: "FRENCH")
+      cinemeta_stub
+
+      stub_request(:get, %r{torrentio\.strem\.fun/([^/]+/)?stream/movie/tt1375666\.json})
+        .to_return(
+          status: 200,
+          body: {
+            "streams" => [
+              { "title" => "Inception ENG 2160p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/eng/null/0/InceptionENG.mkv", "behaviorHints" => { "filename" => "InceptionENG.mkv" } },
+              { "title" => "Inception FRENCH 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/french/null/0/InceptionFrench.mkv", "behaviorHints" => { "filename" => "InceptionFrench.mkv" } }
+            ]
+          }.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+
+      stub_request(:get, "https://torrentio.strem.fun/resolve/realdebrid/test_key/french/null/0/InceptionFrench.mkv")
+        .to_return(status: 302, headers: { "Location" => "https://download.real-debrid.com/d/french/InceptionFrench.mkv" })
+
+      result = service.start_stream("tt1375666", "movie")
+
+      expect(result).to be_success
+      expect(result.data[:filename]).to eq("InceptionFrench.mkv")
+      expect(WebMock).not_to have_requested(:get, "https://torrentio.strem.fun/resolve/realdebrid/test_key/eng/null/0/InceptionENG.mkv")
+    end
+
+    it "does not use streams outside the preferred languages" do
+      user.update!(preferred_languages: %w[FRENCH], default_language: "FRENCH")
+      cinemeta_stub
+
+      stub_request(:get, %r{torrentio\.strem\.fun/([^/]+/)?stream/movie/tt1375666\.json})
+        .to_return(
+          status: 200,
+          body: {
+            "streams" => [
+              { "title" => "Inception GERMAN 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/german/null/0/InceptionGerman.mkv", "behaviorHints" => { "filename" => "InceptionGerman.mkv" } }
+            ]
+          }.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+
+      result = service.start_stream("tt1375666", "movie")
+
+      expect(result).to be_failure
+      expect(WebMock).not_to have_requested(:get, "https://torrentio.strem.fun/resolve/realdebrid/test_key/german/null/0/InceptionGerman.mkv")
     end
   end
 
@@ -155,8 +202,8 @@ RSpec.describe ContentStreamingService do
           status: 200,
           body: {
             "streams" => [
-              { "title" => "Inception 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/blocked/null/0/Inception.mkv", "behaviorHints" => { "filename" => "Inception.mkv" } },
-              { "title" => "Inception 720p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/ok/null/0/Inception720.mp4", "behaviorHints" => { "filename" => "Inception720.mp4" } }
+              { "title" => "Inception ENG 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/blocked/null/0/Inception.mkv", "behaviorHints" => { "filename" => "Inception.mkv" } },
+              { "title" => "Inception ENG 720p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/ok/null/0/Inception720.mp4", "behaviorHints" => { "filename" => "Inception720.mp4" } }
             ]
           }.to_json,
           headers: { "Content-Type" => "application/json" }
@@ -184,9 +231,9 @@ RSpec.describe ContentStreamingService do
       cinemeta_stub
 
       streams = (1..15).map do |index|
-        { "title" => "Inception blocked #{index}", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/blocked#{index}/null/0/Inception#{index}.mkv", "behaviorHints" => { "filename" => "Inception#{index}.mkv" } }
+        { "title" => "Inception ENG blocked #{index}", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/blocked#{index}/null/0/Inception#{index}.mkv", "behaviorHints" => { "filename" => "Inception#{index}.mkv" } }
       end
-      streams << { "title" => "Inception 720p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/ok16/null/0/Inception720.mp4", "behaviorHints" => { "filename" => "Inception720.mp4" } }
+      streams << { "title" => "Inception ENG 720p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/ok16/null/0/Inception720.mp4", "behaviorHints" => { "filename" => "Inception720.mp4" } }
 
       stub_request(:get, %r{torrentio\.strem\.fun/([^/]+/)?stream/movie/tt1375666\.json})
         .to_return(

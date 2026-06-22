@@ -69,6 +69,36 @@ RSpec.describe TorrentioService do
       expect(result.data.first[:quality]).to eq("1080p")
     end
 
+    it "filters to preferred languages and sorts the default language first" do
+      stub_request(:get, %r{torrentio\.strem\.fun/([^/]+/)?stream/movie/tt1375666\.json})
+        .to_return(
+          status: 200,
+          body: {
+            "streams" => [
+              { "title" => "Inception ENG 2160p", "url" => "https://torrentio.strem.fun/resolve/eng" },
+              { "title" => "Inception FRENCH 1080p", "url" => "https://torrentio.strem.fun/resolve/french" },
+              { "title" => "Inception GERMAN 1080p", "url" => "https://torrentio.strem.fun/resolve/german" },
+              { "title" => "Inception 720p", "url" => "https://torrentio.strem.fun/resolve/unknown" }
+            ]
+          }.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+
+      result = service.streams(
+        "tt1375666",
+        "movie",
+        preferred_languages: %w[ENG FRENCH],
+        default_language: "FRENCH"
+      )
+
+      expect(result).to be_success
+      expect(result.data.map { |stream| stream[:resolve_url] }).to eq([
+        "https://torrentio.strem.fun/resolve/french",
+        "https://torrentio.strem.fun/resolve/eng"
+      ])
+      expect(result.data.map { |stream| stream[:language_score] }).to eq([ 0, 1 ])
+    end
+
     it "returns streams for a series episode" do
       stub_request(:get, %r{torrentio\.strem\.fun/([^/]+/)?stream/series/tt0903747:1:1\.json})
         .to_return(
@@ -109,9 +139,9 @@ RSpec.describe TorrentioService do
               "year" => "2010",
               "poster" => "https://example.com/poster.jpg",
               "description" => "A thief who steals corporate secrets...",
-              "genres" => ["Action", "Sci-Fi"],
-              "director" => ["Christopher Nolan"],
-              "cast" => ["Leonardo DiCaprio", "Joseph Gordon-Levitt"],
+              "genres" => [ "Action", "Sci-Fi" ],
+              "director" => [ "Christopher Nolan" ],
+              "cast" => [ "Leonardo DiCaprio", "Joseph Gordon-Levitt" ],
               "imdbRating" => "8.8",
               "runtime" => "148 min"
             }
@@ -139,7 +169,7 @@ RSpec.describe TorrentioService do
               "year" => "2008–2013",
               "poster" => "https://example.com/poster.jpg",
               "description" => "A high school chemistry teacher...",
-              "genres" => ["Crime", "Drama"],
+              "genres" => [ "Crime", "Drama" ],
               "imdbRating" => "9.5",
               "videos" => [
                 { "season" => 1, "episode" => 1, "name" => "Pilot", "released" => "2008-01-20", "runtime" => "58 min" },

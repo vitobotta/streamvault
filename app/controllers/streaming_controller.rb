@@ -5,7 +5,7 @@ class StreamingController < ApplicationController
   MAX_KNOWN_DURATION_SECONDS = 24 * 60 * 60
 
   before_action :authenticate_user!
-  before_action :verify_realdebrid_key!, except: [:progress]
+  before_action :verify_realdebrid_key!, except: [ :progress ]
 
   # POST /streaming — start stream, redirect to player page
   def create
@@ -66,6 +66,8 @@ class StreamingController < ApplicationController
     @poster_url = params[:poster_url]
     @resume_at = params[:resume_at]
     @duration = normalized_duration_seconds(params[:duration])
+    @default_language = current_user.default_stream_language
+    @preferred_languages = current_user.preferred_stream_languages
 
     if @duration.zero?
       progress_entry = find_progress_entry(@imdb_id, @type, @season, @episode)
@@ -80,6 +82,8 @@ class StreamingController < ApplicationController
     if @streaming_url.present?
       transcode_params = { url: @streaming_url }
       transcode_params[:start_seconds] = @resume_at if @resume_at.present? && @resume_at.to_f > 0
+      transcode_params[:audio_stream] = params[:audio_stream] if params[:audio_stream].present?
+      transcode_params[:subtitle_stream] = params[:subtitle_stream] if params[:subtitle_stream].present?
       @streaming_url = transcode_stream_path(transcode_params)
     end
   end

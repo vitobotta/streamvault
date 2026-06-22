@@ -14,7 +14,13 @@ class ContentController < ApplicationController
 
     if @type != "show"
       content_title = @metadata&.dig(:title)
-      streams_result = torrentio.streams(@imdb_id, @type, title: content_title, preferred_languages: current_user.preferred_stream_languages)
+      streams_result = torrentio.streams(
+        @imdb_id,
+        @type,
+        title: content_title,
+        preferred_languages: current_user.preferred_stream_languages,
+        default_language: current_user.default_stream_language
+      )
       @streams = streams_result.success? ? streams_result.data : []
       @streams_error = streams_result.failure? ? streams_result.error_message : nil
     end
@@ -24,7 +30,7 @@ class ContentController < ApplicationController
     @library_entry = current_user.library_entries.find_by(imdb_id: @imdb_id)
 
     if @type == "show"
-      @episode_progress = current_user.episode_progresses.for_show(@imdb_id).index_by { |ep| [ep.season_number, ep.episode_number] }
+      @episode_progress = current_user.episode_progresses.for_show(@imdb_id).index_by { |ep| [ ep.season_number, ep.episode_number ] }
       @selected_season = params[:season]&.to_i || 1
       # Show progress = last watched episode
       last_episode = current_user.watch_history_entries.where(show_imdb_id: @imdb_id).order(watched_at: :desc).first
@@ -56,7 +62,15 @@ class ContentController < ApplicationController
     end
 
     filter_title = "#{@show_title} #{@episode_title}"
-    streams_result = torrentio.streams(@imdb_id, "show", season: @season, episode: @episode, title: filter_title, preferred_languages: current_user.preferred_stream_languages)
+    streams_result = torrentio.streams(
+      @imdb_id,
+      "show",
+      season: @season,
+      episode: @episode,
+      title: filter_title,
+      preferred_languages: current_user.preferred_stream_languages,
+      default_language: current_user.default_stream_language
+    )
     @streams = streams_result.success? ? streams_result.data : []
     @streams_error = streams_result.failure? ? streams_result.error_message : nil
 

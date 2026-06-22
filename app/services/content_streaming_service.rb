@@ -60,7 +60,8 @@ class ContentStreamingService
       season: season,
       episode: episode,
       title: content_title,
-      preferred_languages: @user.preferred_stream_languages
+      preferred_languages: @user.preferred_stream_languages,
+      default_language: @user.default_stream_language
     )
   end
 
@@ -100,9 +101,11 @@ class ContentStreamingService
   end
 
   def resolve_first_valid(candidates)
-    candidates.each_slice(RESOLVE_BATCH_SIZE) do |batch|
-      winner = resolve_first_valid_batch(batch)
-      return winner if winner
+    candidates.group_by { |stream| stream[:language_score].to_i }.sort_by(&:first).each do |_, language_group|
+      language_group.each_slice(RESOLVE_BATCH_SIZE) do |batch|
+        winner = resolve_first_valid_batch(batch)
+        return winner if winner
+      end
     end
 
     nil

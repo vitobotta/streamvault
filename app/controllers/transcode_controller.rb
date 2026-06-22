@@ -1,9 +1,8 @@
 # frozen_string_literal: true
 
-require "uri"
-
 class TranscodeController < ApplicationController
   include ActionController::Live
+  include StreamUrlValidation
 
   MAX_START_SECONDS = 24 * 60 * 60
 
@@ -36,7 +35,15 @@ class TranscodeController < ApplicationController
     response.headers["X-Accel-Buffering"] = "no"
 
     begin
-      TranscodeService.transcode_to_fmp4(input_url, headers: headers, start_seconds: start_seconds) do |chunk|
+      TranscodeService.transcode_to_fmp4(
+        input_url,
+        headers: headers,
+        start_seconds: start_seconds,
+        audio_stream: params[:audio_stream],
+        subtitle_stream: params[:subtitle_stream],
+        default_language: current_user.default_stream_language,
+        preferred_languages: current_user.preferred_stream_languages
+      ) do |chunk|
         response.stream.write(chunk)
       end
     rescue TranscodeService::TranscodeError => e
@@ -63,12 +70,5 @@ class TranscodeController < ApplicationController
     return 0 unless seconds.finite? && seconds.positive?
 
     [ seconds, MAX_START_SECONDS ].min
-  end
-
-  def valid_stream_url?(value)
-    uri = URI.parse(value)
-    uri.is_a?(URI::HTTP) && uri.host.present?
-  rescue URI::InvalidURIError
-    false
   end
 end

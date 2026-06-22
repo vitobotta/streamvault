@@ -5,12 +5,14 @@
 # action in a separate thread where Devise's throw(:warden) is not caught,
 # causing an UncaughtThrowError when authentication fails.
 class TranscodeDurationController < ApplicationController
+  include StreamUrlValidation
+
   before_action :authenticate_user!
 
   # GET /transcode/duration?url=... — probe file duration via ffprobe
   def show
     input_url = params[:url]
-    if input_url.blank?
+    unless valid_stream_url?(input_url)
       render json: { duration: 0 }, status: :bad_request
       return
     end

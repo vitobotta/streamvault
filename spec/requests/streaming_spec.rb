@@ -38,7 +38,7 @@ RSpec.describe "Streaming", type: :request do
             status: 200,
             body: {
               "streams" => [
-                { "title" => "Inception 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/abc123/null/0/Inception.mp4", "behaviorHints" => { "filename" => "Inception.mp4" } }
+                { "title" => "Inception ENG 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/abc123/null/0/Inception.mp4", "behaviorHints" => { "filename" => "Inception.mp4" } }
               ]
             }.to_json,
             headers: { 'Content-Type' => 'application/json' }
@@ -132,7 +132,7 @@ RSpec.describe "Streaming", type: :request do
             status: 200,
             body: {
               "streams" => [
-                { "title" => "Inception 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/abc123/null/0/Inception.mkv", "behaviorHints" => { "filename" => "Inception.mkv" } }
+                { "title" => "Inception ENG 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/abc123/null/0/Inception.mkv", "behaviorHints" => { "filename" => "Inception.mkv" } }
               ]
             }.to_json,
             headers: { 'Content-Type' => 'application/json' }
@@ -165,8 +165,8 @@ RSpec.describe "Streaming", type: :request do
             status: 200,
             body: {
               "streams" => [
-                { "title" => "Inception 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/blocked/null/0/Inception.mkv", "behaviorHints" => { "filename" => "Inception.mkv" } },
-                { "title" => "Inception 720p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/ok/null/0/Inception720.mp4", "behaviorHints" => { "filename" => "Inception720.mp4" } }
+                { "title" => "Inception ENG 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/blocked/null/0/Inception.mkv", "behaviorHints" => { "filename" => "Inception.mkv" } },
+                { "title" => "Inception ENG 720p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/ok/null/0/Inception720.mp4", "behaviorHints" => { "filename" => "Inception720.mp4" } }
               ]
             }.to_json,
             headers: { 'Content-Type' => 'application/json' }
@@ -202,8 +202,8 @@ RSpec.describe "Streaming", type: :request do
             status: 200,
             body: {
               "streams" => [
-                { "title" => "Inception 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/blocked/null/0/Inception.mkv", "behaviorHints" => { "filename" => "Inception.mkv" } },
-                { "title" => "Inception 720p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/ok/null/0/Inception720.mp4", "behaviorHints" => { "filename" => "Inception720.mp4" } }
+                { "title" => "Inception ENG 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/blocked/null/0/Inception.mkv", "behaviorHints" => { "filename" => "Inception.mkv" } },
+                { "title" => "Inception ENG 720p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/ok/null/0/Inception720.mp4", "behaviorHints" => { "filename" => "Inception720.mp4" } }
               ]
             }.to_json,
             headers: { 'Content-Type' => 'application/json' }
@@ -252,6 +252,15 @@ RSpec.describe "Streaming", type: :request do
       expect(response.body).to include("download.real-debrid.com")
       expect(response.body).to include("data-playback-startup-overlay")
       expect(response.body).to include("Starting playback")
+      expect(response.body).to include(%(data-video-player-default-language-value="ENG"))
+      expect(response.body).to include(%(data-video-player-tracks-url-value="/transcode/tracks"))
+      expect(response.body).to include(%(data-video-player-subtitles-url-value="/transcode/subtitles"))
+      expect(response.body).to include(%(data-video-player-target="audioControls"))
+      expect(response.body).to include(%(data-video-player-target="subtitleControls"))
+      expect(response.body).to include(%(data-video-player-target="subtitleOverlay"))
+      expect(response.body).to include(%(click-&gt;video-player#navigateBack))
+      expect(response.body).to include("toggleAudioMenu")
+      expect(response.body).to include("toggleSubtitleMenu")
     end
 
     it "uses transcode proxy for MKV files" do
@@ -265,6 +274,20 @@ RSpec.describe "Streaming", type: :request do
       )
       expect(response).to have_http_status(:ok)
       expect(response.body).to include("transcode")
+    end
+
+    it "passes a selected subtitle stream to the transcode proxy" do
+      get streaming_path("play",
+        streaming_url: "https://download.real-debrid.com/d/file123/Inception.mkv",
+        filename: "Inception.mkv",
+        imdb_id: "tt1375666",
+        type: "movie",
+        title: "Inception",
+        subtitle_stream: "4"
+      )
+
+      expect(response).to have_http_status(:ok)
+      expect(response.body).to include("subtitle_stream=4")
     end
 
     it "renders the known duration before JavaScript initializes" do

@@ -68,7 +68,7 @@ class TorrentioService
     ServiceResult.failure("Search failed")
   end
 
-  def streams(imdb_id, type, season: nil, episode: nil, title: nil, preferred_languages: nil)
+  def streams(imdb_id, type, season: nil, episode: nil, title: nil, preferred_languages: nil, default_language: nil)
     return ServiceResult.failure("IMDB ID is required") if imdb_id.blank?
 
     path = build_stream_path(imdb_id, type, season: season, episode: episode)
@@ -76,8 +76,9 @@ class TorrentioService
 
     if response.success? && response.body.is_a?(Hash) && response.body["streams"]
       parsed = parse_streams(response.body["streams"])
-      parsed = sort_streams(parsed)
-      parsed = filter_by_preferred_languages(parsed, preferred_languages) if preferred_languages.present?
+      language_priority = normalize_language_priority(default_language, preferred_languages)
+      parsed = filter_by_preferred_languages(parsed, language_priority) if language_priority.present?
+      parsed = sort_streams(parsed, language_priority: language_priority)
       ServiceResult.success(parsed)
     elsif response.status == 404
       ServiceResult.success([])
@@ -130,7 +131,7 @@ class TorrentioService
 
   def filter_by_preferred_languages(streams, preferred_languages)
     return streams if preferred_languages.blank?
-    langs = Array(preferred_languages).map(&:to_s).map(&:upcase)
+    langs = normalize_language_list(preferred_languages)
     streams.select { |s| (s[:languages] & langs).any? }
   end
 
@@ -151,14 +152,42 @@ class TorrentioService
     ServiceResult.success([])
   end
 
-  # Sort: RD+ first, then quality, then size (audio/video handled by FFmpeg transcode)
-  def sort_streams(streams)
-    streams.sort_by do |s|
+  # Sort: user language preference first, then RD+, quality, and size.
+  # Audio/video compatibility is handled by FFmpeg transcode after a stream is
+  # resolved, but the source candidate itself must respect user preferences.
+  def sort_streams(streams, language_priority: [])
+    streams_with_scores = streams.map do |stream|
+      stream.merge(language_score: stream_language_score(stream, language_priority))
+    end
+
+    streams_with_scores.sort_by do |s|
+      language_score = s[:language_score]
       rd_score = s[:rd_plus] ? 0 : 1
       quality_score = QUALITY_SORT[s[:quality]] || 4
       size_bytes = s[:raw_size].is_a?(Numeric) ? s[:raw_size] : 0
-      [rd_score, quality_score, -size_bytes]
+      [ language_score, rd_score, quality_score, -size_bytes ]
     end
+  end
+
+  def stream_language_score(stream, language_priority)
+    return 0 if language_priority.blank?
+
+    stream_languages = Array(stream[:languages]).map(&:to_s).map(&:upcase)
+    matching_indexes = stream_languages.filter_map { |language| language_priority.index(language) }
+    matching_indexes.min || language_priority.length
+  end
+
+  def normalize_language_priority(default_language, preferred_languages)
+    normalize_language_list([ default_language ] + Array(preferred_languages))
+  end
+
+  def normalize_language_list(languages)
+    Array(languages)
+      .flatten
+      .map(&:to_s)
+      .map(&:upcase)
+      .select { |language| LANGUAGE_PATTERNS.key?(language) }
+      .uniq
   end
 
   def build_stream_path(imdb_id, type, season: nil, episode: nil)
@@ -190,7 +219,7 @@ class TorrentioService
         rd_plus: s["sources"].is_a?(Array) && s["sources"].any?,
         filename: filename,
         resolve_url: rewrite_resolve_url(s["url"]),
-        languages: extract_languages(title_text),
+        languages: extract_languages(title_text)
       }
     end
   end
@@ -207,10 +236,10 @@ class TorrentioService
   end
 
   def extract_languages(title)
-    return ["ENG"] if title.blank?
+    return [] if title.blank?
     langs = LANGUAGE_PATTERNS.select { |_, pattern| title.match?(pattern) }.keys
     langs = LANGUAGE_PATTERNS.keys if title.match?(/\bMULTi|MULTIPLE|MULTI\b/i)
-    langs.presence || ["ENG"]
+    langs
   end
 
   def parse_size_bytes(title)

@@ -1,6 +1,9 @@
 import { Controller } from "@hotwired/stimulus"
 
 const MIN_VALID_DURATION_SECONDS = 60
+const SUBTITLE_WINDOW_SECONDS = 6 * 60
+const SUBTITLE_PREFETCH_SECONDS = 45
+const INTERACTIVE_SELECTOR = "button, a, input, textarea, select, [contenteditable='true']"
 
 export default class extends Controller {
   static get targets() {
@@ -8,14 +11,18 @@ export default class extends Controller {
       "video", "controls", "seekBar", "seekFilled", "seekBuffered", "seekHandle",
       "playButton", "playIcon", "pauseIcon", "currentTime", "durationDisplay",
       "volumeIcon", "muteIcon", "seekingOverlay",
-      "sourceInfo", "sourceToggle", "sourceDetails", "sourceUrl", "sourceFilename", "backButton"
+      "sourceInfo", "sourceToggle", "sourceDetails", "sourceUrl", "sourceFilename", "backButton",
+      "audioControls", "audioMenu", "audioOptions", "audioButtonLabel",
+      "subtitleControls", "subtitleMenu", "subtitleOptions", "subtitleButtonLabel", "subtitleOverlay"
     ]
   }
   static get values() {
     return {
       streamingUrl: String, filename: String, imdbId: String, type: String,
       season: String, episode: String, resumeAt: String, startSeconds: Number,
-      title: String, duration: Number, posterUrl: String
+      title: String, duration: Number, posterUrl: String,
+      defaultLanguage: String, preferredLanguages: String,
+      tracksUrl: String, subtitlesUrl: String
     }
   }
 
@@ -26,6 +33,18 @@ export default class extends Controller {
     this.isSeeking = false
     this.isDragging = false
     this.mouseMoveHandler = this.onMouseMove.bind(this)
+    this.keydownHandler = this.onKeyDown.bind(this)
+    this.videoClickHandler = this.onVideoClick.bind(this)
+    this.documentClickHandler = this.onDocumentClick.bind(this)
+    this.audioTracks = []
+    this.subtitleTracks = []
+    this.selectedAudioStream = this.currentUrlParam("audio_stream")
+    this.selectedSubtitleStream = this.currentUrlParam("subtitle_stream")
+    this.subtitleCues = []
+    this.subtitleWindowStart = null
+    this.subtitleWindowEnd = null
+    this.subtitleLoading = false
+    this.subtitleLoadToken = 0
 
     // Show source info
     this.sourceInfoTarget.classList.remove("hidden")
@@ -33,7 +52,10 @@ export default class extends Controller {
     this.sourceFilenameTarget.textContent = this.filenameValue || "Unknown"
     this.showOverlayUi()
     this.element.addEventListener("mousemove", this.mouseMoveHandler)
+    document.addEventListener("keydown", this.keydownHandler)
+    document.addEventListener("click", this.documentClickHandler)
     // Video event listeners
+    this.videoTarget.addEventListener("click", this.videoClickHandler)
     this.videoTarget.addEventListener("play", () => this.updatePlayIcon())
     this.videoTarget.addEventListener("pause", () => this.updatePlayIcon())
     this.videoTarget.addEventListener("timeupdate", () => this.onTimeUpdate())
@@ -53,6 +75,7 @@ export default class extends Controller {
     this.updateDurationDisplay()
     this.onTimeUpdate()
     this.probeDuration()
+    this.loadMediaTracks()
 
     // Save progress on page unload
     this.beforeUnloadHandler = () => this.saveProgressSync()
@@ -66,7 +89,11 @@ export default class extends Controller {
     this.stopProgressTracking()
     this.clearUiHideTimer()
     this.element.removeEventListener("mousemove", this.mouseMoveHandler)
+    document.removeEventListener("keydown", this.keydownHandler)
+    document.removeEventListener("click", this.documentClickHandler)
+    this.videoTarget.removeEventListener("click", this.videoClickHandler)
     window.removeEventListener("beforeunload", this.beforeUnloadHandler)
+    this.removeTextSubtitleTrack()
   }
 
   async probeDuration() {
@@ -98,13 +125,63 @@ export default class extends Controller {
     }
   }
 
+  currentUrlParam(name) {
+    try {
+      const url = new URL(this.streamingUrlValue || this.videoTarget.currentSrc || this.videoTarget.src, window.location.origin)
+      return url.searchParams.get(name)
+    } catch {
+      return null
+    }
+  }
+
   // ── Play / pause ──────────────────────────────────────────────────
 
   togglePlay() {
     if (this.videoTarget.paused) {
-      this.videoTarget.play()
+      const playPromise = this.videoTarget.play()
+      if (playPromise?.catch) playPromise.catch(() => {})
     } else {
       this.videoTarget.pause()
+    }
+  }
+
+  onVideoClick(event) {
+    event.preventDefault()
+    this.togglePlay()
+    this.showOverlayUi()
+  }
+
+  onKeyDown(event) {
+    if (event.key !== " " && event.key !== "Spacebar") return
+    if (event.repeat || this.isInteractiveElement(event.target)) return
+
+    event.preventDefault()
+    this.togglePlay()
+    this.showOverlayUi()
+  }
+
+  isInteractiveElement(element) {
+    return element instanceof Element && element.closest(INTERACTIVE_SELECTOR)
+  }
+
+  navigateBack(event) {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    const href = event.currentTarget.href
+    this.stopPlaybackForNavigation()
+    window.location.href = href
+  }
+
+  stopPlaybackForNavigation() {
+    this.stopProgressTracking()
+    this.saveProgressSync()
+
+    try {
+      this.videoTarget.pause()
+      this.videoTarget.src = ""
+      this.videoTarget.removeAttribute("src")
+      this.videoTarget.load()
+    } catch {
     }
   }
 
@@ -132,6 +209,387 @@ export default class extends Controller {
       this.volumeIconTarget.classList.remove("hidden")
       this.muteIconTarget.classList.add("hidden")
     }
+  }
+
+  // ── Audio / subtitles ─────────────────────────────────────────────
+
+  async loadMediaTracks() {
+    if (!this.hasTracksUrlValue) return
+
+    const rawUrl = this.extractRawUrl()
+    if (!rawUrl) return
+
+    try {
+      const url = new URL(this.tracksUrlValue, window.location.origin)
+      url.searchParams.set("url", rawUrl)
+      const response = await fetch(url.pathname + url.search, { headers: { "Accept": "application/json" } })
+      if (!response.ok) return
+
+      const data = await response.json()
+      this.audioTracks = Array.isArray(data.audio) ? data.audio : []
+      this.subtitleTracks = Array.isArray(data.subtitles) ? data.subtitles : []
+      this.selectedAudioStream ||= this.preferredAudioTrack()?.index?.toString() || null
+      this.renderTrackControls()
+      if (this.textSubtitleSelected()) this.loadSubtitleTrack()
+    } catch (e) {
+      console.warn("Track probe failed:", e)
+    }
+  }
+
+  preferredAudioTrack() {
+    const languagePriority = this.languagePriority()
+    const preferredTracks = this.audioTracks
+      .filter((track) => languagePriority.includes(track.language))
+      .sort((a, b) => {
+        const languageDelta = languagePriority.indexOf(a.language) - languagePriority.indexOf(b.language)
+        if (languageDelta !== 0) return languageDelta
+        return Number(a.position || 0) - Number(b.position || 0)
+      })
+
+    return preferredTracks[0] || this.audioTracks.find((track) => track.default) || this.audioTracks[0]
+  }
+
+  languagePriority() {
+    const languages = [this.defaultLanguageValue, ...this.preferredLanguages()]
+    return [...new Set(languages.map((language) => language?.toString().toUpperCase()).filter(Boolean))]
+  }
+
+  preferredLanguages() {
+    try {
+      const parsed = JSON.parse(this.preferredLanguagesValue || "[]")
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  }
+
+  renderTrackControls() {
+    this.renderAudioControls()
+    this.renderSubtitleControls()
+  }
+
+  renderAudioControls() {
+    if (!this.hasAudioControlsTarget || !this.hasAudioOptionsTarget) return
+    if (this.audioTracks.length <= 1) {
+      this.audioControlsTarget.classList.add("hidden")
+      return
+    }
+
+    this.audioControlsTarget.classList.remove("hidden")
+    this.audioOptionsTarget.replaceChildren()
+    this.audioTracks.forEach((track) => {
+      this.audioOptionsTarget.appendChild(this.trackOptionButton({
+        label: track.label || "Audio",
+        selected: track.index?.toString() === this.selectedAudioStream,
+        datasetName: "audioStream",
+        datasetValue: track.index,
+        action: "click->video-player#selectAudioTrack"
+      }))
+    })
+    this.updateAudioButtonLabel()
+  }
+
+  renderSubtitleControls() {
+    if (!this.hasSubtitleControlsTarget || !this.hasSubtitleOptionsTarget) return
+    if (this.subtitleTracks.length === 0) {
+      this.subtitleControlsTarget.classList.add("hidden")
+      return
+    }
+
+    this.subtitleControlsTarget.classList.remove("hidden")
+    this.subtitleOptionsTarget.replaceChildren()
+    this.subtitleOptionsTarget.appendChild(this.trackOptionButton({
+      label: "Off",
+      selected: !this.selectedSubtitleStream,
+      datasetName: "subtitleStream",
+      datasetValue: "",
+      action: "click->video-player#selectSubtitleTrack"
+    }))
+
+    this.subtitleTracks.forEach((track) => {
+      this.subtitleOptionsTarget.appendChild(this.trackOptionButton({
+        label: track.label || "Subtitle",
+        selected: track.index?.toString() === this.selectedSubtitleStream,
+        datasetName: "subtitleStream",
+        datasetValue: track.index,
+        action: "click->video-player#selectSubtitleTrack"
+      }))
+    })
+    this.updateSubtitleButtonLabel()
+  }
+
+  trackOptionButton({ label, selected, datasetName, datasetValue, action }) {
+    const button = document.createElement("button")
+    button.type = "button"
+    button.className = `block w-full text-left px-2 py-1.5 rounded transition-colors ${selected ? "bg-sv-accent text-white" : "hover:bg-sv-surface-hover text-sv-text-muted hover:text-white"}`
+    button.dataset[datasetName] = datasetValue?.toString() || ""
+    button.dataset.action = action
+    button.textContent = label
+    return button
+  }
+
+  selectAudioTrack(event) {
+    const selectedStream = event.currentTarget.dataset.audioStream
+    if (!selectedStream || selectedStream === this.selectedAudioStream) {
+      this.closeTrackMenus()
+      return
+    }
+
+    this.selectedAudioStream = selectedStream
+    this.renderAudioControls()
+    this.closeTrackMenus()
+
+    const targetSeconds = Math.floor(this.videoTarget.currentTime + this.startSecondsValue)
+    this.restartPlaybackAt(targetSeconds)
+  }
+
+  selectSubtitleTrack(event) {
+    const previousBurnedSubtitle = this.burnedSubtitleSelected()
+    const selectedStream = event.currentTarget.dataset.subtitleStream || null
+    if (selectedStream === this.selectedSubtitleStream) {
+      this.closeTrackMenus()
+      return
+    }
+
+    this.selectedSubtitleStream = selectedStream
+    this.clearSubtitleCues()
+    this.renderSubtitleControls()
+    this.closeTrackMenus()
+
+    const targetSeconds = Math.floor(this.currentPlaybackPosition())
+    if (previousBurnedSubtitle || this.burnedSubtitleSelected()) {
+      this.restartPlaybackAt(targetSeconds)
+    } else if (this.textSubtitleSelected()) {
+      this.loadSubtitleTrack(targetSeconds)
+    }
+  }
+
+  currentPlaybackPosition() {
+    return this.videoTarget.currentTime + this.startSecondsValue
+  }
+
+  selectedSubtitleTrack() {
+    if (!this.selectedSubtitleStream) return null
+
+    return this.subtitleTracks.find((track) => track.index?.toString() === this.selectedSubtitleStream) || null
+  }
+
+  textSubtitleSelected() {
+    return this.selectedSubtitleTrack()?.text_supported === true
+  }
+
+  burnedSubtitleSelected() {
+    if (!this.selectedSubtitleStream) return false
+
+    const track = this.selectedSubtitleTrack()
+    return !track || track.text_supported !== true
+  }
+
+  async loadSubtitleTrack(currentPosition = this.currentPlaybackPosition()) {
+    if (!this.hasSubtitlesUrlValue || !this.textSubtitleSelected()) return
+
+    const rawUrl = this.extractRawUrl()
+    if (!rawUrl) return
+
+    const requestedSubtitleStream = this.selectedSubtitleStream
+    const windowStart = Math.max(0, Math.floor(currentPosition) - 5)
+    if (this.subtitleLoading && this.subtitleWindowStart === windowStart) return
+
+    const loadToken = this.subtitleLoadToken + 1
+    this.subtitleLoadToken = loadToken
+    this.clearSubtitleCues()
+    this.subtitleLoading = true
+    this.subtitleWindowStart = windowStart
+    this.subtitleWindowEnd = windowStart + SUBTITLE_WINDOW_SECONDS
+
+    const url = new URL(this.subtitlesUrlValue, window.location.origin)
+    url.searchParams.set("url", rawUrl)
+    url.searchParams.set("subtitle_stream", requestedSubtitleStream)
+    url.searchParams.set("start_seconds", windowStart.toString())
+
+    try {
+      const response = await fetch(url.pathname + url.search, { headers: { "Accept": "text/vtt" } })
+      if (this.selectedSubtitleStream !== requestedSubtitleStream || this.subtitleLoadToken !== loadToken) return
+      if (!response.ok) {
+        this.resetSubtitleWindow()
+        return
+      }
+
+      const text = await response.text()
+      if (this.selectedSubtitleStream !== requestedSubtitleStream || this.subtitleLoadToken !== loadToken) return
+
+      this.subtitleCues = this.parseWebVtt(text, windowStart)
+      this.updateSubtitleOverlay(this.currentPlaybackPosition())
+    } catch (e) {
+      console.warn("Subtitle load failed:", e)
+      this.removeTextSubtitleTrack()
+    } finally {
+      if (this.subtitleLoadToken === loadToken) this.subtitleLoading = false
+    }
+  }
+
+  removeTextSubtitleTrack() {
+    this.subtitleLoadToken += 1
+    this.clearSubtitleCues()
+    this.subtitleWindowStart = null
+    this.subtitleWindowEnd = null
+    this.subtitleLoading = false
+  }
+
+  resetSubtitleWindow() {
+    this.subtitleWindowStart = null
+    this.subtitleWindowEnd = null
+  }
+
+  clearSubtitleCues() {
+    this.subtitleCues = []
+    if (this.hasSubtitleOverlayTarget) {
+      this.subtitleOverlayTarget.textContent = ""
+      this.subtitleOverlayTarget.classList.add("hidden")
+    }
+  }
+
+  parseWebVtt(text, offsetSeconds = 0) {
+    const cues = text
+      .replace(/^\uFEFF/, "")
+      .split(/\r?\n\s*\r?\n/)
+      .filter((block) => block.includes("-->"))
+      .map((block) => this.parseWebVttCue(block))
+      .filter(Boolean)
+
+    if (offsetSeconds <= 0 || cues.some((cue) => cue.start >= offsetSeconds - 30)) {
+      return cues
+    }
+
+    return cues.map((cue) => ({
+      ...cue,
+      start: cue.start + offsetSeconds,
+      end: cue.end + offsetSeconds
+    }))
+  }
+
+  parseWebVttCue(block) {
+    const lines = block.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+    const timingIndex = lines.findIndex((line) => line.includes("-->"))
+    if (timingIndex < 0) return null
+
+    const [startText, endAndSettings] = lines[timingIndex].split("-->").map((part) => part.trim())
+    const endText = endAndSettings?.split(/\s+/)[0]
+    const start = this.parseCueTimestamp(startText)
+    const end = this.parseCueTimestamp(endText)
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null
+
+    const cueText = lines
+      .slice(timingIndex + 1)
+      .map((line) => this.cleanCueText(line))
+      .join("\n")
+      .trim()
+
+    if (!cueText) return null
+    return { start, end, text: cueText }
+  }
+
+  parseCueTimestamp(value) {
+    const parts = value?.split(":") || []
+    if (parts.length < 2 || parts.length > 3) return NaN
+
+    const seconds = Number(parts.pop().replace(",", "."))
+    const minutes = Number(parts.pop())
+    const hours = parts.length === 1 ? Number(parts.pop()) : 0
+    if (![hours, minutes, seconds].every(Number.isFinite)) return NaN
+
+    return (hours * 3600) + (minutes * 60) + seconds
+  }
+
+  cleanCueText(text) {
+    return text
+      .replace(/<[^>]+>/g, "")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, "\"")
+      .replace(/&#39;/g, "'")
+  }
+
+  updateSubtitleOverlay(currentPos) {
+    if (!this.hasSubtitleOverlayTarget) return
+    this.ensureSubtitleWindow(currentPos)
+    if (this.subtitleCues.length === 0) return
+
+    const activeCues = this.subtitleCues
+      .filter((cue) => currentPos >= cue.start && currentPos <= cue.end)
+      .map((cue) => cue.text)
+
+    if (activeCues.length === 0) {
+      this.subtitleOverlayTarget.textContent = ""
+      this.subtitleOverlayTarget.classList.add("hidden")
+      return
+    }
+
+    this.subtitleOverlayTarget.textContent = activeCues.join("\n")
+    this.subtitleOverlayTarget.classList.remove("hidden")
+  }
+
+  ensureSubtitleWindow(currentPos) {
+    if (!this.textSubtitleSelected() || this.subtitleLoading) return
+
+    const missingWindow = this.subtitleWindowStart === null || this.subtitleWindowEnd === null
+    const beforeWindow = !missingWindow && currentPos < this.subtitleWindowStart
+    const nearWindowEnd = !missingWindow && currentPos >= this.subtitleWindowEnd - SUBTITLE_PREFETCH_SECONDS
+
+    if (missingWindow || beforeWindow || nearWindowEnd) {
+      this.loadSubtitleTrack(currentPos)
+    }
+  }
+
+  updateAudioButtonLabel() {
+    if (!this.hasAudioButtonLabelTarget) return
+
+    const selectedTrack = this.audioTracks.find((track) => track.index?.toString() === this.selectedAudioStream)
+    this.audioButtonLabelTarget.textContent = selectedTrack?.language_label || "Audio"
+  }
+
+  updateSubtitleButtonLabel() {
+    if (!this.hasSubtitleButtonLabelTarget) return
+
+    const selectedTrack = this.subtitleTracks.find((track) => track.index?.toString() === this.selectedSubtitleStream)
+    this.subtitleButtonLabelTarget.textContent = selectedTrack?.language_label || "CC"
+  }
+
+  toggleAudioMenu(event) {
+    event.stopPropagation()
+    this.toggleTrackMenu(this.audioMenuTarget, this.hasSubtitleMenuTarget ? this.subtitleMenuTarget : null)
+  }
+
+  toggleSubtitleMenu(event) {
+    event.stopPropagation()
+    this.toggleTrackMenu(this.subtitleMenuTarget, this.hasAudioMenuTarget ? this.audioMenuTarget : null)
+  }
+
+  toggleTrackMenu(menu, otherMenu) {
+    otherMenu?.classList.add("hidden")
+    menu.classList.toggle("hidden")
+    this.showOverlayUi()
+    if (!menu.classList.contains("hidden")) this.clearUiHideTimer()
+  }
+
+  closeTrackMenus() {
+    if (this.hasAudioMenuTarget) this.audioMenuTarget.classList.add("hidden")
+    if (this.hasSubtitleMenuTarget) this.subtitleMenuTarget.classList.add("hidden")
+    this.scheduleUiHide()
+  }
+
+  trackMenuOpen() {
+    return (this.hasAudioMenuTarget && !this.audioMenuTarget.classList.contains("hidden")) ||
+      (this.hasSubtitleMenuTarget && !this.subtitleMenuTarget.classList.contains("hidden"))
+  }
+
+  onDocumentClick(event) {
+    if (!this.trackMenuOpen()) return
+    if (this.hasAudioControlsTarget && this.audioControlsTarget.contains(event.target)) return
+    if (this.hasSubtitleControlsTarget && this.subtitleControlsTarget.contains(event.target)) return
+
+    this.closeTrackMenus()
   }
 
   // ── Fullscreen ────────────────────────────────────────────────────
@@ -193,6 +651,12 @@ export default class extends Controller {
     // Restart ffmpeg at the new position
     if (targetSeconds === this.startSecondsValue) return
 
+    this.restartPlaybackAt(targetSeconds)
+    this.currentTimeTarget.textContent = this.formatTime(targetSeconds)
+    this.updateSeekVisuals(targetSeconds / this.knownDuration)
+  }
+
+  restartPlaybackAt(targetSeconds) {
     this.isSeeking = true
     this.showSeekingOverlay()
     this.startSecondsValue = targetSeconds
@@ -205,13 +669,28 @@ export default class extends Controller {
       url.searchParams.delete("start_seconds")
     }
 
+    if (this.selectedAudioStream) {
+      url.searchParams.set("audio_stream", this.selectedAudioStream)
+    } else {
+      url.searchParams.delete("audio_stream")
+    }
+
+    if (this.burnedSubtitleSelected()) {
+      url.searchParams.set("subtitle_stream", this.selectedSubtitleStream)
+    } else {
+      url.searchParams.delete("subtitle_stream")
+    }
+
     const nextSrc = url.pathname + url.search
     this.streamingUrlValue = nextSrc
+    this.element.dataset.videoPlayerStreamingUrlValue = nextSrc
     this.videoTarget.src = nextSrc
     this.videoTarget.load()
-    this.videoTarget.play()
-    this.currentTimeTarget.textContent = this.formatTime(targetSeconds)
-    this.updateSeekVisuals(targetSeconds / this.knownDuration)
+    const playPromise = this.videoTarget.play()
+    if (playPromise?.catch) playPromise.catch(() => {})
+
+    this.clearSubtitleCues()
+    if (this.textSubtitleSelected()) this.loadSubtitleTrack(targetSeconds)
   }
 
   // ── Time / progress updates ───────────────────────────────────────
@@ -221,6 +700,7 @@ export default class extends Controller {
     const duration = this.effectiveDuration()
 
     this.currentTimeTarget.textContent = this.formatTime(currentPos)
+    this.updateSubtitleOverlay(currentPos)
     if (duration > 0) {
       this.updateSeekVisuals(currentPos / duration)
     }
@@ -283,16 +763,20 @@ export default class extends Controller {
 
   showOverlayUi() {
     this.backButtonTarget.style.opacity = "1"
+    this.backButtonTarget.style.pointerEvents = "auto"
     this.sourceInfoTarget.style.opacity = "1"
+    this.sourceInfoTarget.style.pointerEvents = "auto"
     this.controlsTarget.style.opacity = "1"
+    this.controlsTarget.style.pointerEvents = "auto"
     this.scheduleUiHide()
   }
 
   hideOverlayUi() {
-    if (!this.videoTarget.paused) {
-      this.backButtonTarget.style.opacity = "0"
+    if (!this.videoTarget.paused && !this.trackMenuOpen()) {
       this.sourceInfoTarget.style.opacity = "0"
+      this.sourceInfoTarget.style.pointerEvents = "none"
       this.controlsTarget.style.opacity = "0"
+      this.controlsTarget.style.pointerEvents = "none"
     }
   }
 

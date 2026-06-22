@@ -34,22 +34,33 @@ class User < ApplicationRecord
   end
 
   def preferred_stream_languages
-    Array(preferred_languages).presence || ["ENG"]
+    Array(preferred_languages).presence || [ "ENG" ]
+  end
+
+  def default_stream_language
+    default_language.presence || preferred_stream_languages.first || "ENG"
+  end
+
+  def stream_language_priority
+    ([ default_stream_language ] + preferred_stream_languages)
+      .map(&:to_s)
+      .map(&:upcase)
+      .uniq
   end
 
   private
 
   def set_default_languages
-    self.preferred_languages ||= ["ENG"]
+    self.preferred_languages ||= [ "ENG" ]
     self.default_language ||= "ENG"
   end
 
   def normalize_languages
     if preferred_languages.blank?
-      self.preferred_languages = ["ENG"]
+      self.preferred_languages = [ "ENG" ]
     else
       self.preferred_languages = Array(preferred_languages).map(&:to_s).map(&:upcase).uniq.select { |l| STREAM_LANGUAGE_OPTIONS.key?(l) }
-      self.preferred_languages = ["ENG"] if preferred_languages.empty?
+      self.preferred_languages = [ "ENG" ] if preferred_languages.empty?
     end
     self.default_language = (default_language.presence || "ENG").upcase
     self.default_language = preferred_languages.first unless preferred_languages.include?(default_language)

@@ -5,8 +5,9 @@ require "timeout"
 require "json"
 
 # Remuxes/transcodes streams via FFmpeg for browser playback.
-# Browser-safe H.264 video is copied; risky/unsupported video is
-# normalized to 1080p H.264. Audio is always transcoded to AAC.
+# Browser-safe H.264 video is copied when possible; risky/unsupported
+# video, UHD video, and streams with burned-in subtitles are normalized
+# to 1080p H.264. Audio is always transcoded to AAC.
 #
 # The ffmpeg child runs in its own process group so the entire group
 # (ffmpeg + any helper processes) can be killed when the client
@@ -22,10 +23,16 @@ class TranscodeService
   FFMPEG_PATH = "ffmpeg"
   FFPROBE_PATH = "ffprobe"
   FMP4_FLAGS = "+frag_keyframe+empty_moov+default_base_moof+negative_cts_offsets"
-  SHUTDOWN_GRACE_SECONDS = 3
+  SHUTDOWN_GRACE_SECONDS = 1
   STDERR_MAX_BYTES = 8192
   MIN_VALID_DURATION_SECONDS = 60
   MAX_VALID_DURATION_SECONDS = 24 * 60 * 60
+  MAX_STREAM_INDEX = 200
+  SUBTITLE_EXTRACTION_TIMEOUT_SECONDS = 45
+  SUBTITLE_PACKET_EXTRACTION_TIMEOUT_SECONDS = 12
+  SUBTITLE_EXTRACTION_SETTLE_SECONDS = 1.0
+  SUBTITLE_EXTRACTION_WINDOW_SECONDS = 6 * 60
+  SUBTITLE_FALLBACK_DURATION_SECONDS = 4
   MAX_COPY_VIDEO_WIDTH = 1920
   MAX_COPY_VIDEO_HEIGHT = 1080
   SAFE_VIDEO_FILTER =
@@ -38,6 +45,25 @@ class TranscodeService
     "-pix_fmt", "yuv420p"
   ].freeze
   SAFE_H264_PIXEL_FORMATS = %w[yuv420p].freeze
+  TEXT_SUBTITLE_CODECS = %w[subrip ass ssa webvtt mov_text].freeze
+  LANGUAGE_ALIASES = {
+    "ENG" => %w[eng en english],
+    "FRENCH" => %w[fre fra fr french],
+    "GERMAN" => %w[ger deu de german],
+    "SPANISH" => %w[spa es spanish castellano],
+    "ITALIAN" => %w[ita it italian],
+    "JAPANESE" => %w[jpn ja japanese],
+    "KOREAN" => %w[kor ko korean],
+    "CHINESE" => %w[chi zho zh cmn chinese],
+    "HINDI" => %w[hin hi hindi],
+    "ARABIC" => %w[ara ar arabic],
+    "PORTUGUESE" => %w[por pt ptbr portuguese brazilian],
+    "RUSSIAN" => %w[rus ru russian],
+    "DUTCH" => %w[dut nld nl dutch],
+    "POLISH" => %w[pol pl polish],
+    "TURKISH" => %w[tur tr turkish],
+    "SWEDISH" => %w[swe sv swedish]
+  }.freeze
   # Cache probe results to avoid repeated ffprobe round-trips for the same URL.
   # Key: input_url, Value: { duration:, video_stream:, expires_at: }
   @probe_cache = {}
@@ -51,14 +77,23 @@ class TranscodeService
   # 1080p or below. UHD/HEVC/remux sources are transcoded so the browser
   # is not asked to decode crash-prone streams directly.
   #
-  # Accepts optional headers hash for auth and start_seconds for seeking.
+  # Accepts optional headers hash, start_seconds for seeking, and audio
+  # language/stream hints for choosing the source audio track before playback.
   #
   # Raises TranscodeError if ffmpeg exits before producing any output
   # (bad URL, auth failure, expired link).  When the caller stops reading
   # (client disconnect → exception propagates through the yield), the
   # ensure block kills ffmpeg.
-  def self.transcode_to_fmp4(input_url, headers: {}, start_seconds: 0, &block)
-    cmd = build_ffmpeg_command(input_url, headers: headers, start_seconds: start_seconds)
+  def self.transcode_to_fmp4(input_url, headers: {}, start_seconds: 0, audio_stream: nil, subtitle_stream: nil, default_language: nil, preferred_languages: [], &block)
+    cmd = build_ffmpeg_command(
+      input_url,
+      headers: headers,
+      start_seconds: start_seconds,
+      audio_stream: audio_stream,
+      subtitle_stream: subtitle_stream,
+      default_language: default_language,
+      preferred_languages: preferred_languages
+    )
 
     rd, wr = IO.pipe
     err_rd, err_wr = IO.pipe
@@ -129,10 +164,198 @@ class TranscodeService
     0
   end
 
-  def self.build_ffmpeg_command(input_url, headers: {}, start_seconds: 0)
+  def self.probe_media_tracks(input_url, headers: {})
+    cached = cache_get(input_url)
+    return cached[:media_tracks] if cached && cached[:media_tracks]
+
+    header_str = ffmpeg_headers(headers)
+    cmd = [ FFPROBE_PATH, "-v", "error" ]
+    cmd += [ "-headers", header_str + "\r\n" ] if header_str.present?
+    cmd += [
+      "-show_entries",
+      "stream=index,codec_type,codec_name,channels:stream_tags=language,title:stream_disposition=default",
+      "-of",
+      "json",
+      input_url
+    ]
+
+    stdout, _, status = Timeout.timeout(10) { Open3.capture3(*cmd) }
+    tracks = status.success? ? extract_media_tracks(stdout) : empty_media_tracks
+    cache_store(input_url, media_tracks: tracks)
+    tracks
+  rescue Timeout::Error, StandardError
+    empty_media_tracks
+  end
+
+  def self.extract_subtitles_to_vtt(input_url, headers: {}, subtitle_stream: nil, start_seconds: 0)
+    stream_index = normalized_stream_index(subtitle_stream)
+    return "" unless stream_index
+
+    track = probe_media_tracks(input_url, headers: headers)[:subtitles].find { |subtitle| subtitle[:index] == stream_index }
+    return "" unless track&.dig(:text_supported)
+
+    seek_start_seconds = normalized_start_seconds(start_seconds)
+    packet_subtitles = extract_subtitle_packets_to_vtt(
+      input_url,
+      headers: headers,
+      track: track,
+      start_seconds: seek_start_seconds
+    )
+    return packet_subtitles if webvtt_has_cues?(packet_subtitles)
+
+    header_str = ffmpeg_headers(headers)
+    cmd = [ FFMPEG_PATH, "-loglevel", "error" ]
+    cmd += [ "-analyzeduration", "1000000", "-probesize", "1000000" ]
+    cmd += [ "-headers", header_str + "\r\n" ] if header_str.present?
+    cmd += [ "-ss", seek_start_seconds.to_s ] if seek_start_seconds.positive?
+    cmd += [
+      "-i", input_url,
+      "-t", SUBTITLE_EXTRACTION_WINDOW_SECONDS.to_s,
+      "-vn",
+      "-an",
+      "-dn",
+      "-map", "0:#{stream_index}",
+      "-c:s", "webvtt",
+      "-f", "webvtt",
+      "pipe:1"
+    ]
+
+    capture_subtitle_stdout(cmd)
+  rescue StandardError
+    ""
+  end
+
+  def self.extract_subtitle_packets_to_vtt(input_url, headers:, track:, start_seconds:)
+    header_str = ffmpeg_headers(headers)
+    cmd = [ FFPROBE_PATH, "-v", "error" ]
+    cmd += [ "-headers", header_str + "\r\n" ] if header_str.present?
+    cmd += [
+      "-select_streams", track[:index].to_s,
+      "-read_intervals", "#{start_seconds}%+#{SUBTITLE_EXTRACTION_WINDOW_SECONDS}",
+      "-show_entries", "packet=pts_time,duration_time,data",
+      "-show_data",
+      "-of", "json",
+      input_url
+    ]
+
+    stdout, _, status = Timeout.timeout(SUBTITLE_PACKET_EXTRACTION_TIMEOUT_SECONDS) { Open3.capture3(*cmd) }
+    return "" unless status.success?
+
+    subtitle_packets_to_webvtt(stdout, track[:codec], start_seconds)
+  rescue Timeout::Error, StandardError
+    ""
+  end
+  private_class_method :extract_subtitle_packets_to_vtt
+
+  def self.subtitle_packets_to_webvtt(output, codec, start_seconds)
+    data = JSON.parse(output)
+    window_start = [ start_seconds - 5, 0 ].max
+    window_end = start_seconds + SUBTITLE_EXTRACTION_WINDOW_SECONDS
+    cues = Array(data["packets"]).filter_map do |packet|
+      subtitle_packet_to_cue(packet, codec, window_start, window_end)
+    end
+
+    webvtt_from_cues(cues)
+  rescue JSON::ParserError
+    ""
+  end
+  private_class_method :subtitle_packets_to_webvtt
+
+  def self.subtitle_packet_to_cue(packet, codec, window_start, window_end)
+    start_time = finite_float(packet["pts_time"])
+    return nil unless start_time
+
+    duration = finite_float(packet["duration_time"]) || SUBTITLE_FALLBACK_DURATION_SECONDS
+    duration = SUBTITLE_FALLBACK_DURATION_SECONDS unless duration.positive?
+    end_time = start_time + duration
+    return nil if end_time < window_start || start_time > window_end
+
+    text = subtitle_packet_text(packet["data"], codec)
+    return nil if text.blank?
+
+    { start: start_time, end: end_time, text: text }
+  end
+  private_class_method :subtitle_packet_to_cue
+
+  def self.subtitle_packet_text(data, codec)
+    text = decode_ffprobe_packet_data(data)
+    return "" if text.blank?
+
+    text = ass_packet_text(text) if %w[ass ssa].include?(codec.to_s)
+    normalize_subtitle_text(text)
+  end
+  private_class_method :subtitle_packet_text
+
+  def self.decode_ffprobe_packet_data(data)
+    bytes = data.to_s.each_line.flat_map do |line|
+      hex = line[/:\s*((?:[[:xdigit:]]{2,4}\s*)+)/, 1]
+      hex ? hex.scan(/[[:xdigit:]]{2}/).map { |byte| byte.to_i(16) } : []
+    end
+    bytes.pack("C*").force_encoding(Encoding::UTF_8).scrub
+  end
+  private_class_method :decode_ffprobe_packet_data
+
+  def self.ass_packet_text(text)
+    text.split(",", 9).last.to_s
+  end
+  private_class_method :ass_packet_text
+
+  def self.normalize_subtitle_text(text)
+    text
+      .gsub(/\{[^}]*\}/, "")
+      .gsub(/\\[Nn]/, "\n")
+      .gsub(/<[^>]+>/, "")
+      .lines
+      .map(&:strip)
+      .reject(&:blank?)
+      .join("\n")
+  end
+  private_class_method :normalize_subtitle_text
+
+  def self.webvtt_from_cues(cues)
+    return "" if cues.empty?
+
+    body = cues
+      .sort_by { |cue| cue[:start] }
+      .map do |cue|
+        "#{format_vtt_timestamp(cue[:start])} --> #{format_vtt_timestamp(cue[:end])}\n#{cue[:text]}"
+      end
+      .join("\n\n")
+    "WEBVTT\n\n#{body}\n"
+  end
+  private_class_method :webvtt_from_cues
+
+  def self.format_vtt_timestamp(seconds)
+    milliseconds = (seconds.to_f * 1000).round
+    hours = milliseconds / 3_600_000
+    milliseconds %= 3_600_000
+    minutes = milliseconds / 60_000
+    milliseconds %= 60_000
+    whole_seconds = milliseconds / 1000
+    milliseconds %= 1000
+
+    format("%02d:%02d:%02d.%03d", hours, minutes, whole_seconds, milliseconds)
+  end
+  private_class_method :format_vtt_timestamp
+
+  def self.build_ffmpeg_command(input_url, headers: {}, start_seconds: 0, audio_stream: nil, subtitle_stream: nil, default_language: nil, preferred_languages: [])
     header_str = ffmpeg_headers(headers)
     video_stream = probe_video_stream(input_url, headers: headers)
-    video_args = browser_safe_video?(video_stream) ? [ "-c:v", "copy" ] : [ "-vf", SAFE_VIDEO_FILTER, *VIDEO_TRANSCODE_ARGS ]
+    selected_audio_index = selected_audio_stream_index(
+      input_url,
+      headers: headers,
+      audio_stream: audio_stream,
+      default_language: default_language,
+      preferred_languages: preferred_languages
+    )
+    selected_burn_subtitle_track = selected_burn_subtitle_track(input_url, headers: headers, subtitle_stream: subtitle_stream)
+    video_args = if selected_burn_subtitle_track
+      VIDEO_TRANSCODE_ARGS
+    elsif browser_safe_video?(video_stream)
+      [ "-c:v", "copy" ]
+    else
+      [ "-vf", SAFE_VIDEO_FILTER, *VIDEO_TRANSCODE_ARGS ]
+    end
 
     cmd = [ FFMPEG_PATH, "-loglevel", "error" ]
     # Moderate probe limits -- enough for MKV and MPEG-TS (M2TS).
@@ -146,7 +369,18 @@ class TranscodeService
     seek_start_seconds = normalized_start_seconds(start_seconds)
     cmd += [ "-ss", seek_start_seconds.to_s ] if seek_start_seconds.positive?
     cmd += [ "-i", input_url ]
-    cmd += [ "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn" ]
+    if selected_burn_subtitle_track
+      cmd += [ "-filter_complex", subtitle_burn_filter(selected_burn_subtitle_track[:position]) ]
+      cmd += [ "-map", "[v]" ]
+    else
+      cmd += [ "-map", "0:v:0" ]
+    end
+    cmd += if selected_audio_index
+      [ "-map", "0:#{selected_audio_index}" ]
+    else
+      [ "-map", "0:a:0?" ]
+    end
+    cmd += [ "-sn", "-dn" ]
     cmd += video_args
     cmd += [ "-c:a", "aac", "-b:a", "192k", "-ac", "2" ]
     cmd += [
@@ -159,6 +393,198 @@ class TranscodeService
     cmd
   end
   private_class_method :build_ffmpeg_command
+
+  def self.selected_burn_subtitle_track(input_url, headers:, subtitle_stream:)
+    explicit_stream_index = normalized_stream_index(subtitle_stream)
+    return nil unless explicit_stream_index
+
+    track = probe_media_tracks(input_url, headers: headers)[:subtitles].find do |track|
+      track[:index] == explicit_stream_index
+    end
+    return nil if track&.dig(:text_supported)
+
+    track
+  end
+  private_class_method :selected_burn_subtitle_track
+
+  def self.subtitle_burn_filter(subtitle_position)
+    "[0:v:0][0:s:#{subtitle_position}]overlay,#{SAFE_VIDEO_FILTER}[v]"
+  end
+  private_class_method :subtitle_burn_filter
+
+  def self.capture_subtitle_stdout(cmd)
+    rd, wr = IO.pipe
+    err_rd, err_wr = IO.pipe
+    pid = Process.spawn(*cmd, in: "/dev/null", out: wr, err: err_wr, pgroup: true)
+    wr.close
+    err_wr.close
+
+    stdout_buf = +""
+    last_stdout_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    reaped = false
+
+    stdout_thread = Thread.new do
+      loop do
+        chunk = rd.readpartial(4096)
+        stdout_buf << chunk
+        last_stdout_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      end
+    rescue EOFError, IOError, Errno::EBADF
+    end
+
+    stderr_thread = Thread.new do
+      loop { err_rd.readpartial(4096) }
+    rescue EOFError, IOError, Errno::EBADF
+    end
+
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + SUBTITLE_EXTRACTION_TIMEOUT_SECONDS
+    loop do
+      _, status = Process.waitpid2(pid, Process::WNOHANG)
+      if status
+        reaped = true
+        return status.success? && webvtt_has_cues?(stdout_buf) ? stdout_buf : ""
+      end
+
+      now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      if webvtt_has_cues?(stdout_buf) && now - last_stdout_at >= SUBTITLE_EXTRACTION_SETTLE_SECONDS
+        return stdout_buf
+      end
+
+      return webvtt_has_cues?(stdout_buf) ? stdout_buf : "" if now >= deadline
+
+      sleep 0.1
+    end
+  ensure
+    kill_process_group(pid) if pid && !reaped
+    stdout_thread&.kill
+    stderr_thread&.kill
+    stdout_thread&.join(1)
+    stderr_thread&.join(1)
+    rd&.close unless rd&.closed?
+    err_rd&.close unless err_rd&.closed?
+  end
+  private_class_method :capture_subtitle_stdout
+
+  def self.webvtt_has_cues?(text)
+    text.to_s.match?(/^\d{2}:\d{2}(?::\d{2})?[\.,]\d{3}\s+-->/)
+  end
+  private_class_method :webvtt_has_cues?
+
+  def self.selected_audio_stream_index(input_url, headers:, audio_stream:, default_language:, preferred_languages:)
+    explicit_stream_index = normalized_stream_index(audio_stream)
+    tracks = probe_media_tracks(input_url, headers: headers)[:audio]
+
+    if explicit_stream_index && tracks.any? { |track| track[:index] == explicit_stream_index }
+      return explicit_stream_index
+    end
+
+    language_priority = language_priority(default_language, preferred_languages)
+    preferred_track = tracks
+      .select { |track| language_priority.include?(track[:language]) }
+      .min_by { |track| [ language_priority.index(track[:language]), track[:position] ] }
+    return preferred_track[:index] if preferred_track
+
+    default_track = tracks.find { |track| track[:default] }
+    return default_track[:index] if default_track
+
+    tracks.first&.dig(:index)
+  end
+  private_class_method :selected_audio_stream_index
+
+  def self.extract_media_tracks(output)
+    data = JSON.parse(output)
+    audio_position = 0
+    subtitle_position = 0
+    tracks = empty_media_tracks
+
+    Array(data["streams"]).each do |stream|
+      stream_index = non_negative_integer(stream["index"])
+      next unless stream_index
+
+      case stream["codec_type"].to_s
+      when "audio"
+        tracks[:audio] << media_track(stream, stream_index, audio_position)
+        audio_position += 1
+      when "subtitle"
+        subtitle_track = media_track(stream, stream_index, subtitle_position)
+        subtitle_track[:text_supported] = TEXT_SUBTITLE_CODECS.include?(subtitle_track[:codec])
+        tracks[:subtitles] << subtitle_track
+        subtitle_position += 1
+      end
+    end
+
+    tracks
+  rescue JSON::ParserError
+    empty_media_tracks
+  end
+  private_class_method :extract_media_tracks
+
+  def self.media_track(stream, stream_index, position)
+    tags = stream["tags"] || {}
+    language = canonical_language(tags["language"])
+    codec = stream["codec_name"].to_s.downcase
+    channels = positive_integer(stream["channels"])
+    title = tags["title"].to_s.presence
+    default = stream.dig("disposition", "default").to_i == 1
+
+    {
+      index: stream_index,
+      position: position,
+      language: language,
+      language_label: language_label(language),
+      title: title,
+      codec: codec,
+      channels: channels,
+      default: default,
+      label: track_label(language, title, codec, channels, default)
+    }
+  end
+  private_class_method :media_track
+
+  def self.track_label(language, title, codec, channels, default)
+    parts = [ language_label(language) ]
+    parts << title if title.present?
+    parts << "#{channels}ch" if channels
+    parts << codec.upcase if codec.present?
+    parts << "Default" if default
+    parts.join(" · ")
+  end
+  private_class_method :track_label
+
+  def self.language_priority(default_language, preferred_languages)
+    ([ default_language ] + Array(preferred_languages))
+      .filter_map { |language| canonical_language(language) }
+      .uniq
+  end
+  private_class_method :language_priority
+
+  def self.canonical_language(value)
+    normalized = value.to_s.downcase.strip
+    return nil if normalized.blank? || normalized == "und"
+
+    LANGUAGE_ALIASES.find { |_, aliases| aliases.include?(normalized) }&.first
+  end
+  private_class_method :canonical_language
+
+  def self.language_label(language)
+    return "Unknown" if language.blank?
+
+    User::STREAM_LANGUAGE_OPTIONS[language] || language
+  end
+  private_class_method :language_label
+
+  def self.normalized_stream_index(value)
+    stream_index = Integer(value, exception: false)
+    return nil unless stream_index && stream_index.between?(0, MAX_STREAM_INDEX)
+
+    stream_index
+  end
+  private_class_method :normalized_stream_index
+
+  def self.empty_media_tracks
+    { audio: [], subtitles: [] }
+  end
+  private_class_method :empty_media_tracks
 
   def self.probe_video_stream(input_url, headers: {})
     cached = cache_get(input_url)
@@ -215,10 +641,22 @@ class TranscodeService
   private_class_method :browser_safe_video?
 
   def self.positive_integer(value)
-    integer = value.to_i
-    integer.positive? ? integer : nil
+    integer = Integer(value, exception: false)
+    integer&.positive? ? integer : nil
   end
   private_class_method :positive_integer
+
+  def self.finite_float(value)
+    number = Float(value, exception: false)
+    number if number&.finite?
+  end
+  private_class_method :finite_float
+
+  def self.non_negative_integer(value)
+    integer = Integer(value, exception: false)
+    integer && integer >= 0 ? integer : nil
+  end
+  private_class_method :non_negative_integer
 
   def self.normalized_start_seconds(value)
     seconds = value.to_f
@@ -337,13 +775,14 @@ class TranscodeService
     return unless signaled  # ESRCH → already gone
 
     deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + SHUTDOWN_GRACE_SECONDS
-    until reaped?(pid)
-      return if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
-      sleep 0.1
+    while group_alive?(pid)
+      reaped?(pid)
+      break if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+
+      sleep 0.05
     end
 
-    # Still alive — force kill
-    signal_group(pid, "KILL")
+    signal_group(pid, "KILL") if group_alive?(pid)
     waitpid_safely(pid)
   end
   private_class_method :kill_process_group
@@ -368,6 +807,16 @@ class TranscodeService
     false
   end
   private_class_method :alive?
+
+  def self.group_alive?(pid)
+    Process.kill(0, -pid)
+    true
+  rescue Errno::ESRCH
+    false
+  rescue Errno::EPERM
+    true
+  end
+  private_class_method :group_alive?
 
   # Has the process exited and been reaped?  Returns true only when the
   # PID no longer exists (waitpid reaped it, or it was never our child).
