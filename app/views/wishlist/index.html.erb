@@ -27,19 +27,19 @@
   <% end %>
 
   <% if @entries.any? %>
-    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+    <div class="flex gap-4 overflow-x-auto scrollbar-hide pb-2">
       <% @entries.each do |entry| %>
-        <div class="poster-card group">
+        <div class="poster-card group shrink-0" style="width: 160px">
           <%= link_to content_path(type: entry.content_type, imdb_id: entry.imdb_id) do %>
             <% if entry.poster_url %>
-              <img src="<%= entry.poster_url %>" alt="<%= entry.title %>" loading="lazy">
+              <img src="<%= entry.poster_url %>" alt="<%= entry.title %>" loading="lazy" class="w-full aspect-[2/3] object-cover">
             <% else %>
-              <div class="aspect-[2/3] bg-sv-surface flex items-center justify-center">
+              <div class="w-full aspect-[2/3] bg-sv-surface flex items-center justify-center">
                 <svg class="w-12 h-12 text-sv-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>
               </div>
             <% end %>
-            <div class="p-3">
-              <h3 class="text-sm font-medium text-white truncate"><%= entry.title %></h3>
+            <div class="p-2">
+              <h3 class="text-xs font-medium text-white truncate"><%= entry.title %></h3>
               <p class="text-xs text-sv-text-muted mt-0.5"><%= entry.year %></p>
             </div>
           <% end %>
