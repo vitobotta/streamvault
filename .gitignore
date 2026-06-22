@@ -45,3 +45,4 @@ gotchas.md
 
 # Postgres data (Docker Compose bind mount)
 /data
+.learnings
