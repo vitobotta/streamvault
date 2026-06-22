@@ -90,9 +90,9 @@
           <% @streams.each do |stream| %>
             <div class="flex items-center justify-between p-3 bg-sv-surface rounded-lg">
               <div class="min-w-0 flex-1">
-                <div class="flex items-center gap-1.5">
+                <div class="flex items-center gap-1.5 min-w-0">
                   <% if stream[:rd_plus] %><span class="badge badge-success">RD+</span><% end %>
-                  <span class="text-sm text-white truncate sv-stream-title"><%= stream[:title] || stream[:name] %></span>
+                  <span class="text-sm text-white truncate sv-stream-title min-w-0"><%= stream[:title] || stream[:name] %></span>
                   <span class="text-xs text-sv-text-muted ml-2 shrink-0"><%= stream[:size] %></span>
                 </div>
                 <div class="flex items-center gap-1.5 mt-1">
