@@ -35,7 +35,7 @@
   <% end %>
 
   <% if @entries.any? %>
-    <div class="flex gap-4 overflow-x-auto scrollbar-hide pb-2">
+    <div class="grid gap-4" style="grid-template-columns: repeat(auto-fill, 160px)">
       <% @entries.each do |entry| %>
         <div class="poster-card group shrink-0" style="width: 160px">
           <%= link_to content_path(type: entry.content_type, imdb_id: entry.imdb_id) do %>

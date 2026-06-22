@@ -30,7 +30,7 @@
     </div>
 
     <%# Results grid %>
-    <div class="flex gap-4 overflow-x-auto scrollbar-hide pb-2">
+    <div class="grid gap-4" style="grid-template-columns: repeat(auto-fill, 160px)">
       <% @results.each do |result| %>
         <div class="poster-card group shrink-0" style="width: 160px">
           <%= link_to content_path(type: result[:type], imdb_id: result[:imdb_id]) do %>
