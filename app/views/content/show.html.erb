@@ -88,21 +88,21 @@
         <h2 class="text-xl font-bold text-white mt-8 mb-4">Available Streams</h2>
         <div class="space-y-2">
           <% @streams.each do |stream| %>
-            <div class="flex items-center justify-between p-3 bg-sv-surface rounded-lg">
-              <div class="min-w-0 flex-1">
-                <div class="flex items-center gap-1.5 min-w-0">
-                  <% if stream[:rd_plus] %><span class="badge badge-success">RD+</span><% end %>
-                  <span class="text-sm text-white truncate sv-stream-title min-w-0"><%= stream[:title] || stream[:name] %></span>
-                  <span class="text-xs text-sv-text-muted ml-2 shrink-0"><%= stream[:size] %></span>
+            <div class="flex items-center justify-between gap-3 p-3 bg-sv-surface rounded-lg">
+              <div class="min-w-0 flex-1 overflow-hidden">
+                <div class="flex items-center gap-1.5">
+                  <% if stream[:rd_plus] %><span class="badge badge-success shrink-0">RD+</span><% end %>
+                  <span class="text-sm text-white truncate"><%= stream[:title] || stream[:name] %></span>
                 </div>
                 <div class="flex items-center gap-1.5 mt-1">
                   <span class="badge badge-accent"><%= stream[:quality] %></span>
                   <% stream[:languages]&.each do |lang| %>
                     <span class="px-1.5 py-0.5 rounded text-xs font-medium bg-sv-surface-hover text-sv-text-muted"><%= lang %></span>
                   <% end %>
+                  <span class="text-xs text-sv-text-muted"><%= stream[:size] %></span>
                 </div>
               </div>
-              <div class="flex items-center gap-3 shrink-0 ml-3">
+              <div class="flex items-center gap-3 shrink-0">
                 <%= button_to "Watch", streaming_index_path, params: { imdb_id: @imdb_id, type: @type, title: @metadata[:title], poster_url: @metadata[:poster_url], duration: @metadata[:runtime_seconds], resolve_url: stream[:resolve_url], filename: stream[:filename] }, class: "btn-primary text-sm", data: { turbo: false } %>
               </div>
             </div>

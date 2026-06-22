@@ -3,21 +3,21 @@
 <% elsif @streams.present? %>
   <div class="space-y-1.5">
     <% @streams.each do |stream| %>
-      <div class="flex items-center justify-between p-2 bg-sv-surface-hover rounded-lg">
-        <div class="min-w-0 flex-1">
-          <div class="flex items-center gap-1.5 min-w-0">
-            <% if stream[:rd_plus] %><span class="badge badge-success text-xs">RD+</span><% end %>
-            <span class="text-xs text-white sv-stream-title min-w-0 truncate"><%= stream[:title] || stream[:name] %></span>
-            <span class="text-xs text-sv-text-muted ml-1.5 shrink-0"><%= stream[:size] %></span>
+      <div class="flex items-center justify-between gap-3 p-2 bg-sv-surface-hover rounded-lg">
+        <div class="min-w-0 flex-1 overflow-hidden">
+          <div class="flex items-center gap-1.5">
+            <% if stream[:rd_plus] %><span class="badge badge-success text-xs shrink-0">RD+</span><% end %>
+            <span class="text-xs text-white truncate"><%= stream[:title] || stream[:name] %></span>
           </div>
           <div class="flex items-center gap-1.5 mt-1">
             <span class="badge badge-accent text-xs"><%= stream[:quality] %></span>
             <% stream[:languages]&.each do |lang| %>
               <span class="px-1.5 py-0.5 rounded text-xs font-medium bg-sv-surface text-sv-text-muted"><%= lang %></span>
             <% end %>
+            <span class="text-xs text-sv-text-muted"><%= stream[:size] %></span>
           </div>
         </div>
-        <div class="flex items-center gap-3 shrink-0 ml-3">
+        <div class="flex items-center gap-3 shrink-0">
           <%= button_to "Watch", streaming_index_path, params: { imdb_id: @imdb_id, type: "show", season: @season, episode: @episode, title: "#{@show_title} S#{@season.to_s.rjust(2,'0')}E#{@episode.to_s.rjust(2,'0')}", poster_url: @poster_url, duration: @episode_duration_seconds, resolve_url: stream[:resolve_url], filename: stream[:filename] }, class: "btn-primary text-xs px-2 py-1", data: { turbo: false } %>
         </div>
       </div>
