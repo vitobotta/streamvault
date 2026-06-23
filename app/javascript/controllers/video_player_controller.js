@@ -14,7 +14,7 @@ export default class extends Controller {
     return [
       "video", "controls", "seekBar", "seekFilled", "seekBuffered", "seekHandle",
       "playButton", "playIcon", "pauseIcon", "currentTime", "durationDisplay",
-      "volumeIcon", "muteIcon", "seekingOverlay",
+      "volumeIcon", "muteIcon", "startupOverlay", "seekingOverlay",
       "seekingOverlayMessage", "sourceInfo", "sourceToggle", "sourceDetails", "sourceUrl", "sourceFilename", "backButton",
       "audioControls", "audioMenu", "audioOptions", "audioButtonLabel",
       "subtitleControls", "subtitleMenu", "subtitleOptions", "subtitleButtonLabel", "subtitleOverlay"
@@ -40,6 +40,12 @@ export default class extends Controller {
     this.keydownHandler = this.onKeyDown.bind(this)
     this.videoClickHandler = this.onVideoClick.bind(this)
     this.documentClickHandler = this.onDocumentClick.bind(this)
+    this.updatePlayIconHandler = this.updatePlayIcon.bind(this)
+    this.timeUpdateHandler = this.onTimeUpdate.bind(this)
+    this.progressHandler = this.onProgress.bind(this)
+    this.volumeChangeHandler = this.updateVolumeIcon.bind(this)
+    this.videoWaitingHandler = () => this.showSeekingOverlay()
+    this.videoReadyHandler = () => this.onVideoReady()
     this.audioTracks = []
     this.subtitleTracks = []
     this.selectedAudioStream = this.currentUrlParam("audio_stream")
@@ -54,6 +60,12 @@ export default class extends Controller {
     this.subtitlePrefetches = new Map()
     this.subtitlePrefetchResults = new Map()
     this.subtitlePlaybackHoldToken = null
+    this.startupOverlayHideTimer = null
+    this.dragMoveHandler = null
+    this.suppressNextSeekClick = false
+    this.suppressSeekClickTimer = null
+
+    this.ensureVideoSource()
 
     // Show source info
     this.sourceInfoTarget.classList.remove("hidden")
@@ -65,14 +77,14 @@ export default class extends Controller {
     document.addEventListener("click", this.documentClickHandler)
     // Video event listeners
     this.videoTarget.addEventListener("click", this.videoClickHandler)
-    this.videoTarget.addEventListener("play", () => this.updatePlayIcon())
-    this.videoTarget.addEventListener("pause", () => this.updatePlayIcon())
-    this.videoTarget.addEventListener("timeupdate", () => this.onTimeUpdate())
-    this.videoTarget.addEventListener("progress", () => this.onProgress())
-    this.videoTarget.addEventListener("volumechange", () => this.updateVolumeIcon())
-    this.videoTarget.addEventListener("waiting", () => this.showSeekingOverlay())
-    this.videoTarget.addEventListener("playing", () => this.hideSeekingOverlay())
-    this.videoTarget.addEventListener("canplay", () => this.hideSeekingOverlay())
+    this.videoTarget.addEventListener("play", this.updatePlayIconHandler)
+    this.videoTarget.addEventListener("pause", this.updatePlayIconHandler)
+    this.videoTarget.addEventListener("timeupdate", this.timeUpdateHandler)
+    this.videoTarget.addEventListener("progress", this.progressHandler)
+    this.videoTarget.addEventListener("volumechange", this.volumeChangeHandler)
+    this.videoTarget.addEventListener("waiting", this.videoWaitingHandler)
+    this.videoTarget.addEventListener("playing", this.videoReadyHandler)
+    this.videoTarget.addEventListener("canplay", this.videoReadyHandler)
 
     // Resume: transcode streams already start at the resume position
     // via ffmpeg -ss, so no client-side seek needed.
@@ -83,6 +95,7 @@ export default class extends Controller {
     this.currentTimeTarget.textContent = this.formatTime(this.startSecondsValue)
     this.updateDurationDisplay()
     this.onTimeUpdate()
+    this.syncStartupOverlay()
     this.probeDuration()
     this.loadMediaTracks()
 
@@ -96,13 +109,26 @@ export default class extends Controller {
 
   disconnect() {
     this.stopProgressTracking()
+    this.saveProgressSync()
     this.clearUiHideTimer()
+    this.clearStartupOverlayTimer()
+    this.clearSuppressSeekClickTimer()
+    this.cancelSeekDrag()
     this.element.removeEventListener("mousemove", this.mouseMoveHandler)
     document.removeEventListener("keydown", this.keydownHandler)
     document.removeEventListener("click", this.documentClickHandler)
     this.videoTarget.removeEventListener("click", this.videoClickHandler)
+    this.videoTarget.removeEventListener("play", this.updatePlayIconHandler)
+    this.videoTarget.removeEventListener("pause", this.updatePlayIconHandler)
+    this.videoTarget.removeEventListener("timeupdate", this.timeUpdateHandler)
+    this.videoTarget.removeEventListener("progress", this.progressHandler)
+    this.videoTarget.removeEventListener("volumechange", this.volumeChangeHandler)
+    this.videoTarget.removeEventListener("waiting", this.videoWaitingHandler)
+    this.videoTarget.removeEventListener("playing", this.videoReadyHandler)
+    this.videoTarget.removeEventListener("canplay", this.videoReadyHandler)
     window.removeEventListener("beforeunload", this.beforeUnloadHandler)
     this.removeTextSubtitleTrack()
+    this.pauseAndDetachVideo()
   }
 
   async probeDuration() {
@@ -141,6 +167,12 @@ export default class extends Controller {
     } catch {
       return null
     }
+  }
+
+  ensureVideoSource() {
+    if (!this.streamingUrlValue || this.videoTarget.getAttribute("src")) return
+
+    this.videoTarget.src = this.streamingUrlValue
   }
 
   // ── Play / pause ──────────────────────────────────────────────────
@@ -184,6 +216,11 @@ export default class extends Controller {
   stopPlaybackForNavigation() {
     this.stopProgressTracking()
     this.saveProgressSync()
+    this.pauseAndDetachVideo()
+  }
+
+  pauseAndDetachVideo() {
+    if (!this.hasVideoTarget) return
 
     try {
       this.videoTarget.pause()
@@ -202,6 +239,46 @@ export default class extends Controller {
       this.playIconTarget.classList.add("hidden")
       this.pauseIconTarget.classList.remove("hidden")
     }
+  }
+
+  onVideoReady() {
+    this.hideSeekingOverlay()
+    this.hideStartupOverlay()
+  }
+
+  syncStartupOverlay() {
+    if (!this.hasStartupOverlayTarget) return
+
+    if (!this.videoTarget.paused && this.videoTarget.currentTime > 0) {
+      this.hideStartupOverlay()
+      return
+    }
+
+    this.clearStartupOverlayTimer()
+    this.startupOverlayHideTimer = setTimeout(() => {
+      if (!this.hasVideoTarget) return
+      if (!this.videoTarget.paused && this.videoTarget.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        this.hideStartupOverlay()
+      }
+    }, 0)
+  }
+
+  hideStartupOverlay() {
+    if (!this.hasStartupOverlayTarget) return
+
+    this.startupOverlayTarget.classList.add("opacity-0", "pointer-events-none")
+    this.startupOverlayTarget.setAttribute("aria-hidden", "true")
+    this.clearStartupOverlayTimer()
+    this.startupOverlayHideTimer = setTimeout(() => {
+      if (this.hasStartupOverlayTarget) this.startupOverlayTarget.classList.add("hidden")
+    }, 220)
+  }
+
+  clearStartupOverlayTimer() {
+    if (!this.startupOverlayHideTimer) return
+
+    clearTimeout(this.startupOverlayHideTimer)
+    this.startupOverlayHideTimer = null
   }
 
   // ── Volume / mute ─────────────────────────────────────────────────
@@ -239,6 +316,9 @@ export default class extends Controller {
       this.audioTracks = Array.isArray(data.audio) ? data.audio : []
       this.subtitleTracks = Array.isArray(data.subtitles) ? data.subtitles : []
       this.selectedAudioStream ||= this.preferredAudioTrack()?.index?.toString() || null
+      if (this.selectedSubtitleStream && !this.subtitleTrackForStream(this.selectedSubtitleStream)) {
+        this.selectedSubtitleStream = null
+      }
       this.renderTrackControls()
       if (this.textSubtitleSelected()) this.loadSubtitleTrack(this.currentPlaybackPosition(), {
         durationSeconds: SUBTITLE_STARTUP_WINDOW_SECONDS,
@@ -837,12 +917,17 @@ export default class extends Controller {
   // the current transcode fragment).  For transcode streams, seeking
   // restarts ffmpeg with -ss at the new position.
   seek(event) {
+    if (this.suppressNextSeekClick) {
+      this.suppressNextSeekClick = false
+      return
+    }
     if (this.isDragging) return // drag handler manages this
     const percent = this.seekPercentFromEvent(event)
     this.performSeek(percent)
   }
 
   startSeekDrag(event) {
+    this.cancelSeekDrag()
     this.isDragging = true
     event.preventDefault()
     this.dragMoveHandler = (e) => this.onSeekDragMove(e)
@@ -858,16 +943,37 @@ export default class extends Controller {
 
   stopSeekDrag(event) {
     if (!this.isDragging) return
+    const percent = this.seekPercentFromEvent(event)
+    this.cancelSeekDrag()
+    this.suppressNextSeekClick = true
+    this.clearSuppressSeekClickTimer()
+    this.suppressSeekClickTimer = setTimeout(() => {
+      this.suppressNextSeekClick = false
+      this.suppressSeekClickTimer = null
+    }, 250)
+    this.performSeek(percent)
+  }
+
+  cancelSeekDrag() {
     this.isDragging = false
+    if (!this.dragMoveHandler) return
+
     document.removeEventListener("mousemove", this.dragMoveHandler)
     document.removeEventListener("touchmove", this.dragMoveHandler)
-    const percent = this.seekPercentFromEvent(event)
-    this.performSeek(percent)
+    this.dragMoveHandler = null
+  }
+
+  clearSuppressSeekClickTimer() {
+    if (!this.suppressSeekClickTimer) return
+
+    clearTimeout(this.suppressSeekClickTimer)
+    this.suppressSeekClickTimer = null
   }
 
   seekPercentFromEvent(event) {
     const rect = this.seekBarTarget.getBoundingClientRect()
-    const clientX = event.touches ? event.touches[0].clientX : event.clientX
+    const point = event.changedTouches?.[0] || event.touches?.[0] || event
+    const clientX = point.clientX ?? rect.left
     const percent = (clientX - rect.left) / rect.width
     return Math.max(0, Math.min(1, percent))
   }

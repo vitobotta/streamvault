@@ -46,6 +46,8 @@ class TranscodeService
   ].freeze
   SAFE_H264_PIXEL_FORMATS = %w[yuv420p].freeze
   TEXT_SUBTITLE_CODECS = %w[subrip ass ssa webvtt mov_text].freeze
+  PARTIAL_SUBTITLE_TITLE_PATTERN = /\b(forced|signs?|signs?\s*(?:&|and)?\s*songs?|songs?\s*(?:&|and)?\s*signs?|lyrics?|karaoke|commentary|comment)\b/i
+  HEARING_IMPAIRED_TITLE_PATTERN = /\b(sdh|cc|closed captions?|hearing impaired|hi)\b/i
   LANGUAGE_ALIASES = {
     "ENG" => %w[eng en english],
     "FRENCH" => %w[fre fra fr french],
@@ -185,7 +187,7 @@ class TranscodeService
     cmd += [ "-headers", header_str + "\r\n" ] if header_str.present?
     cmd += [
       "-show_entries",
-      "stream=index,codec_type,codec_name,channels:stream_tags=language,title:stream_disposition=default",
+      "stream=index,codec_type,codec_name,channels:stream_tags=language,title:stream_disposition=default,forced,hearing_impaired,comment,lyrics,karaoke",
       "-of",
       "json",
       input_url
@@ -268,6 +270,17 @@ class TranscodeService
     result = subtitle_result(:failed, diagnostic: e.class.name)
     log_subtitle_result(result, stream_index: subtitle_stream, start_seconds: start_seconds)
     result
+  end
+
+  def self.selectable_subtitle_tracks(tracks)
+    tracks = Array(tracks)
+    full_tracks = tracks.reject { |track| partial_subtitle_track?(track) }
+    return sorted_subtitle_tracks(tracks) if full_tracks.empty?
+
+    filtered_tracks = tracks.reject do |track|
+      partial_subtitle_track?(track) && full_dialogue_alternative?(track, full_tracks)
+    end
+    sorted_subtitle_tracks(filtered_tracks)
   end
 
   def self.extract_subtitle_packets_to_vtt(input_url, headers:, track:, start_seconds:, duration_seconds:)
@@ -601,6 +614,7 @@ class TranscodeService
       when "subtitle"
         subtitle_track = media_track(stream, stream_index, subtitle_position)
         subtitle_track[:text_supported] = TEXT_SUBTITLE_CODECS.include?(subtitle_track[:codec])
+        annotate_subtitle_track!(subtitle_track, stream)
         tracks[:subtitles] << subtitle_track
         subtitle_position += 1
       end
@@ -633,6 +647,77 @@ class TranscodeService
     }
   end
   private_class_method :media_track
+
+  def self.annotate_subtitle_track!(track, stream)
+    disposition = stream["disposition"] || {}
+    title = track[:title].to_s
+    forced = truthy_disposition?(disposition, "forced") || title.match?(/\bforced\b/i)
+    hearing_impaired = truthy_disposition?(disposition, "hearing_impaired") || title.match?(HEARING_IMPAIRED_TITLE_PATTERN)
+    commentary = truthy_disposition?(disposition, "comment") || title.match?(/\bcomment(?:ary)?\b/i)
+    lyrics = truthy_disposition?(disposition, "lyrics") || truthy_disposition?(disposition, "karaoke") || title.match?(/\b(?:lyrics?|karaoke)\b/i)
+    partial = forced || commentary || lyrics || title.match?(PARTIAL_SUBTITLE_TITLE_PATTERN)
+
+    track[:forced] = forced
+    track[:hearing_impaired] = hearing_impaired
+    track[:commentary] = commentary
+    track[:partial] = partial
+    track[:quality] = partial ? "partial" : "full"
+    track[:quality_score] = subtitle_quality_score(track)
+    track[:label] = subtitle_track_label(track)
+  end
+  private_class_method :annotate_subtitle_track!
+
+  def self.truthy_disposition?(disposition, key)
+    disposition[key].to_i == 1
+  end
+  private_class_method :truthy_disposition?
+
+  def self.partial_subtitle_track?(track)
+    track[:partial] == true || track["partial"] == true
+  end
+  private_class_method :partial_subtitle_track?
+
+  def self.full_dialogue_alternative?(track, full_tracks)
+    language = track[:language] || track["language"]
+    return full_tracks.any? if language.blank?
+
+    full_tracks.any? { |candidate| (candidate[:language] || candidate["language"]) == language }
+  end
+  private_class_method :full_dialogue_alternative?
+
+  def self.sorted_subtitle_tracks(tracks)
+    tracks.sort_by do |track|
+      [
+        track[:quality_score] || track["quality_score"] || 0,
+        track[:external] || track["external"] ? 0 : 1,
+        track[:position] || track["position"] || MAX_STREAM_INDEX,
+        track[:label] || track["label"].to_s
+      ]
+    end
+  end
+  private_class_method :sorted_subtitle_tracks
+
+  def self.subtitle_quality_score(track)
+    score = 0
+    score += 100 if track[:partial]
+    score += 20 if track[:hearing_impaired]
+    score += 10 unless track[:text_supported]
+    score -= 5 if track[:default]
+    score
+  end
+  private_class_method :subtitle_quality_score
+
+  def self.subtitle_track_label(track)
+    parts = [ language_label(track[:language]) ]
+    parts << track[:title] if track[:title].present?
+    parts << "Forced" if track[:forced] && !track[:title].to_s.match?(/\bforced\b/i)
+    parts << "SDH" if track[:hearing_impaired] && !track[:title].to_s.match?(HEARING_IMPAIRED_TITLE_PATTERN)
+    parts << "Partial" if track[:partial] && !track[:forced] && !track[:commentary]
+    parts << track[:codec].upcase if track[:codec].present?
+    parts << "Default" if track[:default]
+    parts.compact_blank.uniq.join(" · ")
+  end
+  private_class_method :subtitle_track_label
 
   def self.track_label(language, title, codec, channels, default)
     parts = [ language_label(language) ]

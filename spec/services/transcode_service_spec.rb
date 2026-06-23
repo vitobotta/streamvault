@@ -46,7 +46,7 @@ RSpec.describe TranscodeService do
           { "index" => 0, "codec_type" => "video", "codec_name" => "h264" },
           { "index" => 1, "codec_type" => "audio", "codec_name" => "aac", "channels" => 6, "tags" => { "language" => "eng", "title" => "Main" }, "disposition" => { "default" => 1 } },
           { "index" => 2, "codec_type" => "audio", "codec_name" => "ac3", "channels" => 2, "tags" => { "language" => "fre" }, "disposition" => { "default" => 0 } },
-          { "index" => 3, "codec_type" => "subtitle", "codec_name" => "subrip", "tags" => { "language" => "spa" }, "disposition" => { "default" => 0 } },
+          { "index" => 3, "codec_type" => "subtitle", "codec_name" => "subrip", "tags" => { "language" => "spa", "title" => "Full" }, "disposition" => { "default" => 0 } },
           { "index" => 4, "codec_type" => "subtitle", "codec_name" => "hdmv_pgs_subtitle", "tags" => { "language" => "ger" }, "disposition" => { "default" => 0 } }
         ]
       }.to_json
@@ -63,6 +63,42 @@ RSpec.describe TranscodeService do
         { index: 3, language: "SPANISH", text_supported: true },
         { index: 4, language: "GERMAN", text_supported: false }
       ])
+      expect(tracks[:subtitles].first).to include(quality: "full", partial: false, quality_score: 0)
+    end
+
+    it "marks forced subtitle tracks as partial" do
+      output = {
+        "streams" => [
+          {
+            "index" => 3,
+            "codec_type" => "subtitle",
+            "codec_name" => "subrip",
+            "tags" => { "language" => "eng", "title" => "Signs & Songs" },
+            "disposition" => { "default" => 0, "forced" => 1 }
+          }
+        ]
+      }.to_json
+
+      allow(described_class).to receive(:capture_command).and_return(capture_result(output))
+
+      tracks = described_class.probe_media_tracks("https://example.test/video-tracks.mkv")
+
+      expect(tracks[:subtitles].first).to include(
+        forced: true,
+        partial: true,
+        quality: "partial"
+      )
+      expect(tracks[:subtitles].first[:label]).to include("Signs & Songs")
+    end
+
+    it "filters partial subtitles when a full dialogue alternative exists" do
+      full_track = { index: 2, language: "ENG", label: "English", partial: false, quality_score: 0 }
+      forced_track = { index: 3, language: "ENG", label: "English · Forced", partial: true, quality_score: 100 }
+      french_forced_track = { index: 4, language: "FRENCH", label: "French · Forced", partial: true, quality_score: 100 }
+
+      tracks = described_class.selectable_subtitle_tracks([ forced_track, full_track, french_forced_track ])
+
+      expect(tracks).to eq([ full_track, french_forced_track ])
     end
   end
 

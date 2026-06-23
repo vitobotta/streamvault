@@ -250,7 +250,7 @@ RSpec.describe "Streaming", type: :request do
       expect(response).to have_http_status(:ok)
       expect(response.body).to include("video-player")
       expect(response.body).to include("download.real-debrid.com")
-      expect(response.body).to include("data-playback-startup-overlay")
+      expect(response.body).to include(%(data-video-player-target="startupOverlay"))
       expect(response.body).to include("Starting playback")
       expect(response.body).to include(%(data-video-player-default-language-value="ENG"))
       expect(response.body).to include(%(data-video-player-tracks-url-value="/transcode/tracks"))
@@ -290,7 +290,7 @@ RSpec.describe "Streaming", type: :request do
       expect(response.body).to include("subtitle_stream=4")
     end
 
-    it "renders the known duration before JavaScript initializes" do
+    it "renders the known duration for the player controller" do
       get streaming_path("play",
         streaming_url: "https://download.real-debrid.com/d/file123/Inception.mp4",
         filename: "Inception.mp4",
@@ -304,9 +304,9 @@ RSpec.describe "Streaming", type: :request do
       expect(response.body).to include(%(data-video-player-duration-value="8880"))
       expect(response.body).to include(%(data-video-player-progress-url-value="/streaming/play/progress"))
       expect(response.body).to include(">2:28:00</span>")
-      expect(response.body).to include("new MutationObserver")
-      expect(response.body).to include("performKnownDurationSeek")
-      expect(response.body).to include("progressFallbackAttached")
+      expect(response.body).not_to include("new MutationObserver")
+      expect(response.body).not_to include("performKnownDurationSeek")
+      expect(response.body).not_to include("progressFallbackAttached")
     end
 
     it "backfills duration for old player URLs that still have duration zero" do
@@ -331,7 +331,7 @@ RSpec.describe "Streaming", type: :request do
       expect(response.body).to include(">2:28:00</span>")
     end
 
-    it "renders progress fallback when duration is unknown" do
+    it "renders progress metadata when duration is unknown" do
       get streaming_path("play",
         streaming_url: "https://download.real-debrid.com/d/file123/Inception.mp4",
         filename: "Inception.mp4",
@@ -342,8 +342,9 @@ RSpec.describe "Streaming", type: :request do
 
       expect(response).to have_http_status(:ok)
       expect(response.body).to include(%(data-video-player-progress-url-value="/streaming/play/progress"))
-      expect(response.body).to include("progressFallbackAttached")
-      expect(response.body).to include("duration_seconds: durationSeconds()")
+      expect(response.body).to include(%(data-video-player-duration-value="0"))
+      expect(response.body).not_to include("progressFallbackAttached")
+      expect(response.body).not_to include("duration_seconds: durationSeconds()")
     end
   end
 

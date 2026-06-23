@@ -29,7 +29,10 @@ RSpec.describe "Transcode", type: :request do
     it "returns probed media tracks" do
       tracks = {
         audio: [ { index: 1, language: "ENG", language_label: "English", label: "English", default: true } ],
-        subtitles: [ { index: 2, language: "FRENCH", language_label: "French", label: "French", text_supported: true } ]
+        subtitles: [
+          { index: 2, language: "FRENCH", language_label: "French", label: "French", text_supported: true, partial: false, quality_score: 0 },
+          { index: 3, language: "FRENCH", language_label: "French", label: "French · Forced", text_supported: true, partial: true, quality_score: 100 }
+        ]
       }
       allow(TranscodeService).to receive(:probe_media_tracks).and_return(tracks)
       allow(ExternalSubtitleService).to receive(:search).and_return([])
@@ -38,7 +41,7 @@ RSpec.describe "Transcode", type: :request do
 
       expect(response).to have_http_status(:ok)
       expect(response.parsed_body["audio"].first["language"]).to eq("ENG")
-      expect(response.parsed_body["subtitles"].first["language"]).to eq("FRENCH")
+      expect(response.parsed_body["subtitles"].pluck("index")).to eq([ 2 ])
     end
 
     it "adds external subtitle tracks using content metadata" do

@@ -24,7 +24,8 @@ class TranscodeTracksController < ApplicationController
       default_language: current_user.default_stream_language
     )
 
-    render json: tracks.merge(subtitles: tracks[:subtitles] + external_subtitles)
+    subtitles = TranscodeService.selectable_subtitle_tracks(tracks[:subtitles] + external_subtitles)
+    render json: tracks.merge(subtitles: subtitles)
   end
 
   private

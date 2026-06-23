@@ -61,11 +61,50 @@ RSpec.describe SubdlSubtitleProvider do
         codec: "srt",
         external: true,
         source: "subdl",
+        partial: false,
+        quality: "full",
+        quality_score: 0,
         download_path: "/api/v2/subtitles/subtitle-123/download?format=file"
       )
       expect(request.headers["Authorization"]).to eq("Bearer subdl-key")
       expect(tracks.first[:index]).to start_with("external:subdl:")
       expect(tracks.first[:label]).to include("SubDL")
+    end
+
+    it "demotes forced external releases behind full dialogue releases" do
+      search_connection = instance_double(Faraday::Connection)
+      request = instance_double(Faraday::Request, headers: {})
+      response = instance_double(
+        Faraday::Response,
+        success?: true,
+        body: {
+          "results" => [
+            {
+              "n_id" => "subtitle-forced",
+              "language" => "en",
+              "format" => "srt",
+              "release_name" => "Inception.2010.Forced",
+              "url" => "/subtitle/subtitle-forced/file-forced"
+            },
+            {
+              "n_id" => "subtitle-full",
+              "language" => "en",
+              "format" => "srt",
+              "release_name" => "Inception.2010.1080p",
+              "url" => "/subtitle/subtitle-full/file-full"
+            }
+          ]
+        }
+      )
+      expect(search_connection).to receive(:get).and_yield(request).and_return(response)
+
+      provider = described_class.new(api_key: "subdl-key", search_connection: search_connection)
+
+      tracks = provider.search(imdb_id: "tt1375666", type: "movie", default_language: "ENG")
+
+      expect(tracks.map { |track| track[:partial] }).to eq([ false, true ])
+      expect(tracks.last[:quality]).to eq("partial")
+      expect(request.headers["Authorization"]).to eq("Bearer subdl-key")
     end
 
     it "does not search without an API key" do
