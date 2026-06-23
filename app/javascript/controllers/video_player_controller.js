@@ -15,7 +15,7 @@ export default class extends Controller {
       "video", "controls", "seekBar", "seekFilled", "seekBuffered", "seekHandle",
       "playButton", "playIcon", "pauseIcon", "currentTime", "durationDisplay",
       "volumeIcon", "muteIcon", "seekingOverlay",
-      "sourceInfo", "sourceToggle", "sourceDetails", "sourceUrl", "sourceFilename", "backButton",
+      "seekingOverlayMessage", "sourceInfo", "sourceToggle", "sourceDetails", "sourceUrl", "sourceFilename", "backButton",
       "audioControls", "audioMenu", "audioOptions", "audioButtonLabel",
       "subtitleControls", "subtitleMenu", "subtitleOptions", "subtitleButtonLabel", "subtitleOverlay"
     ]
@@ -51,6 +51,9 @@ export default class extends Controller {
     this.subtitleLoadToken = 0
     this.subtitleAbortController = null
     this.subtitleRetryAfter = 0
+    this.subtitlePrefetches = new Map()
+    this.subtitlePrefetchResults = new Map()
+    this.subtitlePlaybackHoldToken = null
 
     // Show source info
     this.sourceInfoTarget.classList.remove("hidden")
@@ -239,7 +242,8 @@ export default class extends Controller {
       this.renderTrackControls()
       if (this.textSubtitleSelected()) this.loadSubtitleTrack(this.currentPlaybackPosition(), {
         durationSeconds: SUBTITLE_STARTUP_WINDOW_SECONDS,
-        lookBehindSeconds: SUBTITLE_STARTUP_LOOK_BEHIND_SECONDS
+        lookBehindSeconds: SUBTITLE_STARTUP_LOOK_BEHIND_SECONDS,
+        holdPlayback: true
       })
     } catch (e) {
       console.warn("Track probe failed:", e)
@@ -322,7 +326,9 @@ export default class extends Controller {
         selected: track.index?.toString() === this.selectedSubtitleStream,
         datasetName: "subtitleStream",
         datasetValue: track.index,
-        action: "click->video-player#selectSubtitleTrack"
+        action: track.external === true
+          ? "click->video-player#selectSubtitleTrack pointerenter->video-player#prefetchSubtitleTrack focus->video-player#prefetchSubtitleTrack"
+          : "click->video-player#selectSubtitleTrack"
       }))
     })
     this.updateSubtitleButtonLabel()
@@ -373,7 +379,8 @@ export default class extends Controller {
     } else if (this.textSubtitleSelected()) {
       this.loadSubtitleTrack(targetSeconds, {
         durationSeconds: SUBTITLE_STARTUP_WINDOW_SECONDS,
-        lookBehindSeconds: SUBTITLE_STARTUP_LOOK_BEHIND_SECONDS
+        lookBehindSeconds: SUBTITLE_STARTUP_LOOK_BEHIND_SECONDS,
+        holdPlayback: true
       })
     }
   }
@@ -385,7 +392,13 @@ export default class extends Controller {
   selectedSubtitleTrack() {
     if (!this.selectedSubtitleStream) return null
 
-    return this.subtitleTracks.find((track) => track.index?.toString() === this.selectedSubtitleStream) || null
+    return this.subtitleTrackForStream(this.selectedSubtitleStream)
+  }
+
+  subtitleTrackForStream(subtitleStream) {
+    if (!subtitleStream) return null
+
+    return this.subtitleTracks.find((track) => track.index?.toString() === subtitleStream) || null
   }
 
   textSubtitleSelected() {
@@ -401,6 +414,43 @@ export default class extends Controller {
 
   externalSubtitleSelected() {
     return this.selectedSubtitleTrack()?.external === true
+  }
+
+  prefetchSubtitleTrack(event) {
+    this.prefetchSubtitleStream(event.currentTarget.dataset.subtitleStream)
+  }
+
+  prefetchLikelyExternalSubtitle() {
+    const selectedTrack = this.subtitleTrackForStream(this.selectedSubtitleStream)
+    const track = selectedTrack?.external === true ? selectedTrack : this.subtitleTracks.find((candidate) => candidate.external === true)
+    this.prefetchSubtitleStream(track?.index?.toString())
+  }
+
+  prefetchSubtitleStream(subtitleStream) {
+    const track = this.subtitleTrackForStream(subtitleStream)
+    if (track?.external !== true) return
+
+    const rawUrl = this.extractRawUrl()
+    if (!rawUrl) return
+
+    const durationSeconds = EXTERNAL_SUBTITLE_WINDOW_SECONDS
+    const windowStart = Math.max(
+      0,
+      Math.floor(this.currentPlaybackPosition()) - this.subtitleLookBehind(SUBTITLE_STARTUP_LOOK_BEHIND_SECONDS, durationSeconds)
+    )
+    const requestKey = this.subtitleRequestKey(subtitleStream, windowStart, durationSeconds)
+    if (this.subtitlePrefetchResults.has(requestKey) || this.subtitlePrefetches.has(requestKey)) return
+
+    const url = this.subtitleRequestUrl(rawUrl, subtitleStream, windowStart, durationSeconds)
+    const prefetch = this.fetchSubtitleResponse(url)
+      .then((response) => {
+        this.rememberPrefetchedSubtitleResponse(requestKey, response)
+        return response
+      })
+      .catch(() => null)
+      .finally(() => this.subtitlePrefetches.delete(requestKey))
+
+    this.subtitlePrefetches.set(requestKey, prefetch)
   }
 
   addContentMetadataParams(url) {
@@ -422,7 +472,11 @@ export default class extends Controller {
 
   async loadSubtitleTrack(
     currentPosition = this.currentPlaybackPosition(),
-    { durationSeconds = SUBTITLE_WINDOW_SECONDS, lookBehindSeconds = SUBTITLE_LOOK_BEHIND_SECONDS } = {}
+    {
+      durationSeconds = SUBTITLE_WINDOW_SECONDS,
+      lookBehindSeconds = SUBTITLE_LOOK_BEHIND_SECONDS,
+      holdPlayback = false
+    } = {}
   ) {
     if (!this.hasSubtitlesUrlValue || !this.textSubtitleSelected()) return
 
@@ -444,39 +498,18 @@ export default class extends Controller {
     this.abortSubtitleLoad()
     const abortController = new AbortController()
     this.subtitleAbortController = abortController
+    this.beginSubtitlePlaybackHold(holdPlayback, loadToken)
 
-    const url = new URL(this.subtitlesUrlValue, window.location.origin)
-    url.searchParams.set("url", rawUrl)
-    url.searchParams.set("subtitle_stream", requestedSubtitleStream)
-    url.searchParams.set("start_seconds", windowStart.toString())
-    url.searchParams.set("duration_seconds", requestedDurationSeconds.toString())
+    const requestKey = this.subtitleRequestKey(requestedSubtitleStream, windowStart, requestedDurationSeconds)
+    const cachedPrefetch = this.subtitlePrefetchResults.get(requestKey)
+    const pendingPrefetch = this.subtitlePrefetches.get(requestKey)
+    const url = this.subtitleRequestUrl(rawUrl, requestedSubtitleStream, windowStart, requestedDurationSeconds)
 
     try {
-      const response = await fetch(url.pathname + url.search, {
-        headers: { "Accept": "text/vtt" },
-        signal: abortController.signal
-      })
+      const prefetchedResponse = cachedPrefetch || (pendingPrefetch ? await pendingPrefetch : null)
+      const response = prefetchedResponse || await this.fetchSubtitleResponse(url, abortController.signal)
       if (this.selectedSubtitleStream !== requestedSubtitleStream || this.subtitleLoadToken !== loadToken) return
-      if (response.status === 204) {
-        this.subtitleRetryAfter = 0
-        this.subtitleCues = this.pruneSubtitleCues(this.subtitleCues, this.currentPlaybackPosition())
-        this.updateSubtitleOverlay(this.currentPlaybackPosition())
-        return
-      }
-
-      if (!response.ok) {
-        this.resetSubtitleWindow()
-        this.scheduleSubtitleRetry()
-        return
-      }
-
-      const text = await response.text()
-      if (this.selectedSubtitleStream !== requestedSubtitleStream || this.subtitleLoadToken !== loadToken) return
-
-      const incomingCues = this.parseWebVtt(text, windowStart)
-      this.subtitleCues = this.mergeSubtitleCues(this.subtitleCues, incomingCues, this.currentPlaybackPosition())
-      this.subtitleRetryAfter = 0
-      this.updateSubtitleOverlay(this.currentPlaybackPosition())
+      this.applySubtitleResponse(response, windowStart)
     } catch (e) {
       if (e.name === "AbortError") return
 
@@ -487,8 +520,78 @@ export default class extends Controller {
       const requestStillCurrent = this.subtitleLoadToken === loadToken
       if (requestStillCurrent) this.subtitleLoading = false
       if (this.subtitleAbortController === abortController) this.subtitleAbortController = null
+      this.finishSubtitlePlaybackHold(loadToken)
       if (requestStillCurrent && shouldPrimeContinuation) this.primeSubtitleContinuation(requestedSubtitleStream)
     }
+  }
+
+  subtitleRequestUrl(rawUrl, subtitleStream, windowStart, durationSeconds) {
+    const url = new URL(this.subtitlesUrlValue, window.location.origin)
+    url.searchParams.set("url", rawUrl)
+    url.searchParams.set("subtitle_stream", subtitleStream)
+    url.searchParams.set("start_seconds", windowStart.toString())
+    url.searchParams.set("duration_seconds", durationSeconds.toString())
+    return url
+  }
+
+  subtitleRequestKey(subtitleStream, windowStart, durationSeconds) {
+    return `${subtitleStream}:${windowStart}:${durationSeconds}`
+  }
+
+  async fetchSubtitleResponse(url, signal) {
+    const response = await fetch(url.pathname + url.search, {
+      headers: { "Accept": "text/vtt" },
+      signal
+    })
+    const text = response.status === 204 ? "" : await response.text()
+    return { ok: response.ok, status: response.status, text }
+  }
+
+  rememberPrefetchedSubtitleResponse(requestKey, response) {
+    if (!response) return
+
+    this.subtitlePrefetchResults.set(requestKey, response)
+    while (this.subtitlePrefetchResults.size > 8) {
+      this.subtitlePrefetchResults.delete(this.subtitlePrefetchResults.keys().next().value)
+    }
+  }
+
+  applySubtitleResponse(response, windowStart) {
+    if (response.status === 204) {
+      this.subtitleRetryAfter = 0
+      this.subtitleCues = this.pruneSubtitleCues(this.subtitleCues, this.currentPlaybackPosition())
+      this.updateSubtitleOverlay(this.currentPlaybackPosition())
+      return
+    }
+
+    if (!response.ok) {
+      this.resetSubtitleWindow()
+      this.scheduleSubtitleRetry()
+      return
+    }
+
+    const incomingCues = this.parseWebVtt(response.text, windowStart)
+    this.subtitleCues = this.mergeSubtitleCues(this.subtitleCues, incomingCues, this.currentPlaybackPosition())
+    this.subtitleRetryAfter = 0
+    this.updateSubtitleOverlay(this.currentPlaybackPosition())
+  }
+
+  beginSubtitlePlaybackHold(holdPlayback, loadToken) {
+    if (!holdPlayback || this.videoTarget.paused || this.videoTarget.ended) return
+
+    this.subtitlePlaybackHoldToken = loadToken
+    this.isSeeking = true
+    this.videoTarget.pause()
+    this.showSeekingOverlay("Loading subtitles...")
+  }
+
+  finishSubtitlePlaybackHold(loadToken) {
+    if (this.subtitlePlaybackHoldToken !== loadToken) return
+
+    this.subtitlePlaybackHoldToken = null
+    this.hideSeekingOverlay()
+    const playPromise = this.videoTarget.play()
+    if (playPromise?.catch) playPromise.catch(() => {})
   }
 
   removeTextSubtitleTrack() {
@@ -689,6 +792,7 @@ export default class extends Controller {
   toggleSubtitleMenu(event) {
     event.stopPropagation()
     this.toggleTrackMenu(this.subtitleMenuTarget, this.hasAudioMenuTarget ? this.audioMenuTarget : null)
+    if (!this.subtitleMenuTarget.classList.contains("hidden")) this.prefetchLikelyExternalSubtitle()
   }
 
   toggleTrackMenu(menu, otherMenu) {
@@ -818,7 +922,8 @@ export default class extends Controller {
     if (this.textSubtitleSelected()) {
       this.loadSubtitleTrack(targetSeconds, {
         durationSeconds: SUBTITLE_STARTUP_WINDOW_SECONDS,
-        lookBehindSeconds: SUBTITLE_STARTUP_LOOK_BEHIND_SECONDS
+        lookBehindSeconds: SUBTITLE_STARTUP_LOOK_BEHIND_SECONDS,
+        holdPlayback: true
       })
     }
   }
@@ -878,13 +983,16 @@ export default class extends Controller {
 
   // ── Seeking overlay ───────────────────────────────────────────────
 
-  showSeekingOverlay() {
+  showSeekingOverlay(message = "Seeking...") {
+    if (this.hasSeekingOverlayMessageTarget) this.seekingOverlayMessageTarget.textContent = message
     if (this.isSeeking) {
       this.seekingOverlayTarget.classList.remove("hidden")
     }
   }
 
   hideSeekingOverlay() {
+    if (this.subtitlePlaybackHoldToken !== null) return
+
     this.isSeeking = false
     this.seekingOverlayTarget.classList.add("hidden")
   }
