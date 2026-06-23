@@ -7,7 +7,6 @@ RSpec.describe TranscodeService do
 
   describe ".probe_duration" do
     it "uses the longest valid duration from ffprobe output" do
-      status = instance_double(Process::Status, success?: true)
       output = {
         "format" => {
           "duration" => "0.100000",
@@ -19,7 +18,7 @@ RSpec.describe TranscodeService do
         ]
       }.to_json
 
-      allow(Open3).to receive(:capture3).and_return([ output, "", status ])
+      allow(described_class).to receive(:capture_command).and_return(capture_result(output))
 
       duration = described_class.probe_duration("https://example.test/video-valid-duration.mkv")
 
@@ -27,13 +26,12 @@ RSpec.describe TranscodeService do
     end
 
     it "rejects tiny fragment durations" do
-      status = instance_double(Process::Status, success?: true)
       output = {
         "format" => { "duration" => "0.100000" },
         "streams" => [ { "duration" => "0.200000" } ]
       }.to_json
 
-      allow(Open3).to receive(:capture3).and_return([ output, "", status ])
+      allow(described_class).to receive(:capture_command).and_return(capture_result(output))
 
       duration = described_class.probe_duration("https://example.test/video-fragment-duration.mkv")
 
@@ -43,7 +41,6 @@ RSpec.describe TranscodeService do
 
   describe ".probe_media_tracks" do
     it "returns canonical audio and subtitle track metadata" do
-      status = instance_double(Process::Status, success?: true)
       output = {
         "streams" => [
           { "index" => 0, "codec_type" => "video", "codec_name" => "h264" },
@@ -54,7 +51,7 @@ RSpec.describe TranscodeService do
         ]
       }.to_json
 
-      allow(Open3).to receive(:capture3).and_return([ output, "", status ])
+      allow(described_class).to receive(:capture_command).and_return(capture_result(output))
 
       tracks = described_class.probe_media_tracks("https://example.test/video-tracks.mkv")
 
@@ -71,14 +68,13 @@ RSpec.describe TranscodeService do
 
   describe "ffmpeg command selection" do
     it "copies browser-safe H.264 video" do
-      status = instance_double(Process::Status, success?: true)
       output = {
         "streams" => [
           { "codec_name" => "h264", "width" => 1920, "height" => 1080, "pix_fmt" => "yuv420p" }
         ]
       }.to_json
 
-      allow(Open3).to receive(:capture3).and_return([ output, "", status ])
+      allow(described_class).to receive(:capture_command).and_return(capture_result(output))
 
       command = described_class.send(:build_ffmpeg_command,
         "https://example.test/video-h264-1080p.mkv",
@@ -93,14 +89,13 @@ RSpec.describe TranscodeService do
     end
 
     it "transcodes HEVC/UHD video to browser-safe H.264" do
-      status = instance_double(Process::Status, success?: true)
       output = {
         "streams" => [
           { "codec_name" => "hevc", "width" => 3840, "height" => 2160, "pix_fmt" => "yuv420p10le" }
         ]
       }.to_json
 
-      allow(Open3).to receive(:capture3).and_return([ output, "", status ])
+      allow(described_class).to receive(:capture_command).and_return(capture_result(output))
 
       command = described_class.send(:build_ffmpeg_command,
         "https://example.test/video-hevc-4k.mkv",
@@ -117,8 +112,7 @@ RSpec.describe TranscodeService do
     end
 
     it "transcodes when video probing fails closed" do
-      status = instance_double(Process::Status, success?: false)
-      allow(Open3).to receive(:capture3).and_return([ "", "probe failed", status ])
+      allow(described_class).to receive(:capture_command).and_return(capture_result("", success: false))
 
       command = described_class.send(:build_ffmpeg_command,
         "https://example.test/video-unknown.mkv",
@@ -131,7 +125,6 @@ RSpec.describe TranscodeService do
     end
 
     it "maps the default language audio stream before other preferred audio streams" do
-      status = instance_double(Process::Status, success?: true)
       video_output = {
         "streams" => [
           { "codec_name" => "h264", "width" => 1920, "height" => 1080, "pix_fmt" => "yuv420p" }
@@ -144,11 +137,11 @@ RSpec.describe TranscodeService do
         ]
       }.to_json
 
-      allow(Open3).to receive(:capture3) do |*cmd|
+      allow(described_class).to receive(:capture_command) do |cmd, **_kwargs|
         if cmd.include?("-select_streams")
-          [ video_output, "", status ]
+          capture_result(video_output)
         else
-          [ track_output, "", status ]
+          capture_result(track_output)
         end
       end
 
@@ -165,7 +158,6 @@ RSpec.describe TranscodeService do
     end
 
     it "burns the selected subtitle stream into the transcoded video" do
-      status = instance_double(Process::Status, success?: true)
       video_output = {
         "streams" => [
           { "codec_name" => "h264", "width" => 1920, "height" => 1080, "pix_fmt" => "yuv420p" }
@@ -178,11 +170,11 @@ RSpec.describe TranscodeService do
         ]
       }.to_json
 
-      allow(Open3).to receive(:capture3) do |*cmd|
+      allow(described_class).to receive(:capture_command) do |cmd, **_kwargs|
         if cmd.include?("-select_streams")
-          [ video_output, "", status ]
+          capture_result(video_output)
         else
-          [ track_output, "", status ]
+          capture_result(track_output)
         end
       end
 
@@ -205,7 +197,6 @@ RSpec.describe TranscodeService do
     end
 
     it "does not use the bitmap overlay filter for text subtitle streams" do
-      status = instance_double(Process::Status, success?: true)
       video_output = {
         "streams" => [
           { "codec_name" => "h264", "width" => 1920, "height" => 1080, "pix_fmt" => "yuv420p" }
@@ -218,11 +209,11 @@ RSpec.describe TranscodeService do
         ]
       }.to_json
 
-      allow(Open3).to receive(:capture3) do |*cmd|
+      allow(described_class).to receive(:capture_command) do |cmd, **_kwargs|
         if cmd.include?("-select_streams")
-          [ video_output, "", status ]
+          capture_result(video_output)
         else
-          [ track_output, "", status ]
+          capture_result(track_output)
         end
       end
 
@@ -242,7 +233,6 @@ RSpec.describe TranscodeService do
 
   describe ".extract_subtitles_to_vtt" do
     it "extracts text subtitle cues from ffprobe packets before falling back to ffmpeg" do
-      status = instance_double(Process::Status, success?: true)
       track_output = {
         "streams" => [
           { "index" => 3, "codec_type" => "subtitle", "codec_name" => "subrip", "tags" => { "language" => "eng" }, "disposition" => { "default" => 0 } }
@@ -258,13 +248,13 @@ RSpec.describe TranscodeService do
         ]
       }.to_json
 
-      allow(Open3).to receive(:capture3) do |*cmd|
+      allow(described_class).to receive(:capture_command) do |cmd, **_kwargs|
         if cmd.include?("-show_data")
           expect(argument_pairs(cmd)).to include([ "-select_streams", "3" ])
-          expect(argument_pairs(cmd)).to include([ "-read_intervals", "120.0%+360" ])
-          [ packet_output, "", status ]
+          expect(argument_pairs(cmd)).to include([ "-read_intervals", "120.0%+5" ])
+          capture_result(packet_output)
         else
-          [ track_output, "", status ]
+          capture_result(track_output)
         end
       end
       expect(described_class).not_to receive(:capture_subtitle_stdout)
@@ -272,7 +262,8 @@ RSpec.describe TranscodeService do
       output = described_class.extract_subtitles_to_vtt(
         "https://example.test/video-subtitles.mkv",
         subtitle_stream: "3",
-        start_seconds: 120
+        start_seconds: 120,
+        duration_seconds: 5
       )
 
       expect(output).to include("00:02:01.500 --> 00:02:04.000")
@@ -280,30 +271,231 @@ RSpec.describe TranscodeService do
     end
 
     it "extracts the selected text subtitle stream from the requested start position" do
-      status = instance_double(Process::Status, success?: true)
       track_output = {
         "streams" => [
           { "index" => 3, "codec_type" => "subtitle", "codec_name" => "subrip", "tags" => { "language" => "eng" }, "disposition" => { "default" => 0 } }
         ]
       }.to_json
 
-      allow(Open3).to receive(:capture3).and_return([ track_output, "", status ])
-      allow(described_class).to receive(:capture_subtitle_stdout) do |cmd|
+      allow(described_class).to receive(:capture_command) do |cmd, **_kwargs|
+        if cmd.include?("-show_data")
+          capture_result("", success: false)
+        else
+          capture_result(track_output)
+        end
+      end
+      allow(described_class).to receive(:capture_subtitle_stdout_result) do |cmd|
         expect(cmd).to include("-ss", "120.0")
-        expect(argument_pairs(cmd)).to include([ "-t", "360" ])
+        expect(argument_pairs(cmd)).to include([ "-t", "5" ])
         expect(cmd).to include("-vn", "-an", "-dn")
         expect(argument_pairs(cmd)).to include([ "-map", "0:3" ])
         expect(argument_pairs(cmd)).to include([ "-c:s", "webvtt" ])
-        "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHello\n"
+        described_class::SubtitleExtractionResult.new(
+          status: :ok,
+          vtt: "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHello\n",
+          cue_count: 1,
+          source: :ffmpeg
+        )
       end
 
       output = described_class.extract_subtitles_to_vtt(
         "https://example.test/video-subtitles.mkv",
         subtitle_stream: "3",
-        start_seconds: 120
+        start_seconds: 120,
+        duration_seconds: 3
       )
 
       expect(output).to start_with("WEBVTT")
+    end
+
+    it "clamps large subtitle windows before extracting packets" do
+      track_output = {
+        "streams" => [
+          { "index" => 3, "codec_type" => "subtitle", "codec_name" => "subrip", "tags" => { "language" => "eng" }, "disposition" => { "default" => 0 } }
+        ]
+      }.to_json
+      packet_output = {
+        "packets" => [
+          {
+            "pts_time" => "121.500000",
+            "duration_time" => "2.500000",
+            "data" => "\n00000000: 4865 6c6c 6f20 7061 636b 6574            Hello packet\n"
+          }
+        ]
+      }.to_json
+
+      allow(described_class).to receive(:capture_command) do |cmd, **_kwargs|
+        if cmd.include?("-show_data")
+          expect(argument_pairs(cmd)).to include([ "-read_intervals", "120.0%+60" ])
+          capture_result(packet_output)
+        else
+          capture_result(track_output)
+        end
+      end
+
+      result = described_class.extract_subtitles(
+        "https://example.test/video-subtitles.mkv",
+        subtitle_stream: "3",
+        start_seconds: 120,
+        duration_seconds: 600
+      )
+
+      expect(result.status).to eq(:ok)
+      expect(result.source).to eq(:ffprobe_packets)
+    end
+
+    it "reports an empty subtitle window without falling back to ffmpeg when ffprobe finds no packets" do
+      track_output = {
+        "streams" => [
+          { "index" => 3, "codec_type" => "subtitle", "codec_name" => "subrip", "tags" => { "language" => "eng" }, "disposition" => { "default" => 0 } }
+        ]
+      }.to_json
+      packet_output = { "packets" => [] }.to_json
+
+      allow(described_class).to receive(:capture_command) do |cmd, **_kwargs|
+        if cmd.include?("-show_data")
+          capture_result(packet_output)
+        else
+          capture_result(track_output)
+        end
+      end
+      expect(described_class).not_to receive(:capture_subtitle_stdout_result)
+
+      result = described_class.extract_subtitles(
+        "https://example.test/video-subtitles.mkv",
+        subtitle_stream: "3",
+        start_seconds: 120
+      )
+
+      expect(result.status).to eq(:empty_window)
+      expect(result.source).to eq(:ffprobe_packets)
+      expect(result.vtt).to eq("")
+    end
+
+    it "falls back to ffmpeg when ffprobe packets cannot be decoded into cues" do
+      track_output = {
+        "streams" => [
+          { "index" => 3, "codec_type" => "subtitle", "codec_name" => "subrip", "tags" => { "language" => "eng" }, "disposition" => { "default" => 0 } }
+        ]
+      }.to_json
+      packet_output = {
+        "packets" => [
+          {
+            "pts_time" => "121.500000",
+            "duration_time" => "2.500000",
+            "data" => ""
+          }
+        ]
+      }.to_json
+
+      allow(described_class).to receive(:capture_command) do |cmd, **_kwargs|
+        if cmd.include?("-show_data")
+          capture_result(packet_output)
+        else
+          capture_result(track_output)
+        end
+      end
+      allow(described_class).to receive(:capture_subtitle_stdout_result).and_return(
+        described_class::SubtitleExtractionResult.new(
+          status: :ok,
+          vtt: "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nFallback\n",
+          cue_count: 1,
+          source: :ffmpeg
+        )
+      )
+
+      result = described_class.extract_subtitles(
+        "https://example.test/video-subtitles.mkv",
+        subtitle_stream: "3",
+        start_seconds: 120
+      )
+
+      expect(result.status).to eq(:ok)
+      expect(result.source).to eq(:ffmpeg)
+      expect(result.vtt).to include("Fallback")
+    end
+
+    it "falls back to ffmpeg when ffprobe packet JSON cannot be parsed" do
+      track_output = {
+        "streams" => [
+          { "index" => 3, "codec_type" => "subtitle", "codec_name" => "subrip", "tags" => { "language" => "eng" }, "disposition" => { "default" => 0 } }
+        ]
+      }.to_json
+
+      allow(described_class).to receive(:capture_command) do |cmd, **_kwargs|
+        if cmd.include?("-show_data")
+          capture_result("{")
+        else
+          capture_result(track_output)
+        end
+      end
+      allow(described_class).to receive(:capture_subtitle_stdout_result).and_return(
+        described_class::SubtitleExtractionResult.new(
+          status: :ok,
+          vtt: "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nFallback\n",
+          cue_count: 1,
+          source: :ffmpeg
+        )
+      )
+
+      result = described_class.extract_subtitles(
+        "https://example.test/video-subtitles.mkv",
+        subtitle_stream: "3",
+        start_seconds: 120
+      )
+
+      expect(result.status).to eq(:ok)
+      expect(result.source).to eq(:ffmpeg)
+      expect(result.vtt).to include("Fallback")
+    end
+
+    it "rejects invalid subtitle stream identifiers before probing tracks" do
+      expect(described_class).not_to receive(:probe_media_tracks)
+
+      result = described_class.extract_subtitles(
+        "https://example.test/video-subtitles.mkv",
+        subtitle_stream: "../3",
+        start_seconds: 120
+      )
+
+      expect(result.status).to eq(:invalid_stream)
+      expect(result.diagnostic).to eq("invalid subtitle stream")
+    end
+
+    it "reports missing subtitle streams" do
+      track_output = {
+        "streams" => [
+          { "index" => 1, "codec_type" => "audio", "codec_name" => "aac", "tags" => { "language" => "eng" }, "disposition" => { "default" => 1 } }
+        ]
+      }.to_json
+      allow(described_class).to receive(:capture_command).and_return(capture_result(track_output))
+
+      result = described_class.extract_subtitles(
+        "https://example.test/video-subtitles.mkv",
+        subtitle_stream: "3",
+        start_seconds: 120
+      )
+
+      expect(result.status).to eq(:unsupported_track)
+      expect(result.diagnostic).to eq("subtitle stream was not found")
+    end
+
+    it "reports unsupported bitmap subtitle streams for VTT extraction" do
+      track_output = {
+        "streams" => [
+          { "index" => 4, "codec_type" => "subtitle", "codec_name" => "hdmv_pgs_subtitle", "tags" => { "language" => "eng" }, "disposition" => { "default" => 0 } }
+        ]
+      }.to_json
+
+      allow(described_class).to receive(:capture_command).and_return(capture_result(track_output))
+
+      result = described_class.extract_subtitles(
+        "https://example.test/video-subtitles.mkv",
+        subtitle_stream: "4",
+        start_seconds: 120
+      )
+
+      expect(result.status).to eq(:unsupported_track)
     end
 
     it "rejects header-only WebVTT output" do
@@ -311,7 +503,25 @@ RSpec.describe TranscodeService do
       expect(described_class.send(:webvtt_has_cues?, "WEBVTT\n\n00:03.217 --> 00:05.177\nHello\n")).to be(true)
     end
 
-    it "returns cue output from a subtitle process that keeps running after writing cues" do
+    it "waits for a subtitle process to finish the requested output window" do
+      command = [
+        RbConfig.ruby,
+        "-e",
+        "$stdout.write(\"WEBVTT\\n\\n00:03.217 --> 00:05.177\\nHello\\n\"); " \
+          "$stdout.flush; sleep 0.2; " \
+          "$stdout.write(\"\\n00:06.217 --> 00:08.177\\nLater\\n\"); $stdout.flush"
+      ]
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      output = described_class.send(:capture_subtitle_stdout, command)
+
+      expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).to be >= 0.2
+      expect(output).to include("Hello")
+      expect(output).to include("Later")
+    end
+
+    it "returns cue output from a subtitle process that times out after writing cues" do
+      stub_const("TranscodeService::SUBTITLE_EXTRACTION_TIMEOUT_SECONDS", 0.5)
       command = [
         RbConfig.ruby,
         "-e",
@@ -321,12 +531,23 @@ RSpec.describe TranscodeService do
 
       output = described_class.send(:capture_subtitle_stdout, command)
 
-      expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).to be < 5
+      expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).to be < 3
       expect(output).to include("Hello")
     end
   end
 
   describe "process cleanup" do
+    it "times out captured commands without Open3 reader threads" do
+      command = [ RbConfig.ruby, "-e", "sleep 10" ]
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      result = described_class.send(:capture_command, command, timeout_seconds: 0.1)
+
+      expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).to be < 3
+      expect(result.timed_out).to be(true)
+      expect(result.status).to be_nil
+    end
+
     it "force kills a process group that ignores TERM" do
       pid = Process.spawn(
         RbConfig.ruby,
@@ -355,6 +576,16 @@ RSpec.describe TranscodeService do
 
   def argument_pairs(command)
     command.each_cons(2).to_a
+  end
+
+  def capture_result(stdout, success: true, timed_out: false)
+    status = timed_out ? nil : instance_double(Process::Status, success?: success)
+    described_class::CommandCaptureResult.new(
+      stdout: stdout,
+      stderr: "",
+      status: status,
+      timed_out: timed_out
+    )
   end
 
   def process_alive?(pid)

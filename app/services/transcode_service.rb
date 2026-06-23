@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "open3"
-require "timeout"
 require "json"
 
 # Remuxes/transcodes streams via FFmpeg for browser playback.
@@ -29,9 +27,10 @@ class TranscodeService
   MAX_VALID_DURATION_SECONDS = 24 * 60 * 60
   MAX_STREAM_INDEX = 200
   SUBTITLE_EXTRACTION_TIMEOUT_SECONDS = 45
-  SUBTITLE_PACKET_EXTRACTION_TIMEOUT_SECONDS = 12
-  SUBTITLE_EXTRACTION_SETTLE_SECONDS = 1.0
-  SUBTITLE_EXTRACTION_WINDOW_SECONDS = 6 * 60
+  SUBTITLE_PACKET_EXTRACTION_TIMEOUT_SECONDS = 30
+  SUBTITLE_EXTRACTION_WINDOW_SECONDS = 15
+  MIN_SUBTITLE_EXTRACTION_WINDOW_SECONDS = 5
+  MAX_SUBTITLE_EXTRACTION_WINDOW_SECONDS = 60
   SUBTITLE_FALLBACK_DURATION_SECONDS = 4
   MAX_COPY_VIDEO_WIDTH = 1920
   MAX_COPY_VIDEO_HEIGHT = 1080
@@ -70,6 +69,18 @@ class TranscodeService
   PROBE_CACHE_TTL = 300 # 5 minutes
 
   class TranscodeError < StandardError; end
+
+  CommandCaptureResult = Struct.new(:stdout, :stderr, :status, :timed_out, keyword_init: true)
+
+  SubtitleExtractionResult = Struct.new(:status, :vtt, :cue_count, :source, :diagnostic, keyword_init: true) do
+    def ok?
+      status == :ok
+    end
+
+    def empty_window?
+      status == :empty_window
+    end
+  end
 
 
   # Stream transcoded/remuxed fMP4 from FFmpeg.
@@ -154,13 +165,13 @@ class TranscodeService
             "-of", "json",
             input_url ]
 
-    stdout, _, status = Timeout.timeout(10) { Open3.capture3(*cmd) }
-    return 0 unless status.success?
+    result = capture_command(cmd, timeout_seconds: 10)
+    return 0 if result.timed_out || !result.status&.success?
 
-    duration = extract_probe_duration(stdout)
+    duration = extract_probe_duration(result.stdout)
     cache_store(input_url, duration: duration)
     duration
-  rescue Timeout::Error, StandardError
+  rescue StandardError
     0
   end
 
@@ -179,29 +190,58 @@ class TranscodeService
       input_url
     ]
 
-    stdout, _, status = Timeout.timeout(10) { Open3.capture3(*cmd) }
-    tracks = status.success? ? extract_media_tracks(stdout) : empty_media_tracks
+    result = capture_command(cmd, timeout_seconds: 10)
+    tracks = result.status&.success? ? extract_media_tracks(result.stdout) : empty_media_tracks
     cache_store(input_url, media_tracks: tracks)
     tracks
-  rescue Timeout::Error, StandardError
+  rescue StandardError
     empty_media_tracks
   end
 
-  def self.extract_subtitles_to_vtt(input_url, headers: {}, subtitle_stream: nil, start_seconds: 0)
+  def self.extract_subtitles_to_vtt(input_url, headers: {}, subtitle_stream: nil, start_seconds: 0, duration_seconds: SUBTITLE_EXTRACTION_WINDOW_SECONDS)
+    extract_subtitles(
+      input_url,
+      headers: headers,
+      subtitle_stream: subtitle_stream,
+      start_seconds: start_seconds,
+      duration_seconds: duration_seconds
+    ).vtt.to_s
+  end
+
+  def self.extract_subtitles(input_url, headers: {}, subtitle_stream: nil, start_seconds: 0, duration_seconds: SUBTITLE_EXTRACTION_WINDOW_SECONDS)
     stream_index = normalized_stream_index(subtitle_stream)
-    return "" unless stream_index
+    seek_start_seconds = normalized_start_seconds(start_seconds)
+    extraction_duration_seconds = normalized_subtitle_duration_seconds(duration_seconds)
+    unless stream_index
+      result = subtitle_result(:invalid_stream, diagnostic: "invalid subtitle stream")
+      log_subtitle_result(result, stream_index: subtitle_stream, start_seconds: seek_start_seconds)
+      return result
+    end
 
     track = probe_media_tracks(input_url, headers: headers)[:subtitles].find { |subtitle| subtitle[:index] == stream_index }
-    return "" unless track&.dig(:text_supported)
+    unless track
+      result = subtitle_result(:unsupported_track, diagnostic: "subtitle stream was not found")
+      log_subtitle_result(result, stream_index: stream_index, start_seconds: seek_start_seconds)
+      return result
+    end
 
-    seek_start_seconds = normalized_start_seconds(start_seconds)
+    unless track[:text_supported]
+      result = subtitle_result(:unsupported_track, diagnostic: "subtitle stream is not text based")
+      log_subtitle_result(result, stream_index: stream_index, start_seconds: seek_start_seconds)
+      return result
+    end
+
     packet_subtitles = extract_subtitle_packets_to_vtt(
       input_url,
       headers: headers,
       track: track,
-      start_seconds: seek_start_seconds
+      start_seconds: seek_start_seconds,
+      duration_seconds: extraction_duration_seconds
     )
-    return packet_subtitles if webvtt_has_cues?(packet_subtitles)
+    if packet_subtitles.ok? || packet_subtitles.empty_window?
+      log_subtitle_result(packet_subtitles, stream_index: stream_index, start_seconds: seek_start_seconds)
+      return packet_subtitles
+    end
 
     header_str = ffmpeg_headers(headers)
     cmd = [ FFMPEG_PATH, "-loglevel", "error" ]
@@ -210,7 +250,7 @@ class TranscodeService
     cmd += [ "-ss", seek_start_seconds.to_s ] if seek_start_seconds.positive?
     cmd += [
       "-i", input_url,
-      "-t", SUBTITLE_EXTRACTION_WINDOW_SECONDS.to_s,
+      "-t", extraction_duration_seconds.to_s,
       "-vn",
       "-an",
       "-dn",
@@ -220,44 +260,62 @@ class TranscodeService
       "pipe:1"
     ]
 
-    capture_subtitle_stdout(cmd)
-  rescue StandardError
-    ""
+    result = capture_subtitle_stdout_result(cmd)
+    log_subtitle_result(result, stream_index: stream_index, start_seconds: seek_start_seconds)
+    result
+  rescue StandardError => e
+    result = subtitle_result(:failed, diagnostic: e.class.name)
+    log_subtitle_result(result, stream_index: subtitle_stream, start_seconds: start_seconds)
+    result
   end
 
-  def self.extract_subtitle_packets_to_vtt(input_url, headers:, track:, start_seconds:)
+  def self.extract_subtitle_packets_to_vtt(input_url, headers:, track:, start_seconds:, duration_seconds:)
     header_str = ffmpeg_headers(headers)
     cmd = [ FFPROBE_PATH, "-v", "error" ]
     cmd += [ "-headers", header_str + "\r\n" ] if header_str.present?
     cmd += [
       "-select_streams", track[:index].to_s,
-      "-read_intervals", "#{start_seconds}%+#{SUBTITLE_EXTRACTION_WINDOW_SECONDS}",
+      "-read_intervals", "#{start_seconds}%+#{duration_seconds}",
       "-show_entries", "packet=pts_time,duration_time,data",
       "-show_data",
       "-of", "json",
       input_url
     ]
 
-    stdout, _, status = Timeout.timeout(SUBTITLE_PACKET_EXTRACTION_TIMEOUT_SECONDS) { Open3.capture3(*cmd) }
-    return "" unless status.success?
+    result = capture_command(cmd, timeout_seconds: SUBTITLE_PACKET_EXTRACTION_TIMEOUT_SECONDS)
+    return subtitle_result(:failed, source: :ffprobe_packets, diagnostic: "ffprobe packet extraction timed out") if result.timed_out
+    return subtitle_result(:failed, source: :ffprobe_packets, diagnostic: "ffprobe packets exited unsuccessfully") unless result.status&.success?
 
-    subtitle_packets_to_webvtt(stdout, track[:codec], start_seconds)
-  rescue Timeout::Error, StandardError
-    ""
+    packet_result = subtitle_packets_to_webvtt(result.stdout, track[:codec], start_seconds, duration_seconds)
+    if packet_result[:failed]
+      subtitle_result(:failed, source: :ffprobe_packets, diagnostic: packet_result[:diagnostic])
+    elsif packet_result[:cue_count].positive?
+      subtitle_result(:ok, vtt: packet_result[:vtt], cue_count: packet_result[:cue_count], source: :ffprobe_packets)
+    elsif packet_result[:packet_count].positive?
+      subtitle_result(:failed, source: :ffprobe_packets, diagnostic: "ffprobe packets had no decodable text cues")
+    else
+      subtitle_result(:empty_window, source: :ffprobe_packets)
+    end
+  rescue StandardError => e
+    subtitle_result(:failed, source: :ffprobe_packets, diagnostic: e.class.name)
   end
   private_class_method :extract_subtitle_packets_to_vtt
 
-  def self.subtitle_packets_to_webvtt(output, codec, start_seconds)
+  def self.subtitle_packets_to_webvtt(output, codec, start_seconds, duration_seconds)
     data = JSON.parse(output)
     window_start = [ start_seconds - 5, 0 ].max
-    window_end = start_seconds + SUBTITLE_EXTRACTION_WINDOW_SECONDS
+    window_end = start_seconds + duration_seconds
     cues = Array(data["packets"]).filter_map do |packet|
       subtitle_packet_to_cue(packet, codec, window_start, window_end)
     end
 
-    webvtt_from_cues(cues)
+    {
+      vtt: webvtt_from_cues(cues),
+      cue_count: cues.length,
+      packet_count: Array(data["packets"]).length
+    }
   rescue JSON::ParserError
-    ""
+    { vtt: "", cue_count: 0, packet_count: 0, failed: true, diagnostic: "ffprobe packet JSON could not be parsed" }
   end
   private_class_method :subtitle_packets_to_webvtt
 
@@ -413,6 +471,11 @@ class TranscodeService
   private_class_method :subtitle_burn_filter
 
   def self.capture_subtitle_stdout(cmd)
+    capture_subtitle_stdout_result(cmd).vtt.to_s
+  end
+  private_class_method :capture_subtitle_stdout
+
+  def self.capture_subtitle_stdout_result(cmd)
     rd, wr = IO.pipe
     err_rd, err_wr = IO.pipe
     pid = Process.spawn(*cmd, in: "/dev/null", out: wr, err: err_wr, pgroup: true)
@@ -420,14 +483,12 @@ class TranscodeService
     err_wr.close
 
     stdout_buf = +""
-    last_stdout_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     reaped = false
 
     stdout_thread = Thread.new do
       loop do
         chunk = rd.readpartial(4096)
         stdout_buf << chunk
-        last_stdout_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       end
     rescue EOFError, IOError, Errno::EBADF
     end
@@ -442,15 +503,19 @@ class TranscodeService
       _, status = Process.waitpid2(pid, Process::WNOHANG)
       if status
         reaped = true
-        return status.success? && webvtt_has_cues?(stdout_buf) ? stdout_buf : ""
+        stdout_thread.join(1)
+        stderr_thread.join(1)
+        return subtitle_result(:ok, vtt: stdout_buf, cue_count: webvtt_cue_count(stdout_buf), source: :ffmpeg) if status.success? && webvtt_has_cues?(stdout_buf)
+        return subtitle_result(:empty_window, source: :ffmpeg) if status.success?
+
+        return subtitle_result(:failed, source: :ffmpeg, diagnostic: "ffmpeg subtitle extraction exited unsuccessfully")
       end
 
-      now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      if webvtt_has_cues?(stdout_buf) && now - last_stdout_at >= SUBTITLE_EXTRACTION_SETTLE_SECONDS
-        return stdout_buf
-      end
+      if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+        return subtitle_result(:ok, vtt: stdout_buf, cue_count: webvtt_cue_count(stdout_buf), source: :ffmpeg) if webvtt_has_cues?(stdout_buf)
 
-      return webvtt_has_cues?(stdout_buf) ? stdout_buf : "" if now >= deadline
+        return subtitle_result(:timeout, source: :ffmpeg, diagnostic: "ffmpeg subtitle extraction timed out")
+      end
 
       sleep 0.1
     end
@@ -463,12 +528,39 @@ class TranscodeService
     rd&.close unless rd&.closed?
     err_rd&.close unless err_rd&.closed?
   end
-  private_class_method :capture_subtitle_stdout
+  private_class_method :capture_subtitle_stdout_result
 
   def self.webvtt_has_cues?(text)
     text.to_s.match?(/^\d{2}:\d{2}(?::\d{2})?[\.,]\d{3}\s+-->/)
   end
   private_class_method :webvtt_has_cues?
+
+  def self.webvtt_cue_count(text)
+    text.to_s.scan(/^\d{2}:\d{2}(?::\d{2})?[\.,]\d{3}\s+-->/).length
+  end
+  private_class_method :webvtt_cue_count
+
+  def self.subtitle_result(status, vtt: "", cue_count: 0, source: nil, diagnostic: nil)
+    SubtitleExtractionResult.new(
+      status: status,
+      vtt: vtt.to_s,
+      cue_count: cue_count.to_i,
+      source: source,
+      diagnostic: diagnostic
+    )
+  end
+  private_class_method :subtitle_result
+
+  def self.log_subtitle_result(result, stream_index:, start_seconds:)
+    return unless defined?(Rails)
+
+    Rails.logger.info(
+      "[Subtitles] status=#{result.status} source=#{result.source || 'none'} " \
+      "stream=#{stream_index.presence || 'none'} start=#{normalized_start_seconds(start_seconds)} " \
+      "cues=#{result.cue_count}"
+    )
+  end
+  private_class_method :log_subtitle_result
 
   def self.selected_audio_stream_index(input_url, headers:, audio_stream:, default_language:, preferred_languages:)
     explicit_stream_index = normalized_stream_index(audio_stream)
@@ -600,11 +692,11 @@ class TranscodeService
       input_url
     ]
 
-    stdout, _, status = Timeout.timeout(10) { Open3.capture3(*cmd) }
-    stream = status.success? ? extract_video_stream(stdout) : {}
+    result = capture_command(cmd, timeout_seconds: 10)
+    stream = result.status&.success? ? extract_video_stream(result.stdout) : {}
     cache_store(input_url, video_stream: stream)
     stream
-  rescue Timeout::Error, StandardError
+  rescue StandardError
     {}
   end
   private_class_method :probe_video_stream
@@ -663,6 +755,14 @@ class TranscodeService
     seconds.finite? && seconds.positive? ? seconds : 0
   end
   private_class_method :normalized_start_seconds
+
+  def self.normalized_subtitle_duration_seconds(value)
+    seconds = value.to_i
+    return SUBTITLE_EXTRACTION_WINDOW_SECONDS unless seconds.positive?
+
+    seconds.clamp(MIN_SUBTITLE_EXTRACTION_WINDOW_SECONDS, MAX_SUBTITLE_EXTRACTION_WINDOW_SECONDS)
+  end
+  private_class_method :normalized_subtitle_duration_seconds
 
   def self.extract_probe_duration(output)
     data = JSON.parse(output)
@@ -756,6 +856,76 @@ class TranscodeService
   private_class_method :stderr_summary
 
   # ── Process management ────────────────────────────────────────────
+
+  def self.capture_command(cmd, timeout_seconds:)
+    stdout_rd = nil
+    stdout_wr = nil
+    stderr_rd = nil
+    stderr_wr = nil
+    stdout_thread = nil
+    stderr_thread = nil
+    pid = nil
+    status = nil
+    timed_out = false
+    reaped = false
+    stdout_buf = +""
+    stderr_buf = +""
+
+    stdout_rd, stdout_wr = IO.pipe
+    stderr_rd, stderr_wr = IO.pipe
+    pid = Process.spawn(*cmd, in: File::NULL, out: stdout_wr, err: stderr_wr, pgroup: true)
+    stdout_wr.close
+    stderr_wr.close
+
+    stdout_thread = drain_pipe(stdout_rd, stdout_buf)
+    stderr_thread = drain_pipe(stderr_rd, stderr_buf)
+
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout_seconds
+    loop do
+      _, status = Process.waitpid2(pid, Process::WNOHANG)
+      if status
+        reaped = true
+        break
+      end
+
+      if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+        timed_out = true
+        kill_process_group(pid)
+        reaped = true
+        break
+      end
+
+      sleep 0.05
+    end
+
+    stdout_thread.join(1)
+    stderr_thread.join(1)
+
+    CommandCaptureResult.new(
+      stdout: stdout_buf,
+      stderr: stderr_buf,
+      status: status,
+      timed_out: timed_out
+    )
+  ensure
+    kill_process_group(pid) if pid && !reaped
+    stdout_thread&.kill
+    stderr_thread&.kill
+    stdout_thread&.join(1)
+    stderr_thread&.join(1)
+    [ stdout_rd, stdout_wr, stderr_rd, stderr_wr ].each do |io|
+      io&.close unless io&.closed?
+    end
+  end
+  private_class_method :capture_command
+
+  def self.drain_pipe(io, buffer)
+    Thread.new do
+      loop { buffer << io.readpartial(4096) }
+    rescue EOFError, IOError, Errno::EBADF
+    end
+  end
+  private_class_method :drain_pipe
 
   # Kill the ffmpeg process group: SIGTERM first, then SIGKILL if it
   # doesn't exit within the grace period.  Safe to call if already dead.

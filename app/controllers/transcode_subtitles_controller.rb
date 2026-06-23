@@ -12,14 +12,26 @@ class TranscodeSubtitlesController < ApplicationController
       return
     end
 
-    subtitles = TranscodeService.extract_subtitles_to_vtt(
+    result = TranscodeService.extract_subtitles(
       input_url,
       headers: transcode_headers,
       subtitle_stream: params[:subtitle_stream],
-      start_seconds: normalized_start_seconds(params[:start_seconds])
+      start_seconds: normalized_start_seconds(params[:start_seconds]),
+      duration_seconds: normalized_duration_seconds(params[:duration_seconds])
     )
 
-    send_data subtitles.presence || "WEBVTT\n\n", type: "text/vtt; charset=utf-8", disposition: "inline"
+    case result.status
+    when :ok
+      send_data result.vtt, type: "text/vtt; charset=utf-8", disposition: "inline"
+    when :empty_window
+      head :no_content
+    when :invalid_stream, :unsupported_track
+      render json: { error: "Subtitle track is not available" }, status: :unprocessable_entity
+    when :timeout
+      render json: { error: "Subtitle extraction timed out" }, status: :gateway_timeout
+    else
+      render json: { error: "Subtitle extraction failed" }, status: :bad_gateway
+    end
   end
 
   private
@@ -33,5 +45,15 @@ class TranscodeSubtitlesController < ApplicationController
   def normalized_start_seconds(value)
     seconds = value.to_f
     seconds.finite? && seconds.positive? ? seconds : 0
+  end
+
+  def normalized_duration_seconds(value)
+    seconds = value.to_i
+    return TranscodeService::SUBTITLE_EXTRACTION_WINDOW_SECONDS unless seconds.positive?
+
+    seconds.clamp(
+      TranscodeService::MIN_SUBTITLE_EXTRACTION_WINDOW_SECONDS,
+      TranscodeService::MAX_SUBTITLE_EXTRACTION_WINDOW_SECONDS
+    )
   end
 end

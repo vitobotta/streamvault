@@ -50,29 +50,55 @@ RSpec.describe "Transcode", type: :request do
   end
 
   describe "GET /transcode/subtitles" do
+    it "rejects private subtitle media URLs before extracting" do
+      expect(TranscodeService).not_to receive(:extract_subtitles)
+
+      get transcode_subtitles_path, params: {
+        url: "http://127.0.0.1/video.mkv",
+        subtitle_stream: "2"
+      }
+
+      expect(response).to have_http_status(:bad_request)
+    end
+
     it "returns selected subtitles as WebVTT" do
-      allow(TranscodeService).to receive(:extract_subtitles_to_vtt)
-        .and_return("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHello\n")
+      allow(TranscodeService).to receive(:extract_subtitles).and_return(
+        TranscodeService::SubtitleExtractionResult.new(
+          status: :ok,
+          vtt: "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHello\n",
+          cue_count: 1,
+          source: :ffmpeg
+        )
+      )
 
       get transcode_subtitles_path, params: {
         url: "https://download.real-debrid.com/d/file123/Inception.mkv",
         subtitle_stream: "2",
-        start_seconds: "30"
+        start_seconds: "30",
+        duration_seconds: "5"
       }
 
       expect(response).to have_http_status(:ok)
       expect(response.media_type).to eq("text/vtt")
       expect(response.body).to start_with("WEBVTT")
-      expect(TranscodeService).to have_received(:extract_subtitles_to_vtt).with(
+      expect(TranscodeService).to have_received(:extract_subtitles).with(
         "https://download.real-debrid.com/d/file123/Inception.mkv",
         headers: { "Authorization" => "Bearer test_key" },
         subtitle_stream: "2",
-        start_seconds: 30.0
+        start_seconds: 30.0,
+        duration_seconds: 5
       )
     end
 
-    it "returns an empty WebVTT document when the selected window has no cues" do
-      allow(TranscodeService).to receive(:extract_subtitles_to_vtt).and_return("")
+    it "uses the default subtitle window when duration is omitted" do
+      allow(TranscodeService).to receive(:extract_subtitles).and_return(
+        TranscodeService::SubtitleExtractionResult.new(
+          status: :ok,
+          vtt: "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHello\n",
+          cue_count: 1,
+          source: :ffprobe_packets
+        )
+      )
 
       get transcode_subtitles_path, params: {
         url: "https://download.real-debrid.com/d/file123/Inception.mkv",
@@ -81,8 +107,73 @@ RSpec.describe "Transcode", type: :request do
       }
 
       expect(response).to have_http_status(:ok)
-      expect(response.media_type).to eq("text/vtt")
-      expect(response.body).to eq("WEBVTT\n\n")
+      expect(TranscodeService).to have_received(:extract_subtitles).with(
+        "https://download.real-debrid.com/d/file123/Inception.mkv",
+        headers: { "Authorization" => "Bearer test_key" },
+        subtitle_stream: "2",
+        start_seconds: 30.0,
+        duration_seconds: TranscodeService::SUBTITLE_EXTRACTION_WINDOW_SECONDS
+      )
+    end
+
+    it "returns no content when the selected subtitle window has no cues" do
+      allow(TranscodeService).to receive(:extract_subtitles).and_return(
+        TranscodeService::SubtitleExtractionResult.new(status: :empty_window, vtt: "", cue_count: 0, source: :ffprobe_packets)
+      )
+
+      get transcode_subtitles_path, params: {
+        url: "https://download.real-debrid.com/d/file123/Inception.mkv",
+        subtitle_stream: "2",
+        start_seconds: "30"
+      }
+
+      expect(response).to have_http_status(:no_content)
+      expect(response.body).to be_empty
+    end
+
+    it "returns gateway timeout when subtitle extraction times out" do
+      allow(TranscodeService).to receive(:extract_subtitles).and_return(
+        TranscodeService::SubtitleExtractionResult.new(status: :timeout, vtt: "", cue_count: 0, source: :ffmpeg)
+      )
+
+      get transcode_subtitles_path, params: {
+        url: "https://download.real-debrid.com/d/file123/Inception.mkv",
+        subtitle_stream: "2",
+        start_seconds: "30"
+      }
+
+      expect(response).to have_http_status(:gateway_timeout)
+      expect(response.parsed_body["error"]).to eq("Subtitle extraction timed out")
+    end
+
+    it "returns unprocessable entity for unsupported subtitle tracks" do
+      allow(TranscodeService).to receive(:extract_subtitles).and_return(
+        TranscodeService::SubtitleExtractionResult.new(status: :unsupported_track, vtt: "", cue_count: 0, source: nil)
+      )
+
+      get transcode_subtitles_path, params: {
+        url: "https://download.real-debrid.com/d/file123/Inception.mkv",
+        subtitle_stream: "4",
+        start_seconds: "30"
+      }
+
+      expect(response).to have_http_status(422)
+      expect(response.parsed_body["error"]).to eq("Subtitle track is not available")
+    end
+
+    it "returns bad gateway when subtitle extraction fails" do
+      allow(TranscodeService).to receive(:extract_subtitles).and_return(
+        TranscodeService::SubtitleExtractionResult.new(status: :failed, vtt: "", cue_count: 0, source: :ffmpeg)
+      )
+
+      get transcode_subtitles_path, params: {
+        url: "https://download.real-debrid.com/d/file123/Inception.mkv",
+        subtitle_stream: "2",
+        start_seconds: "30"
+      }
+
+      expect(response).to have_http_status(:bad_gateway)
+      expect(response.parsed_body["error"]).to eq("Subtitle extraction failed")
     end
   end
 end
