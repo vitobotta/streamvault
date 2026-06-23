@@ -53,6 +53,51 @@ RSpec.describe "Library", type: :request do
       expect(response).to redirect_to(library_index_path)
     end
 
+    context "with JSON request" do
+      it "returns ok JSON for successful create" do
+        expect {
+          post library_index_path,
+               params: { library_entry: { content_type: "movie", imdb_id: "tt1375666", title: "Inception" } },
+               headers: { "Accept" => "application/json" }
+        }.to change(LibraryEntry, :count).by(1)
+
+        expect(response).to have_http_status(:ok)
+        expect(response.media_type).to eq("application/json")
+        body = response.parsed_body
+        expect(body["ok"]).to be true
+        expect(body["kind"]).to eq("library")
+        expect(body["destroy_url"]).to be_present
+        expect(body["notice"]).to include("Inception")
+      end
+
+      it "returns error JSON for failed create" do
+        create(:library_entry, user: user, imdb_id: "tt1375666")
+
+        expect {
+          post library_index_path,
+               params: { library_entry: { content_type: "movie", imdb_id: "tt1375666", title: "Inception" } },
+               headers: { "Accept" => "application/json" }
+        }.not_to change(LibraryEntry, :count)
+
+        expect(response).to have_http_status(:unprocessable_content)
+        body = response.parsed_body
+        expect(body["ok"]).to be false
+        expect(body["error"]).to be_present
+      end
+
+      it "removes from wishlist when adding to library (JSON)" do
+        create(:wishlist_entry, user: user, imdb_id: "tt1375666")
+
+        expect {
+          post library_index_path,
+               params: { library_entry: { content_type: "movie", imdb_id: "tt1375666", title: "Inception" } },
+               headers: { "Accept" => "application/json" }
+        }.to change(WishlistEntry, :count).by(-1)
+
+        expect(response.parsed_body["kind"]).to eq("library")
+      end
+    end
+
     it "removes from wishlist when adding to library" do
       create(:wishlist_entry, user: user, imdb_id: "tt1375666")
 
@@ -91,6 +136,17 @@ RSpec.describe "Library", type: :request do
       }.to change(LibraryEntry, :count).by(-1)
 
       expect(response).to redirect_to(library_index_path)
+    end
+
+    it "returns ok JSON for destroy" do
+      expect {
+        delete library_path(entry), headers: { "Accept" => "application/json" }
+      }.to change(LibraryEntry, :count).by(-1)
+
+      expect(response).to have_http_status(:ok)
+      expect(response.media_type).to eq("application/json")
+      expect(response.parsed_body["ok"]).to be true
+      expect(response.parsed_body["kind"]).to eq("library")
     end
   end
 end

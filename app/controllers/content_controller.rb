@@ -28,6 +28,7 @@ class ContentController < ApplicationController
     @in_library = current_user.library_entries.exists?(imdb_id: @imdb_id)
     @in_wishlist = current_user.wishlist_entries.exists?(imdb_id: @imdb_id)
     @library_entry = current_user.library_entries.find_by(imdb_id: @imdb_id)
+    @wishlist_entry = current_user.wishlist_entries.find_by(imdb_id: @imdb_id)
 
     if @type == "show"
       @episode_progress = current_user.episode_progresses.for_show(@imdb_id).index_by { |ep| [ ep.season_number, ep.episode_number ] }
@@ -42,6 +43,19 @@ class ContentController < ApplicationController
         .find_by(imdb_id: @imdb_id, content_type: :movie)
         &.progress_percentage
     end
+  end
+
+  def status
+    imdb_id = params[:imdb_id]
+    library_entry = current_user.library_entries.find_by(imdb_id: imdb_id)
+    wishlist_entry = current_user.wishlist_entries.find_by(imdb_id: imdb_id)
+
+    render json: {
+      in_library: library_entry.present?,
+      in_wishlist: wishlist_entry.present?,
+      library_entry_id: library_entry&.id,
+      wishlist_entry_id: wishlist_entry&.id
+    }
   end
 
   def episode_streams

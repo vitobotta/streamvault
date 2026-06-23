@@ -22,16 +22,25 @@ class WishlistController < ApplicationController
     @entry = current_user.wishlist_entries.build(entry_params)
 
     if @entry.save
-      redirect_to wishlist_index_path, notice: "#{@entry.title} added to wishlist."
+      respond_to do |format|
+        format.html { redirect_to wishlist_index_path, notice: "#{@entry.title} added to wishlist." }
+        format.json { render json: { ok: true, kind: "wishlist", destroy_url: wishlist_path(@entry), notice: "#{@entry.title} added to wishlist." } }
+      end
     else
-      redirect_back fallback_location: wishlist_index_path, alert: @entry.errors.full_messages.join(", ")
+      respond_to do |format|
+        format.html { redirect_back fallback_location: wishlist_index_path, alert: @entry.errors.full_messages.join(", ") }
+        format.json { render json: { ok: false, error: @entry.errors.full_messages.join(", ") }, status: :unprocessable_content }
+      end
     end
   end
 
   def destroy
     title = @entry.title
     @entry.destroy
-    redirect_to wishlist_index_path, notice: "#{title} removed from wishlist."
+    respond_to do |format|
+      format.html { redirect_to wishlist_index_path, notice: "#{title} removed from wishlist." }
+      format.json { render json: { ok: true, kind: "wishlist" } }
+    end
   end
 
   def move_to_library

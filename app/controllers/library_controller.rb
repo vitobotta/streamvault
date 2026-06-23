@@ -33,9 +33,15 @@ class LibraryController < ApplicationController
 
     if @entry.save
       current_user.wishlist_entries.find_by(imdb_id: @entry.imdb_id)&.destroy
-      redirect_to library_index_path, notice: "#{@entry.title} added to library."
+      respond_to do |format|
+        format.html { redirect_to library_index_path, notice: "#{@entry.title} added to library." }
+        format.json { render json: { ok: true, kind: "library", destroy_url: library_path(@entry), notice: "#{@entry.title} added to library." } }
+      end
     else
-      redirect_back fallback_location: library_index_path, alert: @entry.errors.full_messages.join(", ")
+      respond_to do |format|
+        format.html { redirect_back fallback_location: library_index_path, alert: @entry.errors.full_messages.join(", ") }
+        format.json { render json: { ok: false, error: @entry.errors.full_messages.join(", ") }, status: :unprocessable_content }
+      end
     end
   end
 
@@ -50,7 +56,10 @@ class LibraryController < ApplicationController
   def destroy
     title = @entry.title
     @entry.destroy
-    redirect_to library_index_path, notice: "#{title} removed from library."
+    respond_to do |format|
+      format.html { redirect_to library_index_path, notice: "#{title} removed from library." }
+      format.json { render json: { ok: true, kind: "library" } }
+    end
   end
 
   private
