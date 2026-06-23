@@ -235,6 +235,91 @@ RSpec.describe "Streaming", type: :request do
     end
   end
 
+  describe "GET /streaming/resume" do
+    before { sign_in user }
+
+    # Cinemeta show metadata with S1E1/S1E2, used by resume_target + fetch_show_title
+    let!(:cinemeta_stub) do
+      stub_request(:get, "https://v3-cinemeta.strem.io/meta/series/tt0903747.json")
+        .to_return(
+          status: 200,
+          body: {
+            "meta" => {
+              "id" => "tt0903747",
+              "name" => "Breaking Bad",
+              "videos" => [
+                { "season" => 1, "episode" => 1, "name" => "Pilot", "runtime" => "58 min" },
+                { "season" => 1, "episode" => 2, "name" => "Cat's in the Bag...", "runtime" => "48 min" }
+              ]
+            }
+          }.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+    end
+
+    before { cinemeta_stub }
+
+    it "resumes a partially-watched episode at the saved position" do
+      create(:episode_progress, user: user, show_imdb_id: "tt0903747",
+             season_number: 1, episode_number: 1,
+             progress_seconds: 600, duration_seconds: 3480)
+
+      stub_request(:get, %r{torrentio\.strem\.fun/([^/]+/)?stream/series/tt0903747:1:1\.json})
+        .to_return(
+          status: 200,
+          body: { "streams" => [ { "title" => "Breaking Bad 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/abc/null/0/bb.mp4", "behaviorHints" => { "filename" => "bb.mp4" } } ] }.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+      stub_request(:get, "https://torrentio.strem.fun/resolve/realdebrid/test_key/abc/null/0/bb.mp4")
+        .to_return(status: 302, headers: { "Location" => "https://download.real-debrid.com/d/bb/bb.mp4" })
+
+      get resume_streaming_index_path(show_imdb_id: "tt0903747", type: "show")
+
+      expect(response).to redirect_to(streaming_path("play",
+        streaming_url: "https://download.real-debrid.com/d/bb/bb.mp4",
+        filename: "bb.mp4",
+        imdb_id: "tt0903747",
+        type: "show",
+        season: 1,
+        episode: 1,
+        title: "Breaking Bad",
+        poster_url: nil,
+        resume_at: 600,
+        duration: 0
+      ))
+    end
+
+    it "advances to the next episode when the last-watched is >= 95%" do
+      create(:episode_progress, user: user, show_imdb_id: "tt0903747",
+             season_number: 1, episode_number: 1,
+             progress_seconds: 3400, duration_seconds: 3480) # ~98%
+
+      stub_request(:get, %r{torrentio\.strem\.fun/([^/]+/)?stream/series/tt0903747:1:2\.json})
+        .to_return(
+          status: 200,
+          body: { "streams" => [ { "title" => "Breaking Bad 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/def/null/0/bb2.mp4", "behaviorHints" => { "filename" => "bb2.mp4" } } ] }.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+      stub_request(:get, "https://torrentio.strem.fun/resolve/realdebrid/test_key/def/null/0/bb2.mp4")
+        .to_return(status: 302, headers: { "Location" => "https://download.real-debrid.com/d/bb2/bb2.mp4" })
+
+      get resume_streaming_index_path(show_imdb_id: "tt0903747", type: "show")
+
+      expect(response).to redirect_to(streaming_path("play",
+        streaming_url: "https://download.real-debrid.com/d/bb2/bb2.mp4",
+        filename: "bb2.mp4",
+        imdb_id: "tt0903747",
+        type: "show",
+        season: 1,
+        episode: 2,
+        title: "Breaking Bad",
+        poster_url: nil,
+        resume_at: 0,
+        duration: 0
+      ))
+    end
+  end
+
   describe "GET /streaming/:id" do
     before { sign_in user }
 

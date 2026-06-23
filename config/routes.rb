@@ -34,6 +34,9 @@ Rails.application.routes.draw do
 
   # Streaming
   resources :streaming, only: [:create, :show] do
+    collection do
+      get :resume
+    end
     member do
       patch :progress
     end

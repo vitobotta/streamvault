@@ -58,13 +58,13 @@ RSpec.describe EpisodeProgress, type: :model do
   end
 
   describe "#finished?" do
-    it "returns true when progress >= 90%" do
-      progress = build(:episode_progress, progress_seconds: 2200, duration_seconds: 2400)
+    it "returns true when progress >= 95%" do
+      progress = build(:episode_progress, progress_seconds: 2280, duration_seconds: 2400)
       expect(progress.finished?).to be true
     end
 
-    it "returns false when progress < 90%" do
-      progress = build(:episode_progress, progress_seconds: 1000, duration_seconds: 2400)
+    it "returns false when progress < 95%" do
+      progress = build(:episode_progress, progress_seconds: 2256, duration_seconds: 2400)
       expect(progress.finished?).to be false
     end
   end

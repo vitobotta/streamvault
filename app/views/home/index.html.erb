@@ -33,7 +33,7 @@
         <div data-carousel-target="track" class="flex gap-4 overflow-x-auto scrollbar-hide pb-2">
           <% @continue_watching.each do |item| %>
             <div class="poster-card group shrink-0" style="width: 180px">
-              <%= link_to content_path(type: item[:content_type] == "episode" ? "show" : "movie", imdb_id: item[:imdb_id], season: item[:season], episode: item[:episode]) do %>
+              <%= link_to resume_streaming_index_path(type: item[:content_type] == "episode" ? "show" : "movie", show_imdb_id: item[:imdb_id], imdb_id: item[:imdb_id]) do %>
                 <% if item[:poster_url] %>
                   <img src="<%= item[:poster_url] %>" alt="<%= item[:title] %>" loading="lazy" class="w-full aspect-[2/3] object-cover">
                 <% else %>

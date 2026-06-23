@@ -75,32 +75,34 @@ class ProgressTrackingService
     ServiceResult.success(entry)
   end
 
-  # Auto-advance to next episode
-  def self.auto_advance(user, show_imdb_id, season, episode)
-    next_episode = episode + 1
+  # Determine the next episode of a show from its actual episode list.
+  # Derives from Cinemeta metadata (not episode_progresses rows, which only
+  # exist for already-watched episodes). Crosses season boundaries.
+  def self.next_episode(user, show_imdb_id, season, episode)
+    meta = TorrentioService.new(rd_api_key: user.realdebrid_api_key).metadata(show_imdb_id, "show")
+    return ServiceResult.failure("Could not load episode list") if meta.failure?
 
-    exists = user.episode_progresses.exists?(
-      show_imdb_id: show_imdb_id,
-      season_number: season,
-      episode_number: next_episode
-    )
+    episodes = meta.data[:episodes].reject { |e| e[:season].to_i == 0 }
+    return ServiceResult.failure("No episodes available") if episodes.blank?
+    episodes = episodes.sort_by { |e| [ e[:season].to_i, e[:episode].to_i ] }
 
-    if exists
-      ServiceResult.success({ season: season, episode: next_episode, exists: true })
-    else
-      next_season = season + 1
-      season_exists = user.episode_progresses.exists?(
-        show_imdb_id: show_imdb_id,
-        season_number: next_season,
-        episode_number: 1
-      )
+    current = episodes.find { |e| e[:season].to_i == season.to_i && e[:episode].to_i == episode.to_i }
+    idx = current ? episodes.index(current) : nil
 
-      if season_exists
-        ServiceResult.success({ season: next_season, episode: 1, exists: true })
-      else
-        ServiceResult.failure("No more episodes")
-      end
+    next_ep = idx ? episodes[idx + 1] : nil
+    if next_ep.nil?
+      next_season = season.to_i + 1
+      next_ep = episodes.find { |e| e[:season].to_i == next_season && e[:episode].to_i == 1 }
     end
+
+    if next_ep
+      ServiceResult.success({ season: next_ep[:season].to_i, episode: next_ep[:episode].to_i })
+    else
+      ServiceResult.failure("No more episodes")
+    end
+  rescue StandardError => e
+    Rails.logger.error("ProgressTrackingService#next_episode error: #{e.message}")
+    ServiceResult.failure("Could not determine next episode")
   end
 
   # Get continue watching list

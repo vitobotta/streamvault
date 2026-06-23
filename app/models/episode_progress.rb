@@ -29,6 +29,6 @@ class EpisodeProgress < ApplicationRecord
   end
 
   def finished?
-    progress_percentage >= 90
+    progress_percentage >= 95
   end
 end

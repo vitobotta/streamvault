@@ -88,6 +88,51 @@ class StreamingController < ApplicationController
     end
   end
 
+  # GET /streaming/resume — resolve which episode/movie to play and where to
+  # start, then redirect to the player page. Single entry point used by home
+  # "Continue Watching" cards and the player's auto-advance.
+  def resume
+    type = params[:type].presence || "show"
+
+    imdb_id = type == "show" ? params[:show_imdb_id] : params[:imdb_id]
+    if imdb_id.blank?
+      redirect_back fallback_location: root_path, alert: (type == "show" ? "Show not found" : "Content not found")
+      return
+    end
+
+    target = resume_target(imdb_id, type)
+    target_season = target[:season]
+    target_episode = target[:episode]
+    resume_at = target[:resume_at]
+
+    service = ContentStreamingService.new(current_user)
+    result = service.start_stream(
+      imdb_id,
+      type,
+      season: target_season,
+      episode: target_episode
+    )
+
+    if result.success?
+      show_title = fetch_show_title(imdb_id, type)
+      redirect_to streaming_path(
+        "play",
+        streaming_url: result.data[:streaming_url],
+        filename: result.data[:filename],
+        imdb_id: imdb_id,
+        type: type,
+        season: target_season,
+        episode: target_episode,
+        title: show_title,
+        poster_url: nil,
+        resume_at: resume_at,
+        duration: 0
+      )
+    else
+      redirect_back fallback_location: root_path, alert: result.error_message
+    end
+  end
+
   # PATCH /streaming/:id/progress — save watch progress
   def progress
     result = ProgressTrackingService.save_progress(
@@ -130,6 +175,40 @@ class StreamingController < ApplicationController
       .where(imdb_id: imdb_id)
       .order(watched_at: :desc)
       .first
+  end
+
+  # Resolve which episode/movie to play and where to start.
+  # Returns { season:, episode:, resume_at: } (season/episode are 0 for movies).
+  def resume_target(imdb_id, type)
+    if type == "movie"
+      last = current_user.watch_history_entries.where(imdb_id: imdb_id).order(watched_at: :desc).first
+      return { season: 0, episode: 0, resume_at: 0 } if last.nil?
+      return { season: 0, episode: 0, resume_at: 0 } if last.progress_percentage >= 95
+      return { season: 0, episode: 0, resume_at: last.progress_seconds }
+    end
+
+    last = current_user.episode_progresses.for_show(imdb_id).recently_watched.first
+    return { season: 1, episode: 1, resume_at: 0 } if last.nil?
+
+    if last.progress_percentage >= 95
+      next_ep = ProgressTrackingService.next_episode(current_user, imdb_id, last.season_number, last.episode_number)
+      if next_ep.success?
+        { season: next_ep.data[:season], episode: next_ep.data[:episode], resume_at: 0 }
+      else
+        # Series finale: replay the finished episode from the start
+        { season: last.season_number, episode: last.episode_number, resume_at: 0 }
+      end
+    else
+      { season: last.season_number, episode: last.episode_number, resume_at: last.progress_seconds }
+    end
+  end
+
+  def fetch_show_title(imdb_id, type)
+    meta_result = TorrentioService.new(rd_api_key: current_user.realdebrid_api_key).metadata(imdb_id, type)
+    return nil if meta_result.failure?
+    meta_result.data[:title]
+  rescue StandardError
+    nil
   end
 
   def find_duration_seconds(progress_entry, imdb_id, type, season, episode)

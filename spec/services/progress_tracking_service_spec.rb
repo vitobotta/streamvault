@@ -83,32 +83,36 @@ RSpec.describe ProgressTrackingService do
     end
   end
 
-  describe ".auto_advance" do
-    it "returns next episode when it exists" do
-      create(:episode_progress, user: user, show_imdb_id: "tt0903747", season_number: 1, episode_number: 1)
-      create(:episode_progress, user: user, show_imdb_id: "tt0903747", season_number: 1, episode_number: 2)
+  describe ".next_episode" do
+    before do
+      allow_any_instance_of(TorrentioService).to receive(:metadata) do |svc, imdb_id, _type|
+        ServiceResult.success({
+          episodes: [
+            { season: 1, episode: 1 },
+            { season: 1, episode: 2 },
+            { season: 2, episode: 1 }
+          ]
+        })
+      end
+    end
 
-      result = described_class.auto_advance(user, "tt0903747", 1, 1)
+    it "returns the next episode within a season" do
+      result = described_class.next_episode(user, "tt1", 1, 1)
       expect(result).to be_success
       expect(result.data[:season]).to eq(1)
       expect(result.data[:episode]).to eq(2)
-      expect(result.data[:exists]).to be true
     end
 
-    it "returns next season when current season is done" do
-      create(:episode_progress, user: user, show_imdb_id: "tt0903747", season_number: 1, episode_number: 7)
-      create(:episode_progress, user: user, show_imdb_id: "tt0903747", season_number: 2, episode_number: 1)
-
-      result = described_class.auto_advance(user, "tt0903747", 1, 7)
+    it "crosses the season boundary" do
+      result = described_class.next_episode(user, "tt1", 1, 2)
       expect(result).to be_success
       expect(result.data[:season]).to eq(2)
       expect(result.data[:episode]).to eq(1)
     end
 
-    it "returns exists: false when no next episode" do
-      result = described_class.auto_advance(user, "tt0903747", 1, 1)
-      expect(result).to be_success
-      expect(result.data[:exists]).to be false
+    it "returns failure at the series finale" do
+      result = described_class.next_episode(user, "tt1", 2, 1)
+      expect(result).not_to be_success
     end
   end
 

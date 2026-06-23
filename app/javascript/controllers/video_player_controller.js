@@ -26,7 +26,7 @@ export default class extends Controller {
       season: String, episode: String, resumeAt: String, startSeconds: Number,
       title: String, duration: Number, posterUrl: String,
       defaultLanguage: String, preferredLanguages: String,
-      tracksUrl: String, subtitlesUrl: String
+      tracksUrl: String, subtitlesUrl: String, resumeUrl: String
     }
   }
 
@@ -85,6 +85,8 @@ export default class extends Controller {
     this.videoTarget.addEventListener("waiting", this.videoWaitingHandler)
     this.videoTarget.addEventListener("playing", this.videoReadyHandler)
     this.videoTarget.addEventListener("canplay", this.videoReadyHandler)
+    this.videoEndedHandler = () => this.onVideoEnded()
+    this.videoTarget.addEventListener("ended", this.videoEndedHandler)
 
     // Resume: transcode streams already start at the resume position
     // via ffmpeg -ss, so no client-side seek needed.
@@ -126,6 +128,7 @@ export default class extends Controller {
     this.videoTarget.removeEventListener("waiting", this.videoWaitingHandler)
     this.videoTarget.removeEventListener("playing", this.videoReadyHandler)
     this.videoTarget.removeEventListener("canplay", this.videoReadyHandler)
+    this.videoTarget.removeEventListener("ended", this.videoEndedHandler)
     window.removeEventListener("beforeunload", this.beforeUnloadHandler)
     this.removeTextSubtitleTrack()
     this.pauseAndDetachVideo()
@@ -217,6 +220,20 @@ export default class extends Controller {
     this.stopProgressTracking()
     this.saveProgressSync()
     this.pauseAndDetachVideo()
+  }
+
+  // Auto-advance to the next episode when the current one finishes.
+  // Only applies to shows — movies just stop (progress already saved).
+  async onVideoEnded() {
+    if (this.typeValue !== "show") return
+
+    // Flush final progress so the finished episode crosses 95%.
+    await this.saveProgress()
+
+    if (this.resumeUrlValue) {
+      const url = `${this.resumeUrlValue}?type=show&show_imdb_id=${encodeURIComponent(this.imdbIdValue)}`
+      window.location.href = url
+    }
   }
 
   pauseAndDetachVideo() {
