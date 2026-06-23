@@ -12,7 +12,19 @@ class TranscodeTracksController < ApplicationController
       return
     end
 
-    render json: TranscodeService.probe_media_tracks(input_url, headers: transcode_headers)
+    tracks = TranscodeService.probe_media_tracks(input_url, headers: transcode_headers)
+    external_subtitles = ExternalSubtitleService.search(
+      imdb_id: params[:imdb_id],
+      type: params[:type],
+      season: params[:season],
+      episode: params[:episode],
+      title: params[:title],
+      filename: params[:filename],
+      preferred_languages: current_user.preferred_stream_languages,
+      default_language: current_user.default_stream_language
+    )
+
+    render json: tracks.merge(subtitles: tracks[:subtitles] + external_subtitles)
   end
 
   private

@@ -27,7 +27,8 @@ class TranscodeService
   MAX_VALID_DURATION_SECONDS = 24 * 60 * 60
   MAX_STREAM_INDEX = 200
   SUBTITLE_EXTRACTION_TIMEOUT_SECONDS = 45
-  SUBTITLE_PACKET_EXTRACTION_TIMEOUT_SECONDS = 30
+  SUBTITLE_PACKET_EXTRACTION_TIMEOUT_SECONDS = 12
+  FORCED_SUBTITLE_PACKET_EXTRACTION_TIMEOUT_SECONDS = 8
   SUBTITLE_EXTRACTION_WINDOW_SECONDS = 15
   MIN_SUBTITLE_EXTRACTION_WINDOW_SECONDS = 5
   MAX_SUBTITLE_EXTRACTION_WINDOW_SECONDS = 60
@@ -282,8 +283,8 @@ class TranscodeService
       input_url
     ]
 
-    result = capture_command(cmd, timeout_seconds: SUBTITLE_PACKET_EXTRACTION_TIMEOUT_SECONDS)
-    return subtitle_result(:failed, source: :ffprobe_packets, diagnostic: "ffprobe packet extraction timed out") if result.timed_out
+    result = capture_command(cmd, timeout_seconds: subtitle_packet_timeout_seconds(track))
+    return subtitle_result(:empty_window, source: :ffprobe_packets, diagnostic: "ffprobe packet extraction timed out") if result.timed_out
     return subtitle_result(:failed, source: :ffprobe_packets, diagnostic: "ffprobe packets exited unsuccessfully") unless result.status&.success?
 
     packet_result = subtitle_packets_to_webvtt(result.stdout, track[:codec], start_seconds, duration_seconds)
@@ -763,6 +764,14 @@ class TranscodeService
     seconds.clamp(MIN_SUBTITLE_EXTRACTION_WINDOW_SECONDS, MAX_SUBTITLE_EXTRACTION_WINDOW_SECONDS)
   end
   private_class_method :normalized_subtitle_duration_seconds
+
+  def self.subtitle_packet_timeout_seconds(track)
+    title = track[:title].to_s.downcase
+    return FORCED_SUBTITLE_PACKET_EXTRACTION_TIMEOUT_SECONDS if title.include?("forced")
+
+    SUBTITLE_PACKET_EXTRACTION_TIMEOUT_SECONDS
+  end
+  private_class_method :subtitle_packet_timeout_seconds
 
   def self.extract_probe_duration(output)
     data = JSON.parse(output)

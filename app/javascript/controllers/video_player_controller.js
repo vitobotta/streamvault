@@ -2,7 +2,10 @@ import { Controller } from "@hotwired/stimulus"
 
 const MIN_VALID_DURATION_SECONDS = 60
 const SUBTITLE_STARTUP_WINDOW_SECONDS = 5
+const SUBTITLE_STARTUP_LOOK_BEHIND_SECONDS = 2
 const SUBTITLE_WINDOW_SECONDS = 15
+const SUBTITLE_LOOK_BEHIND_SECONDS = 5
+const EXTERNAL_SUBTITLE_WINDOW_SECONDS = 60
 const SUBTITLE_PREFETCH_SECONDS = 10
 const INTERACTIVE_SELECTOR = "button, a, input, textarea, select, [contenteditable='true']"
 
@@ -225,6 +228,7 @@ export default class extends Controller {
     try {
       const url = new URL(this.tracksUrlValue, window.location.origin)
       url.searchParams.set("url", rawUrl)
+      this.addContentMetadataParams(url)
       const response = await fetch(url.pathname + url.search, { headers: { "Accept": "application/json" } })
       if (!response.ok) return
 
@@ -234,7 +238,8 @@ export default class extends Controller {
       this.selectedAudioStream ||= this.preferredAudioTrack()?.index?.toString() || null
       this.renderTrackControls()
       if (this.textSubtitleSelected()) this.loadSubtitleTrack(this.currentPlaybackPosition(), {
-        durationSeconds: SUBTITLE_STARTUP_WINDOW_SECONDS
+        durationSeconds: SUBTITLE_STARTUP_WINDOW_SECONDS,
+        lookBehindSeconds: SUBTITLE_STARTUP_LOOK_BEHIND_SECONDS
       })
     } catch (e) {
       console.warn("Track probe failed:", e)
@@ -366,7 +371,10 @@ export default class extends Controller {
     if (previousBurnedSubtitle || this.burnedSubtitleSelected()) {
       this.restartPlaybackAt(targetSeconds)
     } else if (this.textSubtitleSelected()) {
-      this.loadSubtitleTrack(targetSeconds, { durationSeconds: SUBTITLE_STARTUP_WINDOW_SECONDS })
+      this.loadSubtitleTrack(targetSeconds, {
+        durationSeconds: SUBTITLE_STARTUP_WINDOW_SECONDS,
+        lookBehindSeconds: SUBTITLE_STARTUP_LOOK_BEHIND_SECONDS
+      })
     }
   }
 
@@ -391,16 +399,41 @@ export default class extends Controller {
     return !track || track.text_supported !== true
   }
 
-  async loadSubtitleTrack(currentPosition = this.currentPlaybackPosition(), { durationSeconds = SUBTITLE_WINDOW_SECONDS } = {}) {
+  externalSubtitleSelected() {
+    return this.selectedSubtitleTrack()?.external === true
+  }
+
+  addContentMetadataParams(url) {
+    const params = {
+      imdb_id: this.imdbIdValue,
+      type: this.typeValue,
+      season: this.seasonValue,
+      episode: this.episodeValue,
+      title: this.titleValue,
+      filename: this.filenameValue
+    }
+
+    Object.entries(params).forEach(([key, value]) => {
+      if (value === undefined || value === null || value.toString() === "") return
+
+      url.searchParams.set(key, value.toString())
+    })
+  }
+
+  async loadSubtitleTrack(
+    currentPosition = this.currentPlaybackPosition(),
+    { durationSeconds = SUBTITLE_WINDOW_SECONDS, lookBehindSeconds = SUBTITLE_LOOK_BEHIND_SECONDS } = {}
+  ) {
     if (!this.hasSubtitlesUrlValue || !this.textSubtitleSelected()) return
 
     const rawUrl = this.extractRawUrl()
     if (!rawUrl) return
 
     const requestedSubtitleStream = this.selectedSubtitleStream
-    const requestedDurationSeconds = this.subtitleWindowDuration(durationSeconds)
-    const shouldPrimeContinuation = requestedDurationSeconds < SUBTITLE_WINDOW_SECONDS
-    const windowStart = Math.max(0, Math.floor(currentPosition) - 5)
+    const externalSubtitle = this.externalSubtitleSelected()
+    const requestedDurationSeconds = externalSubtitle ? EXTERNAL_SUBTITLE_WINDOW_SECONDS : this.subtitleWindowDuration(durationSeconds)
+    const shouldPrimeContinuation = !externalSubtitle && requestedDurationSeconds < SUBTITLE_WINDOW_SECONDS
+    const windowStart = Math.max(0, Math.floor(currentPosition) - this.subtitleLookBehind(lookBehindSeconds, requestedDurationSeconds))
     if (this.subtitleLoading && this.subtitleWindowStart === windowStart) return
 
     const loadToken = this.subtitleLoadToken + 1
@@ -478,6 +511,13 @@ export default class extends Controller {
     if (!Number.isFinite(seconds) || seconds <= 0) return SUBTITLE_WINDOW_SECONDS
 
     return Math.max(SUBTITLE_STARTUP_WINDOW_SECONDS, Math.min(60, Math.floor(seconds)))
+  }
+
+  subtitleLookBehind(value, durationSeconds) {
+    const seconds = Number(value)
+    const lookBehindSeconds = Number.isFinite(seconds) && seconds >= 0 ? Math.floor(seconds) : SUBTITLE_LOOK_BEHIND_SECONDS
+
+    return Math.min(lookBehindSeconds, Math.max(0, durationSeconds - 1))
   }
 
   scheduleSubtitleRetry(delayMs = 5000) {
@@ -613,10 +653,15 @@ export default class extends Controller {
 
     const missingWindow = this.subtitleWindowStart === null || this.subtitleWindowEnd === null
     const beforeWindow = !missingWindow && currentPos < this.subtitleWindowStart
-    const nearWindowEnd = !missingWindow && currentPos >= this.subtitleWindowEnd - SUBTITLE_PREFETCH_SECONDS
+    const windowLength = missingWindow ? SUBTITLE_WINDOW_SECONDS : this.subtitleWindowEnd - this.subtitleWindowStart
+    const prefetchSeconds = Math.min(SUBTITLE_PREFETCH_SECONDS, Math.max(1, windowLength / 2))
+    const nearWindowEnd = !missingWindow && currentPos >= this.subtitleWindowEnd - prefetchSeconds
 
     if (missingWindow || beforeWindow) {
-      this.loadSubtitleTrack(currentPos, { durationSeconds: SUBTITLE_STARTUP_WINDOW_SECONDS })
+      this.loadSubtitleTrack(currentPos, {
+        durationSeconds: SUBTITLE_STARTUP_WINDOW_SECONDS,
+        lookBehindSeconds: SUBTITLE_STARTUP_LOOK_BEHIND_SECONDS
+      })
     } else if (nearWindowEnd) {
       this.loadSubtitleTrack(this.subtitleWindowEnd, { durationSeconds: SUBTITLE_WINDOW_SECONDS })
     }
@@ -771,7 +816,10 @@ export default class extends Controller {
 
     this.clearSubtitleCues()
     if (this.textSubtitleSelected()) {
-      this.loadSubtitleTrack(targetSeconds, { durationSeconds: SUBTITLE_STARTUP_WINDOW_SECONDS })
+      this.loadSubtitleTrack(targetSeconds, {
+        durationSeconds: SUBTITLE_STARTUP_WINDOW_SECONDS,
+        lookBehindSeconds: SUBTITLE_STARTUP_LOOK_BEHIND_SECONDS
+      })
     }
   }
 

@@ -89,6 +89,7 @@ docker compose up -d --build
 | `TORRENTIO_API_BASE_URL` | Torrentio API base URL | `https://torrentio.strem.fun` |
 | `REALDEBRID_API_BASE_URL` | RealDebrid API base URL | `https://api.real-debrid.com/rest/1.0` |
 | `OMDB_API_KEY` | OMDB API key for ratings metadata | Required |
+| `SUBDL_API_KEY` | SubDL API key for external subtitle fallback ([create one](https://subdl.com/panel/api)) | Optional |
 
 > **Torrentio note**: The public `torrentio.strem.fun` instance is behind Cloudflare and may block your server's IP. If you get 403 errors, run a self-hosted proxy (see the `proxy/torrentio` directory) and set `TORRENTIO_API_BASE_URL` to your proxy URL.
 

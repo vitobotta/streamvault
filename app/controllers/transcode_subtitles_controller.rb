@@ -12,13 +12,7 @@ class TranscodeSubtitlesController < ApplicationController
       return
     end
 
-    result = TranscodeService.extract_subtitles(
-      input_url,
-      headers: transcode_headers,
-      subtitle_stream: params[:subtitle_stream],
-      start_seconds: normalized_start_seconds(params[:start_seconds]),
-      duration_seconds: normalized_duration_seconds(params[:duration_seconds])
-    )
+    result = subtitle_result(input_url)
 
     case result.status
     when :ok
@@ -54,6 +48,24 @@ class TranscodeSubtitlesController < ApplicationController
     seconds.clamp(
       TranscodeService::MIN_SUBTITLE_EXTRACTION_WINDOW_SECONDS,
       TranscodeService::MAX_SUBTITLE_EXTRACTION_WINDOW_SECONDS
+    )
+  end
+
+  def subtitle_result(input_url)
+    if ExternalSubtitleService.external_stream?(params[:subtitle_stream])
+      return ExternalSubtitleService.extract_subtitles(
+        params[:subtitle_stream],
+        start_seconds: normalized_start_seconds(params[:start_seconds]),
+        duration_seconds: normalized_duration_seconds(params[:duration_seconds])
+      )
+    end
+
+    TranscodeService.extract_subtitles(
+      input_url,
+      headers: transcode_headers,
+      subtitle_stream: params[:subtitle_stream],
+      start_seconds: normalized_start_seconds(params[:start_seconds]),
+      duration_seconds: normalized_duration_seconds(params[:duration_seconds])
     )
   end
 end

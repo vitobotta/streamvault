@@ -372,6 +372,34 @@ RSpec.describe TranscodeService do
       expect(result.vtt).to eq("")
     end
 
+    it "reports a packet timeout as an empty subtitle window without falling back to ffmpeg" do
+      track_output = {
+        "streams" => [
+          { "index" => 3, "codec_type" => "subtitle", "codec_name" => "subrip", "tags" => { "language" => "eng", "title" => "forced" }, "disposition" => { "default" => 0 } }
+        ]
+      }.to_json
+
+      allow(described_class).to receive(:capture_command) do |cmd, **kwargs|
+        if cmd.include?("-show_data")
+          expect(kwargs[:timeout_seconds]).to eq(described_class::FORCED_SUBTITLE_PACKET_EXTRACTION_TIMEOUT_SECONDS)
+          capture_result("", timed_out: true)
+        else
+          capture_result(track_output)
+        end
+      end
+      expect(described_class).not_to receive(:capture_subtitle_stdout_result)
+
+      result = described_class.extract_subtitles(
+        "https://example.test/video-subtitles.mkv",
+        subtitle_stream: "3",
+        start_seconds: 120
+      )
+
+      expect(result.status).to eq(:empty_window)
+      expect(result.source).to eq(:ffprobe_packets)
+      expect(result.diagnostic).to eq("ffprobe packet extraction timed out")
+    end
+
     it "falls back to ffmpeg when ffprobe packets cannot be decoded into cues" do
       track_output = {
         "streams" => [

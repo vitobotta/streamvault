@@ -32,6 +32,7 @@ RSpec.describe "Transcode", type: :request do
         subtitles: [ { index: 2, language: "FRENCH", language_label: "French", label: "French", text_supported: true } ]
       }
       allow(TranscodeService).to receive(:probe_media_tracks).and_return(tracks)
+      allow(ExternalSubtitleService).to receive(:search).and_return([])
 
       get transcode_tracks_path, params: { url: "https://download.real-debrid.com/d/file123/Inception.mkv" }
 
@@ -40,8 +41,47 @@ RSpec.describe "Transcode", type: :request do
       expect(response.parsed_body["subtitles"].first["language"]).to eq("FRENCH")
     end
 
+    it "adds external subtitle tracks using content metadata" do
+      tracks = { audio: [], subtitles: [] }
+      external_subtitles = [
+        {
+          index: "external:subdl:abc",
+          language: "ENG",
+          language_label: "English",
+          label: "English · SubDL · Release",
+          text_supported: true,
+          external: true,
+          source: "subdl"
+        }
+      ]
+      allow(TranscodeService).to receive(:probe_media_tracks).and_return(tracks)
+      allow(ExternalSubtitleService).to receive(:search).and_return(external_subtitles)
+
+      get transcode_tracks_path, params: {
+        url: "https://download.real-debrid.com/d/file123/Inception.mkv",
+        imdb_id: "tt1375666",
+        type: "movie",
+        title: "Inception",
+        filename: "Inception.2010.1080p.mkv"
+      }
+
+      expect(response).to have_http_status(:ok)
+      expect(response.parsed_body["subtitles"].first["external"]).to eq(true)
+      expect(ExternalSubtitleService).to have_received(:search).with(
+        imdb_id: "tt1375666",
+        type: "movie",
+        season: nil,
+        episode: nil,
+        title: "Inception",
+        filename: "Inception.2010.1080p.mkv",
+        preferred_languages: user.preferred_stream_languages,
+        default_language: user.default_stream_language
+      )
+    end
+
     it "rejects private media URLs" do
       expect(TranscodeService).not_to receive(:probe_media_tracks)
+      expect(ExternalSubtitleService).not_to receive(:search)
 
       get transcode_tracks_path, params: { url: "http://localhost/video.mkv" }
 
@@ -87,6 +127,33 @@ RSpec.describe "Transcode", type: :request do
         subtitle_stream: "2",
         start_seconds: 30.0,
         duration_seconds: 5
+      )
+    end
+
+    it "returns external subtitles as WebVTT" do
+      allow(ExternalSubtitleService).to receive(:extract_subtitles).and_return(
+        TranscodeService::SubtitleExtractionResult.new(
+          status: :ok,
+          vtt: "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nExternal\n",
+          cue_count: 1,
+          source: :subdl
+        )
+      )
+      expect(TranscodeService).not_to receive(:extract_subtitles)
+
+      get transcode_subtitles_path, params: {
+        url: "https://download.real-debrid.com/d/file123/Inception.mkv",
+        subtitle_stream: "external:subdl:abc",
+        start_seconds: "30",
+        duration_seconds: "60"
+      }
+
+      expect(response).to have_http_status(:ok)
+      expect(response.body).to include("External")
+      expect(ExternalSubtitleService).to have_received(:extract_subtitles).with(
+        "external:subdl:abc",
+        start_seconds: 30.0,
+        duration_seconds: 60
       )
     end
 
