@@ -33,12 +33,14 @@ class ContentController < ApplicationController
       @episode_progress = current_user.episode_progresses.for_show(@imdb_id).index_by { |ep| [ ep.season_number, ep.episode_number ] }
       @selected_season = params[:season]&.to_i || 1
       # Show progress = last watched episode
-      last_episode = current_user.watch_history_entries.where(show_imdb_id: @imdb_id).order(watched_at: :desc).first
-      @progress = last_episode&.progress_percentage
+      @progress = current_user.watch_history_entries
+        .find_by(show_imdb_id: @imdb_id, content_type: :episode)
+        &.progress_percentage
     else
       # Movie progress
-      history_entry = current_user.watch_history_entries.where(imdb_id: @imdb_id).order(watched_at: :desc).first
-      @progress = history_entry&.progress_percentage
+      @progress = current_user.watch_history_entries
+        .find_by(imdb_id: @imdb_id, content_type: :movie)
+        &.progress_percentage
     end
   end
 

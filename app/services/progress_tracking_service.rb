@@ -19,14 +19,20 @@ class ProgressTrackingService
     resolved_title = title.presence || fetch_title(user, imdb_id, type)
     resolved_poster = poster_url.presence || fetch_poster(user, imdb_id, type)
 
-    # Create watch history entry
-    entry = user.watch_history_entries.create!(
-      content_type: type == "show" ? :episode : :movie,
+    # Update or create watch history entry (one row per content)
+    content_type_val = type == "show" ? :episode : :movie
+    season_val = type == "show" ? season : 0
+    episode_val = type == "show" ? episode : 0
+
+    entry = user.watch_history_entries.find_or_initialize_by(
+      content_type: content_type_val,
       imdb_id: imdb_id,
+      season_number: season_val,
+      episode_number: episode_val
+    )
+    entry.update!(
       title: resolved_title,
       poster_url: resolved_poster,
-      season_number: season,
-      episode_number: episode,
       show_imdb_id: type == "show" ? imdb_id : nil,
       show_title: type == "show" ? resolved_title : nil,
       watched_at: Time.current,
@@ -92,7 +98,7 @@ class ProgressTrackingService
       if season_exists
         ServiceResult.success({ season: next_season, episode: 1, exists: true })
       else
-        ServiceResult.success({ season: nil, episode: nil, exists: false })
+        ServiceResult.failure("No more episodes")
       end
     end
   end
@@ -104,21 +110,19 @@ class ProgressTrackingService
       .order(watched_at: :desc)
       .limit(20)
 
-    grouped = recent.group_by { |e| e.show_imdb_id.presence || e.imdb_id }
-    items = grouped.map do |_key, entries|
-      latest = entries.first
+    items = recent.map do |e|
       {
-        imdb_id: latest.show_imdb_id.presence || latest.imdb_id,
-        title: latest.show_title.presence || latest.title,
-        poster_url: latest.poster_url,
-        content_type: latest.content_type,
-        season: latest.season_number,
-        episode: latest.episode_number,
-        progress_seconds: latest.progress_seconds,
-        duration_seconds: latest.duration_seconds,
-        progress_percentage: latest.progress_percentage,
-        last_watched: latest.watched_at,
-        history_id: latest.id
+        imdb_id: e.show_imdb_id.presence || e.imdb_id,
+        title: e.show_title.presence || e.title,
+        poster_url: e.poster_url,
+        content_type: e.content_type,
+        season: e.season_number,
+        episode: e.episode_number,
+        progress_seconds: e.progress_seconds,
+        duration_seconds: e.duration_seconds,
+        progress_percentage: e.progress_percentage,
+        last_watched: e.watched_at,
+        history_id: e.id
       }
     end
 
