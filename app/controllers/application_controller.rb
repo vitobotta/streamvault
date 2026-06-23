@@ -7,6 +7,12 @@ class ApplicationController < ActionController::Base
     authorized_scope(relation, type: :relation)
   end
   helper_method :policy_scope
+  helper_method :signups_enabled?
+
+  # Whether new user self-registration is enabled via ENV
+  def signups_enabled?
+    ENV["ENABLE_SIGNUPS"] == "true"
+  end
 
   # Rescue from authorization failures
   rescue_from ActionPolicy::Unauthorized do |exception|

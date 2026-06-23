@@ -2,7 +2,7 @@
   <p class="text-sm text-sv-text-muted"><%= link_to "Already have an account? Sign in", new_session_path(resource_name), class: "text-sv-accent hover:text-sv-accent-hover" %></p>
 <% end %>
 
-<%- if devise_mapping.registerable? && controller_name != 'registrations' %>
+<%- if devise_mapping.registerable? && signups_enabled? && controller_name != 'registrations' %>
   <p class="text-sm text-sv-text-muted"><%= link_to "Create an account", new_registration_path(resource_name), class: "text-sv-accent hover:text-sv-accent-hover" %></p>
 <% end %>
 
