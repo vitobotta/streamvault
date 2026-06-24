@@ -64,6 +64,13 @@ export default class extends Controller {
     this.dragMoveHandler = null
     this.suppressNextSeekClick = false
     this.suppressSeekClickTimer = null
+    this.mediaSource = null
+    this.sourceBuffer = null
+    this.fetchController = null
+    this.bufferQueue = []
+    this.bufferAppending = false
+    this.pendingSeekSeconds = null
+    this.mseSupported = window.MediaSource && MediaSource.isTypeSupported('video/mp4; codecs="avc1.42E01E,mp4a.40.2"')
 
     this.ensureVideoSource()
 
@@ -131,6 +138,9 @@ export default class extends Controller {
     this.videoTarget.removeEventListener("ended", this.videoEndedHandler)
     window.removeEventListener("beforeunload", this.beforeUnloadHandler)
     this.removeTextSubtitleTrack()
+    if (this.fetchController) { this.fetchController.abort(); this.fetchController = null }
+    this.bufferQueue = []
+    this.pendingSeekSeconds = null
     this.pauseAndDetachVideo()
   }
 
@@ -171,11 +181,103 @@ export default class extends Controller {
       return null
     }
   }
-
   ensureVideoSource() {
-    if (!this.streamingUrlValue || this.videoTarget.getAttribute("src")) return
+    if (!this.streamingUrlValue) return
+    if (this.mseSupported) {
+      this.setupMseSource(this.streamingUrlValue)
+    } else if (!this.videoTarget.getAttribute("src")) {
+      this.videoTarget.src = this.streamingUrlValue
+    }
+  }
+  setupMseSource(streamUrl) {
+    // Abort current fetch and clear queue
+    if (this.fetchController) { this.fetchController.abort(); this.fetchController = null }
+    this.bufferQueue = []
 
-    this.videoTarget.src = this.streamingUrlValue
+    // Tear down old MediaSource
+    if (this.mediaSource) {
+      if (this.mediaSource.readyState === "open") { try { this.mediaSource.endOfStream() } catch {} }
+      this.mediaSource = null
+      this.sourceBuffer = null
+    }
+    if (this.videoTarget.src.startsWith("blob:")) URL.revokeObjectURL(this.videoTarget.src)
+
+    const mimeType = 'video/mp4; codecs="avc1.42E01E,mp4a.40.2"'
+    if (!this.mseSupported) {
+      this.videoTarget.src = streamUrl
+      this.videoTarget.load()
+      const p = this.videoTarget.play(); if (p?.catch) p.catch(() => {})
+      return
+    }
+
+    this.mediaSource = new MediaSource()
+    this.videoTarget.src = URL.createObjectURL(this.mediaSource)
+    this.mediaSource.addEventListener("sourceopen", () => {
+      this.sourceBuffer = this.mediaSource.addSourceBuffer(mimeType)
+      this.sourceBuffer.mode = "segments"
+      this.sourceBuffer.addEventListener("updateend", () => this.onBufferUpdateEnd())
+      this.startStreamingFetch(streamUrl)
+    }, { once: true })
+  }
+
+  async startStreamingFetch(url) {
+    this.fetchController = new AbortController()
+    try {
+      const response = await fetch(url, { signal: this.fetchController.signal })
+      if (!response.ok) { console.warn("Stream fetch failed:", response.status); return }
+      const reader = response.body.getReader()
+      let firstChunk = true
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        if (firstChunk) {
+          firstChunk = false
+          const p = this.videoTarget.play(); if (p?.catch) p.catch(() => {})
+        }
+        this.queueBufferChunk(value)
+      }
+    } catch (e) {
+      if (e.name === "AbortError") return
+      console.warn("Stream fetch failed:", e)
+    }
+  }
+
+  queueBufferChunk(chunk) {
+    this.bufferQueue.push(chunk)
+    this.flushBufferQueue()
+  }
+
+  flushBufferQueue() {
+    if (this.bufferAppending || !this.sourceBuffer || this.sourceBuffer.updating) return
+    if (this.bufferQueue.length === 0) return
+    this.bufferAppending = true
+    const chunk = this.bufferQueue.shift()
+    try {
+      this.sourceBuffer.appendBuffer(chunk)
+    } catch (e) {
+      this.bufferAppending = false
+      if (e.name === "QuotaExceededError") this.evictOldBuffer()
+    }
+  }
+
+  onBufferUpdateEnd() {
+    this.bufferAppending = false
+    this.evictOldBuffer()
+    this.flushBufferQueue()
+  }
+
+  evictOldBuffer() {
+    if (!this.sourceBuffer || this.sourceBuffer.updating) return
+    const evictBefore = this.videoTarget.currentTime - 30
+    if (evictBefore <= 0) return
+    for (let i = 0; i < this.sourceBuffer.buffered.length; i++) {
+      const start = this.sourceBuffer.buffered.start(i)
+      const end = this.sourceBuffer.buffered.end(i)
+      if (start < evictBefore) {
+        try { this.sourceBuffer.remove(start, Math.min(end, evictBefore)) } catch {}
+        return
+      }
+    }
   }
 
   // ── Play / pause ──────────────────────────────────────────────────
@@ -238,14 +340,20 @@ export default class extends Controller {
 
   pauseAndDetachVideo() {
     if (!this.hasVideoTarget) return
-
     try {
+      if (this.fetchController) { this.fetchController.abort(); this.fetchController = null }
+      this.bufferQueue = []
+      if (this.mediaSource) {
+        if (this.mediaSource.readyState === "open") { try { this.mediaSource.endOfStream() } catch {} }
+        this.mediaSource = null
+        this.sourceBuffer = null
+      }
       this.videoTarget.pause()
+      if (this.videoTarget.src.startsWith("blob:")) URL.revokeObjectURL(this.videoTarget.src)
       this.videoTarget.src = ""
       this.videoTarget.removeAttribute("src")
       this.videoTarget.load()
-    } catch {
-    }
+    } catch {}
   }
 
   updatePlayIcon() {
@@ -851,6 +959,10 @@ export default class extends Controller {
     if (!this.textSubtitleSelected() || this.subtitleLoading) return
     if (this.subtitleRetryAfter && Date.now() < this.subtitleRetryAfter) return
 
+    // Skip if we already have a window covering the current position
+    if (this.subtitleWindowStart !== null && this.subtitleWindowEnd !== null &&
+        currentPos >= this.subtitleWindowStart - 2 && currentPos < this.subtitleWindowEnd) return
+
     const missingWindow = this.subtitleWindowStart === null || this.subtitleWindowEnd === null
     const beforeWindow = !missingWindow && currentPos < this.subtitleWindowStart
     const windowLength = missingWindow ? SUBTITLE_WINDOW_SECONDS : this.subtitleWindowEnd - this.subtitleWindowStart
@@ -997,12 +1109,13 @@ export default class extends Controller {
 
   performSeek(percent) {
     if (this.knownDuration <= 0) return
-
     const targetSeconds = Math.floor(percent * this.knownDuration)
-
-    // Restart ffmpeg at the new position
     if (targetSeconds === this.startSecondsValue) return
 
+    if (this.isSeeking) {
+      this.pendingSeekSeconds = targetSeconds
+      return
+    }
     this.restartPlaybackAt(targetSeconds)
     this.currentTimeTarget.textContent = this.formatTime(targetSeconds)
     this.updateSeekVisuals(targetSeconds / this.knownDuration)
@@ -1036,10 +1149,8 @@ export default class extends Controller {
     const nextSrc = url.pathname + url.search
     this.streamingUrlValue = nextSrc
     this.element.dataset.videoPlayerStreamingUrlValue = nextSrc
-    this.videoTarget.src = nextSrc
-    this.videoTarget.load()
-    const playPromise = this.videoTarget.play()
-    if (playPromise?.catch) playPromise.catch(() => {})
+
+    this.setupMseSource(nextSrc)
 
     this.clearSubtitleCues()
     if (this.textSubtitleSelected()) {
@@ -1115,9 +1226,14 @@ export default class extends Controller {
 
   hideSeekingOverlay() {
     if (this.subtitlePlaybackHoldToken !== null) return
-
     this.isSeeking = false
     this.seekingOverlayTarget.classList.add("hidden")
+
+    if (this.pendingSeekSeconds !== null) {
+      const target = this.pendingSeekSeconds
+      this.pendingSeekSeconds = null
+      this.restartPlaybackAt(target)
+    }
   }
 
   // ── Overlay UI (auto-hide) ────────────────────────────────────────

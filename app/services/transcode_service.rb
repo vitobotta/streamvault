@@ -70,6 +70,7 @@ class TranscodeService
   # Key: input_url, Value: { duration:, video_stream:, expires_at: }
   @probe_cache = {}
   PROBE_CACHE_TTL = 300 # 5 minutes
+  PROBE_CACHE_MAX_SIZE = 100
 
   class TranscodeError < StandardError; end
 
@@ -921,6 +922,11 @@ class TranscodeService
   private_class_method :cache_get
 
   def self.cache_store(url, **fields)
+    while @probe_cache.size >= PROBE_CACHE_MAX_SIZE
+      oldest_key = @probe_cache.min_by { |_, entry| entry[:expires_at] }&.first
+      break unless oldest_key
+      @probe_cache.delete(oldest_key)
+    end
     existing = @probe_cache[url] || { expires_at: Time.now + PROBE_CACHE_TTL }
     @probe_cache[url] = existing.merge(fields).merge(expires_at: Time.now + PROBE_CACHE_TTL)
   end

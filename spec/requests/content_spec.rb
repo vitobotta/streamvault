@@ -29,7 +29,7 @@ RSpec.describe "Content", type: :request do
         expect(response).to have_http_status(:ok)
         expect(response.body).to include("stream-resolve-loading")
         expect(response.body).to include("Finding a working stream")
-        expect(response.body).to include("StreamVaultPlaybackLoading")
+        expect(response.body).to include('data-controller="stream-loading"')
       end
     end
   end

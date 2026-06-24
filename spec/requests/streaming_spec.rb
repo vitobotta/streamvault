@@ -267,7 +267,7 @@ RSpec.describe "Streaming", type: :request do
       stub_request(:get, %r{torrentio\.strem\.fun/([^/]+/)?stream/series/tt0903747:1:1\.json})
         .to_return(
           status: 200,
-          body: { "streams" => [ { "title" => "Breaking Bad 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/abc/null/0/bb.mp4", "behaviorHints" => { "filename" => "bb.mp4" } } ] }.to_json,
+          body: { "streams" => [ { "title" => "Breaking Bad ENG 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/abc/null/0/bb.mp4", "behaviorHints" => { "filename" => "bb.mp4" } } ] }.to_json,
           headers: { "Content-Type" => "application/json" }
         )
       stub_request(:get, "https://torrentio.strem.fun/resolve/realdebrid/test_key/abc/null/0/bb.mp4")
@@ -297,7 +297,7 @@ RSpec.describe "Streaming", type: :request do
       stub_request(:get, %r{torrentio\.strem\.fun/([^/]+/)?stream/series/tt0903747:1:2\.json})
         .to_return(
           status: 200,
-          body: { "streams" => [ { "title" => "Breaking Bad 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/def/null/0/bb2.mp4", "behaviorHints" => { "filename" => "bb2.mp4" } } ] }.to_json,
+          body: { "streams" => [ { "title" => "Breaking Bad ENG 1080p", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/def/null/0/bb2.mp4", "behaviorHints" => { "filename" => "bb2.mp4" } } ] }.to_json,
           headers: { "Content-Type" => "application/json" }
         )
       stub_request(:get, "https://torrentio.strem.fun/resolve/realdebrid/test_key/def/null/0/bb2.mp4")

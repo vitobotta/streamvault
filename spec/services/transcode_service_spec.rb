@@ -102,6 +102,16 @@ RSpec.describe TranscodeService do
     end
   end
 
+  describe ".cache_store" do
+    it "evicts oldest entries when cache exceeds the size limit" do
+      described_class.instance_variable_set(:@probe_cache, {})
+      (described_class::PROBE_CACHE_MAX_SIZE + 5).times do |i|
+        described_class.send(:cache_store, "https://example.test/video#{i}.mkv", duration: 100)
+      end
+      expect(described_class.instance_variable_get(:@probe_cache).size).to eq(described_class::PROBE_CACHE_MAX_SIZE)
+    end
+  end
+
   describe "ffmpeg command selection" do
     it "copies browser-safe H.264 video" do
       output = {

@@ -19,18 +19,18 @@ class ProgressTrackingService
     resolved_title = title.presence || fetch_title(user, imdb_id, type)
     resolved_poster = poster_url.presence || fetch_poster(user, imdb_id, type)
 
-    # Update or create watch history entry (one row per content)
+    # Create a new watch history entry for each progress save (every 5s
+    # during a watch session). WatchHistoryController#destroy removes all
+    # entries for the same content (movie) or show (episodes) at once.
     content_type_val = type == "show" ? :episode : :movie
     season_val = type == "show" ? season : 0
     episode_val = type == "show" ? episode : 0
 
-    entry = user.watch_history_entries.find_or_initialize_by(
+    entry = user.watch_history_entries.create!(
       content_type: content_type_val,
       imdb_id: imdb_id,
       season_number: season_val,
-      episode_number: episode_val
-    )
-    entry.update!(
+      episode_number: episode_val,
       title: resolved_title,
       poster_url: resolved_poster,
       show_imdb_id: type == "show" ? imdb_id : nil,
@@ -105,14 +105,24 @@ class ProgressTrackingService
     ServiceResult.failure("Could not determine next episode")
   end
 
-  # Get continue watching list
+  # Get continue watching list — one item per content, deduplicated.
+  # Multiple progress entries exist per content (one per 5s save); keep only
+  # the latest for each movie or episode.
   def self.continue_watching(user)
     recent = user.watch_history_entries
       .where("progress_percentage < ?", 95)
       .order(watched_at: :desc)
-      .limit(20)
 
-    items = recent.map do |e|
+    seen = {}
+    items = recent.filter_map do |e|
+      key = if e.episode?
+              [ e.show_imdb_id, e.season_number, e.episode_number ]
+            else
+              [ e.imdb_id ]
+            end
+      next if seen.key?(key)
+      seen[key] = true
+
       {
         imdb_id: e.show_imdb_id.presence || e.imdb_id,
         title: e.show_title.presence || e.title,
@@ -128,7 +138,7 @@ class ProgressTrackingService
       }
     end
 
-    ServiceResult.success(items.sort_by { |i| -i[:last_watched].to_i })
+    ServiceResult.success(items.first(20))
   end
 
   private

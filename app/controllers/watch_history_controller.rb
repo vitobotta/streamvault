@@ -17,7 +17,17 @@ class WatchHistoryController < ApplicationController
 
   def destroy
     entry = current_user.watch_history_entries.find(params[:id])
-    entry.destroy!
+
+    if entry.movie?
+      current_user.watch_history_entries
+        .where(content_type: :movie, imdb_id: entry.imdb_id)
+        .destroy_all
+    else
+      current_user.watch_history_entries
+        .where(content_type: :episode, show_imdb_id: entry.show_imdb_id)
+        .destroy_all
+    end
+
     redirect_back fallback_location: watch_history_index_path, status: :see_other, notice: "Removed from history."
   end
 

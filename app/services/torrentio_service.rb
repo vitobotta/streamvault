@@ -132,7 +132,7 @@ class TorrentioService
   def filter_by_preferred_languages(streams, preferred_languages)
     return streams if preferred_languages.blank?
     langs = normalize_language_list(preferred_languages)
-    streams.select { |s| s[:languages].empty? || (s[:languages] & langs).any? }
+    streams.select { |s| (s[:languages] & langs).any? }
   end
 
   def catalog(type, catalog_id, genre: nil, limit: 20)
