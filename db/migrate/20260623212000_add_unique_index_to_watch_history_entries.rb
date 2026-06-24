@@ -8,8 +8,8 @@ class AddUniqueIndexToWatchHistoryEntries < ActiveRecord::Migration[8.1]
 
     # Deduplicate: keep only the latest entry per content key
     execute <<~SQL
-      DELETE FROM watch_history_entries WHERE rowid NOT IN (
-        SELECT MAX(rowid) FROM watch_history_entries
+      DELETE FROM watch_history_entries WHERE id NOT IN (
+        SELECT MAX(id) FROM watch_history_entries
         GROUP BY user_id, imdb_id, content_type, season_number, episode_number
       )
     SQL
