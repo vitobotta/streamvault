@@ -110,6 +110,12 @@ class TorrentioService
     else
       ServiceResult.failure("Metadata not found")
     end
+  rescue Faraday::TimeoutError
+    Rails.logger.error("[TorrentioService] metadata request timed out for #{imdb_id}")
+    ServiceResult.failure("Metadata request timed out")
+  rescue Faraday::ConnectionFailed => e
+    Rails.logger.error("[TorrentioService] metadata connection failed: #{e.message}")
+    ServiceResult.failure("Could not connect to metadata service")
   rescue StandardError => e
     Rails.logger.error("TorrentioService#metadata error: #{e.message}")
     ServiceResult.failure("Failed to fetch metadata")
@@ -321,9 +327,16 @@ class TorrentioService
     api_key = ENV.fetch("OMDB_API_KEY", "")
     return {} if api_key.blank? || api_key == "your_omdb_api_key_here"
 
-    response = Faraday.get("https://www.omdbapi.com/", { i: imdb_id, apikey: api_key, tomatoes: "true" })
-    data = JSON.parse(response.body)
-    return {} unless data["Response"] == "True"
+    connection = Faraday.new(url: "https://www.omdbapi.com") do |f|
+      f.response :json
+      f.adapter Faraday.default_adapter
+      f.options.timeout = 5
+      f.options.open_timeout = 3
+    end
+
+    response = connection.get("", { i: imdb_id, apikey: api_key, tomatoes: "true" })
+    data = response.body
+    return {} unless data.is_a?(Hash) && data["Response"] == "True"
 
     rt_rating = nil
     if data["Ratings"].is_a?(Array)
@@ -336,7 +349,7 @@ class TorrentioService
       rt_rating: rt_rating,
       metascore: data["Metascore"] != "N/A" ? data["Metascore"] : nil
     }
-  rescue StandardError
+  rescue Faraday::TimeoutError, Faraday::ConnectionFailed, StandardError
     {}
   end
 
