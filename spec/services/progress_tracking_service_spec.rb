@@ -13,6 +13,30 @@ RSpec.describe ProgressTrackingService do
       expect(user.watch_history_entries.first.progress_percentage).to eq(50)
     end
 
+    it "upserts instead of creating duplicates for the same movie" do
+      described_class.save_progress(user, "tt1375666", 1800, 7200, type: "movie", title: "Inception")
+      described_class.save_progress(user, "tt1375666", 3600, 7200, type: "movie", title: "Inception")
+
+      expect(user.watch_history_entries.count).to eq(1)
+      expect(user.watch_history_entries.first.progress_seconds).to eq(3600)
+      expect(user.watch_history_entries.first.progress_percentage).to eq(50)
+    end
+
+    it "upserts instead of creating duplicates for the same episode" do
+      described_class.save_progress(user, "tt0903747", 600, 2400, type: "show", season: 1, episode: 1, title: "Breaking Bad")
+      described_class.save_progress(user, "tt0903747", 1200, 2400, type: "show", season: 1, episode: 1, title: "Breaking Bad")
+
+      expect(user.watch_history_entries.count).to eq(1)
+      expect(user.watch_history_entries.first.progress_seconds).to eq(1200)
+    end
+
+    it "keeps separate entries for different episodes of the same show" do
+      described_class.save_progress(user, "tt0903747", 1200, 2400, type: "show", season: 1, episode: 1, title: "Breaking Bad")
+      described_class.save_progress(user, "tt0903747", 600, 2400, type: "show", season: 1, episode: 2, title: "Breaking Bad")
+
+      expect(user.watch_history_entries.count).to eq(2)
+    end
+
     it "creates episode progress for a show" do
       create(:library_entry, user: user, imdb_id: "tt0903747", title: "Breaking Bad", content_type: :show)
 

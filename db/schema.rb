@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_06_24_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_06_25_120000) do
   create_table "episode_progresses", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.integer "duration_seconds", default: 0, null: false
@@ -89,6 +89,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_24_120000) do
     t.integer "user_id", null: false
     t.datetime "watched_at", null: false
     t.index ["show_imdb_id"], name: "index_watch_history_entries_on_show_imdb_id"
+    t.index ["user_id", "imdb_id", "content_type", "season_number", "episode_number"], name: "idx_watch_history_entries_unique", unique: true
     t.index ["user_id", "imdb_id"], name: "index_watch_history_entries_on_user_id_and_imdb_id"
     t.index ["user_id"], name: "index_watch_history_entries_on_user_id"
     t.index ["watched_at"], name: "index_watch_history_entries_on_watched_at"

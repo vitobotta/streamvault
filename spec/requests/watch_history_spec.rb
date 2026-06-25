@@ -24,21 +24,17 @@ RSpec.describe "WatchHistory", type: :request do
   describe "DELETE /watch_history/:id" do
     before { sign_in user }
 
-    context "with multiple progress entries for the same movie" do
-      # ProgressTrackingService writes a new row every 5 seconds, so a single
-      # watch session produces many entries with the same imdb_id.
-      let!(:entries) do
-        3.times.map do |i|
-          create(:watch_history_entry, :movie, user: user, imdb_id: "tt1375666",
-                 title: "Inception", watched_at: i.minutes.ago)
-        end
+    context "with a movie progress entry" do
+      # With the upsert design, one row per content.
+      let!(:entry) do
+        create(:watch_history_entry, :movie, user: user, imdb_id: "tt1375666",
+               title: "Inception", watched_at: 1.minute.ago)
       end
 
-      it "removes ALL entries for that content, not just the latest" do
-        latest = entries.max_by(&:watched_at)
+      it "removes the entry for that content" do
         expect {
-          delete watch_history_path(latest), headers: { "HTTP_REFERER" => root_path }
-        }.to change(WatchHistoryEntry, :count).by(-3)
+          delete watch_history_path(entry), headers: { "HTTP_REFERER" => root_path }
+        }.to change(WatchHistoryEntry, :count).by(-1)
 
         expect(user.watch_history_entries.where(imdb_id: "tt1375666")).to be_empty
         expect(response).to redirect_to(root_path)

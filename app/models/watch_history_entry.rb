@@ -9,10 +9,9 @@ class WatchHistoryEntry < ApplicationRecord
 
   # Validations
   validates :imdb_id, presence: true
-  # Multiple progress entries per content are expected — ProgressTrackingService
-  # writes a new row every 5 seconds during a watch session. Deletion is handled
-  # by WatchHistoryController#destroy, which removes all entries for the same
-  # content (movie) or show (episodes) in a single request.
+  # One row per movie or per episode (upserted by ProgressTrackingService
+  # on every 5s progress save). WatchHistoryController#destroy removes
+  # all entries for the same content (movie) or show (episodes) at once.
   validates :title, presence: true
   validates :watched_at, presence: true
   validates :progress_seconds, numericality: { greater_than_or_equal_to: 0 }

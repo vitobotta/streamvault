@@ -19,27 +19,37 @@ class ProgressTrackingService
     resolved_title = title.presence || fetch_title(user, imdb_id, type)
     resolved_poster = poster_url.presence || fetch_poster(user, imdb_id, type)
 
-    # Create a new watch history entry for each progress save (every 5s
-    # during a watch session). WatchHistoryController#destroy removes all
-    # entries for the same content (movie) or show (episodes) at once.
+    # Upsert the watch history entry — one row per movie or per
+    # episode, updated in place on every 5s progress save.  The
+    # unique key is (user, content_type, imdb_id, show_imdb_id,
+    # season_number, episode_number): for movies show_imdb_id is
+    # nil and season/episode are 0; for episodes imdb_id holds the
+    # show id and show_imdb_id is the same.  This replaces the old
+    # create-on-every-save design that produced a row every 5s and
+    # required ad-hoc dedup in every consumer.
     content_type_val = type == "show" ? :episode : :movie
     season_val = type == "show" ? season : 0
     episode_val = type == "show" ? episode : 0
+    show_imdb_val = type == "show" ? imdb_id : nil
+    show_title_val = type == "show" ? resolved_title : nil
 
-    entry = user.watch_history_entries.create!(
+    entry = user.watch_history_entries.find_or_initialize_by(
       content_type: content_type_val,
       imdb_id: imdb_id,
+      show_imdb_id: show_imdb_val,
       season_number: season_val,
-      episode_number: episode_val,
+      episode_number: episode_val
+    )
+    entry.assign_attributes(
       title: resolved_title,
       poster_url: resolved_poster,
-      show_imdb_id: type == "show" ? imdb_id : nil,
-      show_title: type == "show" ? resolved_title : nil,
       watched_at: Time.current,
       progress_seconds: progress_seconds,
       duration_seconds: duration_seconds,
-      progress_percentage: progress_pct
+      progress_percentage: progress_pct,
+      show_title: show_title_val
     )
+    entry.save!
 
     # Update episode progress for shows
     if type == "show" && season && episode
@@ -106,8 +116,8 @@ class ProgressTrackingService
   end
 
   # Get continue watching list — one item per content, deduplicated.
-  # Multiple progress entries exist per content (one per 5s save); keep only
-  # the latest for each movie or episode.
+  # save_progress now upserts (one row per movie/episode), so dedup is
+  # normally a no-op — kept as a safety net for any pre-migration rows.
   def self.continue_watching(user)
     recent = user.watch_history_entries
       .where("progress_percentage < ?", 95)
