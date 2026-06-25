@@ -212,6 +212,9 @@ export default class extends Controller {
     this.streamRecoveryActive = false
     this.playbackStarted = false
     this.bufferAheadDeadline = null
+    // Clear any stall watchdog from the previous connection so a
+    // pending timer can't fire into the new MSE pipeline.
+    this.clearStallWatchdog()
 
     // Tear down old MediaSource
     if (this.mediaSource) {
@@ -241,10 +244,20 @@ export default class extends Controller {
 
   async startStreamingFetch(url) {
     this.fetchController = new AbortController()
+    // Arm the stall watchdog before awaiting the fetch.  If the source
+    // is dead (e.g. an expired RealDebrid link) the server returns a
+    // 502 after its first-data timeout, and the only thing that will
+    // trigger recovery is this watchdog — neither onBufferUpdateEnd nor
+    // a fresh "waiting" event will fire when no data ever arrives.
+    this.startStallWatchdog()
     try {
       const response = await fetch(url, { signal: this.fetchController.signal })
       if (!response.ok) {
         console.warn("Stream fetch failed:", response.status)
+        // A 502 means ffmpeg couldn't open the source (expired link,
+        // auth failure).  Trigger recovery instead of leaving the
+        // video frozen on "Buffering…".
+        this.handleStreamStall()
         return
       }
       const reader = response.body.getReader()
@@ -434,10 +447,19 @@ export default class extends Controller {
   // If the video reaches the end naturally, onVideoEnded handles it.
   handlePrematureStreamEnd() {
     // Only trigger recovery if we're near the end (no more content
-  // to play) AND the fetch ended — that's a genuine end-of-stream.
+    // to play) AND the fetch ended — that's a genuine end-of-stream.
     if (this.knownDuration > 0) {
       const currentPos = this.currentPlaybackPosition()
       if (currentPos >= this.knownDuration - 5) return
+    }
+
+    // If playback never started (or there's no buffered data), there
+    // is no buffer to play through — waiting would hang forever.
+    // Recover immediately instead.
+    if (!this.playbackStarted || !this.sourceBuffer || this.sourceBuffer.buffered.length === 0) {
+      console.warn("Stream fetch ended early with no buffer — recovering.")
+      this.handleStreamStall()
+      return
     }
 
     // Not near the end — the fetch ended but we may have buffered data.
@@ -449,15 +471,22 @@ export default class extends Controller {
   // Abort the current fetch, tear down the MSE pipeline, and restart
   // from the current playback position. This is the same machinery
   // a manual seek uses, but triggered automatically by the watchdog.
-  // The recovery counter is preserved across the restart so repeated
-  // stalls eventually give up instead of looping forever.
+  //
+  // The recovery *attempt counter* is preserved across the restart so
+  // repeated stalls eventually give up (STREAM_MAX_RECOVERY_ATTEMPTS)
+  // instead of looping forever.  The *active* flag is NOT preserved:
+  // restartPlaybackAt and setupMseSource already clear it, and
+  // restoring it to true afterwards would permanently block all
+  // further recovery if the reconnect fetch produces no data (the
+  // only on-success clearer is the firstChunk block, which never
+  // runs on a dead source).  Let firstChunk clear the counter when
+  // data actually arrives; until then, a failed reconnect must remain
+  // recoverable.
   reconnectFromCurrentPosition() {
     const targetSeconds = Math.floor(this.currentPlaybackPosition())
     const savedAttempts = this.streamRecoveryAttempts
-    const savedActive = this.streamRecoveryActive
     this.restartPlaybackAt(targetSeconds)
     this.streamRecoveryAttempts = savedAttempts
-    this.streamRecoveryActive = savedActive
   }
 
   queueBufferChunk(chunk) {
