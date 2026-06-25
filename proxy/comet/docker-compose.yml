@@ -1,0 +1,72 @@
+# Comet — self-hosted torrent/debrid search addon for Stremio.
+#
+# This runs Comet on the VPS alongside the existing Tinyproxy.  Comet
+# scrapes torrent indexers and resolves streams through RealDebrid,
+# serving the standard Stremio addon protocol (/stream/{type}/{id}.json).
+#
+# StreamVault connects to Comet via COMET_URL (set in .env).  When
+# STREAM_PROVIDER=comet (or auto), StreamVault uses Comet as the primary
+# stream source, falling back to Torrentio if Comet is unavailable.
+#
+# Setup:
+#   1. Copy .env.example → .env, fill in ADMIN_DASHBOARD_PASSWORD
+#   2. docker compose up -d
+#   3. Visit http://<vps-ip>:8000/configure to verify (optional)
+#   4. Set in StreamVault's .env:
+#        COMET_URL=http://<vps-tailscale-ip>:8000
+#        STREAM_PROVIDER=comet
+#   5. Restart StreamVault
+#
+# The health endpoint is at http://<vps-ip>:8000/health
+#
+# For remote access over HTTPS, put Comet behind the Caddy reverse proxy
+# (see Caddyfile in this directory).  Stremio requires HTTPS for non-
+# local addon URLs, but StreamVault can use HTTP over Tailscale.
+
+services:
+  comet:
+    container_name: comet
+    image: ghcr.io/g0ldyy/comet:latest
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_TYPE: ${DATABASE_TYPE:-postgresql}
+      DATABASE_URL: ${DATABASE_URL:-comet:comet@comet-postgres:5432/comet}
+      # Change this before exposing Comet publicly
+      ADMIN_DASHBOARD_PASSWORD: ${ADMIN_DASHBOARD_PASSWORD:-change-me-now}
+      # Optional: protect the configure page
+      CONFIGURE_PAGE_PASSWORD: ${CONFIGURE_PAGE_PASSWORD:-}
+    env_file:
+      - .env
+    volumes:
+      - comet_data:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      comet-postgres:
+        condition: service_healthy
+
+  comet-postgres:
+    container_name: comet-postgres
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: comet
+      POSTGRES_PASSWORD: comet
+      POSTGRES_DB: comet
+    volumes:
+      - comet_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U comet -d comet"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  comet_data:
+  comet_postgres_data:

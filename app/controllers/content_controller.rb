@@ -14,13 +14,7 @@ class ContentController < ApplicationController
 
     if @type != "show"
       content_title = @metadata&.dig(:title)
-      streams_result = torrentio.streams(
-        @imdb_id,
-        @type,
-        title: content_title,
-        preferred_languages: current_user.preferred_stream_languages,
-        default_language: current_user.default_stream_language
-      )
+      streams_result = fetch_provider_streams(@imdb_id, @type, title: content_title)
       @streams = streams_result.success? ? streams_result.data : []
       @streams_error = streams_result.failure? ? streams_result.error_message : nil
     end
@@ -78,18 +72,39 @@ class ContentController < ApplicationController
     end
 
     filter_title = "#{@show_title} #{@episode_title}"
-    streams_result = torrentio.streams(
+    streams_result = fetch_provider_streams(
       @imdb_id,
       "show",
       season: @season,
       episode: @episode,
-      title: filter_title,
-      preferred_languages: current_user.preferred_stream_languages,
-      default_language: current_user.default_stream_language
+      title: filter_title
     )
     @streams = streams_result.success? ? streams_result.data : []
     @streams_error = streams_result.failure? ? streams_result.error_message : nil
 
     render layout: false
+  end
+
+  private
+
+  # Fetch streams from all configured providers, merging results.
+  def fetch_provider_streams(imdb_id, type, season: nil, episode: nil, title: nil)
+    providers = StreamProvider.providers(rd_api_key: current_user&.realdebrid_api_key)
+    all_streams = []
+
+    providers.each do |provider|
+      result = provider.streams(
+        imdb_id,
+        type,
+        season: season,
+        episode: episode,
+        title: title,
+        preferred_languages: current_user.preferred_stream_languages,
+        default_language: current_user.default_stream_language
+      )
+      all_streams.concat(result.data) if result.success?
+    end
+
+    all_streams.empty? ? ServiceResult.failure("No streams available") : ServiceResult.success(all_streams)
   end
 end

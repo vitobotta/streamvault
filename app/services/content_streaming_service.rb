@@ -7,7 +7,7 @@ class ContentStreamingService
 
   def initialize(user)
     @user = user
-    @torrentio = TorrentioService.new(rd_api_key: user.realdebrid_api_key)
+    @providers = StreamProvider.providers(rd_api_key: user.realdebrid_api_key)
   end
 
   def start_stream(imdb_id, type, season: nil, episode: nil)
@@ -31,8 +31,8 @@ class ContentStreamingService
 
   # Resolve a specific stream chosen by the user (via resolve_url).
   # The chosen stream is tried first so a Direct Play MP4 still wins over
-  # a fallback MKV, but stale/blocked Torrentio links are common enough
-  # that we retry the current candidate list before failing the request.
+  # a fallback MKV, but stale/blocked links are common enough that we
+  # retry the current candidate list before failing the request.
   def resolve_single(resolve_url, filename:, imdb_id:, type:, season: nil, episode: nil)
     return ServiceResult.failure("RealDebrid API key not configured") unless @user.has_realdebrid_key?
 
@@ -50,19 +50,36 @@ class ContentStreamingService
 
   BLOCKED_PATTERNS = /downloading|infringing|failed|removed|blocked/i
 
+  # Fetch streams from all configured providers, merging results.
+  # The primary provider is tried first; if it fails (connection error,
+  # timeout) the next provider is tried. If it succeeds but returns no
+  # streams, fallback providers are also queried. All results are
+  # combined and sorted together so the best stream wins regardless
+  # of which provider found it.
   def fetch_streams(imdb_id, type, season: nil, episode: nil)
-    meta = @torrentio.metadata(imdb_id, type)
-    content_title = meta.success? ? meta.data[:title] : nil
+    all_streams = []
 
-    @torrentio.streams(
-      imdb_id,
-      type,
-      season: season,
-      episode: episode,
-      title: content_title,
-      preferred_languages: @user.preferred_stream_languages,
-      default_language: @user.default_stream_language
-    )
+    @providers.each do |provider|
+      result = provider.streams(
+        imdb_id,
+        type,
+        season: season,
+        episode: episode,
+        title: nil,
+        preferred_languages: @user.preferred_stream_languages,
+        default_language: @user.default_stream_language
+      )
+
+      if result.success?
+        all_streams.concat(result.data)
+      elsif result.failure? && all_streams.empty? && provider == @providers.first
+        # Primary provider failed entirely — log and continue to fallback
+        Rails.logger.warn("[ContentStreamingService] primary provider failed: #{result.error_message}")
+      end
+    end
+
+    return ServiceResult.failure("No stream providers available") if @providers.empty?
+    ServiceResult.success(all_streams)
   end
 
   def stream_candidates(streams)
@@ -176,10 +193,7 @@ class ContentStreamingService
   end
 
   def allowed_resolve_origins
-    @allowed_resolve_origins ||= [
-      "https://torrentio.strem.fun",
-      TorrentioService::TORRENTIO_URL
-    ].filter_map do |url|
+    @allowed_resolve_origins ||= StreamProvider.resolve_base_urls.filter_map do |url|
       URI.parse(url)
     rescue URI::InvalidURIError
       nil

@@ -1,0 +1,17 @@
+# Caddy reverse proxy for Comet.
+#
+# For HTTPS access (required by Stremio for non-local addon URLs).
+# StreamVault can use HTTP over Tailscale — only needed if you want
+# to install Comet directly in Stremio or access it from outside Tailscale.
+#
+# Replace:
+#   - comet.example.com  → your domain (DNS A record → VPS IP)
+#
+# Add to your existing Caddyfile or run Caddy separately with this config.
+
+comet.example.com {
+	reverse_proxy localhost:8000 {
+		# Flush immediately for streaming responses
+		flush_interval -1
+	}
+}
