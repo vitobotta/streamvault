@@ -87,24 +87,40 @@ class ContentController < ApplicationController
 
   private
 
-  # Fetch streams from all configured providers, merging results.
+  # Fetch streams from all configured providers in parallel, merging results.
   def fetch_provider_streams(imdb_id, type, season: nil, episode: nil, title: nil)
     providers = StreamProvider.providers(rd_api_key: current_user&.realdebrid_api_key)
     all_streams = []
 
-    providers.each do |provider|
-      result = provider.streams(
-        imdb_id,
-        type,
-        season: season,
-        episode: episode,
-        title: title,
-        preferred_languages: current_user.preferred_stream_languages,
-        default_language: current_user.default_stream_language
-      )
-      all_streams.concat(result.data) if result.success?
+    Rails.logger.info("[ContentController] fetch_provider_streams: #{providers.length} providers for #{imdb_id} (#{type})")
+
+    # Query all providers concurrently — don't let a slow Comet block Torrentio.
+    threads = providers.map do |provider|
+      Thread.new do
+        name = provider.class.name
+        start = Time.current
+        result = provider.streams(
+          imdb_id,
+          type,
+          season: season,
+          episode: episode,
+          title: title,
+          preferred_languages: current_user.preferred_stream_languages,
+          default_language: current_user.default_stream_language
+        )
+        elapsed = ((Time.current - start) * 1000).round
+        count = result.success? ? result.data.length : 0
+        Rails.logger.info("[ContentController] #{name} returned #{count} streams in #{elapsed}ms")
+        result
+      end
+    end
+    results = threads.map(&:value)
+
+    results.each do |result|
+      all_streams.concat(result.data) if result&.success?
     end
 
+    all_streams.sort_by { |s| [ s[:quality_rank] || 999, s[:seeders] || 0 ] }
     all_streams.empty? ? ServiceResult.failure("No streams available") : ServiceResult.success(all_streams)
   end
 end

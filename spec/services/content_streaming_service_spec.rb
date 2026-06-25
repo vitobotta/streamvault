@@ -4,6 +4,12 @@ RSpec.describe ContentStreamingService do
   let(:user) { create(:user, realdebrid_api_key: "test_key_123") }
   subject(:service) { described_class.new(user) }
 
+  around do |ex|
+    ENV["STREAM_PROVIDER"] = "torrentio"
+    ex.run
+    ENV.delete("STREAM_PROVIDER")
+  end
+
   let(:cinemeta_stub) {
     stub_request(:get, "https://v3-cinemeta.strem.io/meta/movie/tt1375666.json")
       .to_return(

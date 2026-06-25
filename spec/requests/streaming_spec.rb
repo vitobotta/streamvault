@@ -3,6 +3,12 @@ require 'rails_helper'
 RSpec.describe "Streaming", type: :request do
   let(:user) { create(:user, realdebrid_api_key: "test_key") }
 
+  around do |ex|
+    ENV["STREAM_PROVIDER"] = "torrentio"
+    ex.run
+    ENV.delete("STREAM_PROVIDER")
+  end
+
   describe "POST /streaming" do
     context "when not authenticated" do
       it "redirects to login" do

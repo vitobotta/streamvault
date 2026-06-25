@@ -50,35 +50,41 @@ class ContentStreamingService
 
   BLOCKED_PATTERNS = /downloading|infringing|failed|removed|blocked/i
 
-  # Fetch streams from all configured providers, merging results.
-  # The primary provider is tried first; if it fails (connection error,
-  # timeout) the next provider is tried. If it succeeds but returns no
-  # streams, fallback providers are also queried. All results are
-  # combined and sorted together so the best stream wins regardless
+  # Fetch streams from all configured providers in parallel, merging results.
+  # All providers are queried concurrently — a slow or failed Comet doesn't
+  # block Torrentio. Results are combined so the best stream wins regardless
   # of which provider found it.
   def fetch_streams(imdb_id, type, season: nil, episode: nil)
-    all_streams = []
+    return ServiceResult.failure("No stream providers available") if @providers.empty?
 
-    @providers.each do |provider|
-      result = provider.streams(
-        imdb_id,
-        type,
-        season: season,
-        episode: episode,
-        title: nil,
-        preferred_languages: @user.preferred_stream_languages,
-        default_language: @user.default_stream_language
-      )
+    Rails.logger.info("[ContentStreamingService] fetch_streams: #{@providers.length} providers for #{imdb_id} (#{type})")
 
-      if result.success?
-        all_streams.concat(result.data)
-      elsif result.failure? && all_streams.empty? && provider == @providers.first
-        # Primary provider failed entirely — log and continue to fallback
-        Rails.logger.warn("[ContentStreamingService] primary provider failed: #{result.error_message}")
+    threads = @providers.map do |provider|
+      Thread.new do
+        name = provider.class.name
+        start = Time.current
+        result = provider.streams(
+          imdb_id,
+          type,
+          season: season,
+          episode: episode,
+          title: nil,
+          preferred_languages: @user.preferred_stream_languages,
+          default_language: @user.default_stream_language
+        )
+        elapsed = ((Time.current - start) * 1000).round
+        count = result.success? ? result.data.length : 0
+        Rails.logger.info("[ContentStreamingService] #{name} returned #{count} streams in #{elapsed}ms")
+        result
       end
     end
+    results = threads.map(&:value)
 
-    return ServiceResult.failure("No stream providers available") if @providers.empty?
+    all_streams = []
+    results.each do |result|
+      all_streams.concat(result.data) if result&.success?
+    end
+
     ServiceResult.success(all_streams)
   end
 

@@ -3,6 +3,11 @@ require 'rails_helper'
 RSpec.describe "Content", type: :request do
   let(:user) { create(:user) }
 
+  around do |ex|
+    ENV["STREAM_PROVIDER"] = "torrentio"
+    ex.run
+    ENV.delete("STREAM_PROVIDER")
+  end
   describe "GET /content/:type/:imdb_id" do
     context "when not authenticated" do
       it "redirects to login" do
