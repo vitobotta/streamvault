@@ -48,6 +48,9 @@ services:
       # public instance works out of the box.
       SCRAPE_ZILEAN: ${SCRAPE_ZILEAN:-live}
       ZILEAN_URL: ${ZILEAN_URL:-https://zileanfortheweebs.midnightignite.me}
+      # Disable anime mapping — it can hang on startup if the VPS
+      # can't reach the anime mapping APIs, blocking all requests.
+      ANIME_MAPPING_ENABLED: ${ANIME_MAPPING_ENABLED:-False}
     env_file:
       - .env
     volumes:
