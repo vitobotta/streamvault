@@ -22,7 +22,11 @@ class TranscodeService
   FFPROBE_PATH = "ffprobe"
   FMP4_FLAGS = "+frag_keyframe+empty_moov+default_base_moof+negative_cts_offsets"
   SHUTDOWN_GRACE_SECONDS = 1
-  STDERR_MAX_BYTES = 8192
+  FIRST_DATA_TIMEOUT_SECONDS = 30
+  # No mid-stream idle timeout: ffmpeg produces data in bursts, and
+  # pausing between bursts is normal. The frontend watchdog detects
+  # true playback stalls (video element buffer ran dry) — the backend
+  # cannot distinguish a transcoding pause from a real stall.
   MIN_VALID_DURATION_SECONDS = 60
   MAX_VALID_DURATION_SECONDS = 24 * 60 * 60
   MAX_STREAM_INDEX = 200
@@ -39,9 +43,14 @@ class TranscodeService
     "scale=w='min(1920,iw)':h='min(1080,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p"
   VIDEO_TRANSCODE_ARGS = [
     "-c:v", "libx264",
-    "-preset", "veryfast",
+    "-preset", "ultrafast",
     "-crf", "23",
     "-profile:v", "high",
+    "-pix_fmt", "yuv420p"
+  ].freeze
+  VIDEOTOOLBOX_TRANSCODE_ARGS = [
+    "-c:v", "h264_videotoolbox",
+    "-b:v", "4000k",
     "-pix_fmt", "yuv420p"
   ].freeze
   SAFE_H264_PIXEL_FORMATS = %w[yuv420p].freeze
@@ -110,6 +119,15 @@ class TranscodeService
       preferred_languages: preferred_languages
     )
 
+    transcode_to_fmp4_internal(cmd, &block)
+  end
+
+  # Spawns a subprocess from the given command array, streams its stdout
+  # in 32 KB chunks to the block, and enforces first-data and idle
+  # timeouts.  Raises TranscodeError if the process stalls or exits
+  # without producing data.  Extracted from transcode_to_fmp4 so the
+  # timeout logic can be tested without a real ffmpeg binary.
+  def self.transcode_to_fmp4_internal(cmd, &block)
     rd, wr = IO.pipe
     err_rd, err_wr = IO.pipe
     pid = Process.spawn(*cmd, in: "/dev/null", out: wr, err: err_wr, pgroup: true)
@@ -126,14 +144,32 @@ class TranscodeService
 
     begin
       produced_output = false
+      total_bytes = 0
+      start_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
       # readpartial returns whatever data is available (up to 32 KB)
       # without waiting for the full amount, then blocks for more.
       # When ffmpeg closes stdout (exit), it raises EOFError.
+      #
+      # Only the FIRST_DATA_TIMEOUT_SECONDS guard is applied — before
+      # ffmpeg produces any data.  Once data starts flowing, we read
+      # with no timeout: ffmpeg transcodes in bursts, and pausing
+      # between bursts is normal.  A true playback stall is detected
+      # by the frontend watchdog (video element buffer ran dry), not
+      # by a backend idle timer that cannot distinguish a pause from
+      # a stall.
       begin
         loop do
+          unless produced_output
+            readable = IO.select([ rd ], nil, nil, FIRST_DATA_TIMEOUT_SECONDS)
+            if readable.nil?
+              raise TranscodeError, "FFmpeg timed out after #{FIRST_DATA_TIMEOUT_SECONDS}s waiting for first data. #{stderr_summary(stderr_buf)}"
+            end
+          end
+
           chunk = rd.readpartial(32_768)
           yield chunk
+          total_bytes += chunk.bytesize
           produced_output = true
         end
       rescue EOFError
@@ -143,6 +179,10 @@ class TranscodeService
           raise TranscodeError, "FFmpeg exited without producing output. #{stderr_summary(stderr_buf)}"
         end
       end
+
+      elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - start_time
+      rate_kbps = elapsed.positive? ? (total_bytes * 8 / 1000.0 / elapsed).round : 0
+      Rails.logger.info("[Transcode] ffmpeg finished: #{total_bytes} bytes in #{elapsed.round(1)}s (#{rate_kbps} kbps)") if defined?(Rails)
     ensure
       kill_process_group(pid)
       stderr_thread.kill
@@ -151,6 +191,7 @@ class TranscodeService
       err_rd.close
     end
   end
+  private_class_method :transcode_to_fmp4_internal
 
   # Probe the duration of a stream URL using ffprobe.
   # Returns the duration in seconds (float), or 0 if it can't be determined.
@@ -423,11 +464,16 @@ class TranscodeService
     )
     selected_burn_subtitle_track = selected_burn_subtitle_track(input_url, headers: headers, subtitle_stream: subtitle_stream)
     video_args = if selected_burn_subtitle_track
-      VIDEO_TRANSCODE_ARGS
+      transcode_args
     elsif browser_safe_video?(video_stream)
       [ "-c:v", "copy" ]
     else
-      [ "-vf", SAFE_VIDEO_FILTER, *VIDEO_TRANSCODE_ARGS ]
+      [ "-vf", SAFE_VIDEO_FILTER, *transcode_args ]
+    end
+
+    if defined?(Rails)
+      encoder = video_args.each_cons(2).find { |k, _| k == "-c:v" }&.last || "copy"
+      Rails.logger.info("[Transcode] codec=#{video_stream[:codec_name]} #{video_stream[:width]}x#{video_stream[:height]} encoder=#{encoder}")
     end
 
     cmd = [ FFMPEG_PATH, "-loglevel", "error" ]
@@ -466,6 +512,26 @@ class TranscodeService
     cmd
   end
   private_class_method :build_ffmpeg_command
+
+  # Return the best available H.264 encoder args.  On macOS with
+  # VideoToolbox, use hardware encoding (h264_videotoolbox) which is
+  # ~2x faster than software libx264, keeping the transcode ahead of
+  # real-time even for 4K HEVC sources.  Fall back to libx264
+  # ultrafast on platforms without VideoToolbox.
+  def self.transcode_args
+    return VIDEOTOOLBOX_TRANSCODE_ARGS if videotoolbox_available?
+
+    VIDEO_TRANSCODE_ARGS
+  end
+  private_class_method :transcode_args
+
+  def self.videotoolbox_available?
+    return @videotoolbox_available if defined?(@videotoolbox_available)
+
+    result = capture_command([ FFMPEG_PATH, "-hide_banner", "-encoders" ], timeout_seconds: 5)
+    @videotoolbox_available = result.status&.success? && result.stdout.include?("h264_videotoolbox")
+  end
+  private_class_method :videotoolbox_available?
 
   def self.selected_burn_subtitle_track(input_url, headers:, subtitle_stream:)
     explicit_stream_index = normalized_stream_index(subtitle_stream)

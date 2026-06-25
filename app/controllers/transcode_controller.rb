@@ -48,14 +48,20 @@ class TranscodeController < ApplicationController
       end
     rescue TranscodeService::TranscodeError => e
       Rails.logger.error("[Transcode] #{e.message}")
-      # No data has been written yet — headers are not committed.
-      # Replace with an error response the browser can actually show.
-      response.headers["Content-Type"] = "text/plain; charset=utf-8"
-      response.headers.delete("Content-Disposition")
-      response.headers.delete("Cache-Control")
-      response.headers.delete("Accept-Ranges")
-      response.status = :bad_gateway
-      response.stream.write("Unable to start stream: #{e.message}")
+      if response.stream.closed? || response.committed?
+        # Data was already sent (mid-stream stall).  Headers are committed;
+        # we cannot rewrite the response.  The frontend watchdog will detect
+        # the stall and reconnect from the current playback position.
+      else
+        # No data has been written yet — headers are not committed.
+        # Replace with an error response the browser can actually show.
+        response.headers["Content-Type"] = "text/plain; charset=utf-8"
+        response.headers.delete("Content-Disposition")
+        response.headers.delete("Cache-Control")
+        response.headers.delete("Accept-Ranges")
+        response.status = :bad_gateway
+        response.stream.write("Unable to start stream: #{e.message}")
+      end
     rescue ActionController::Live::ClientDisconnected, IOError
       # Client disconnected — ffmpeg cleanup handled by TranscodeService ensure
     ensure

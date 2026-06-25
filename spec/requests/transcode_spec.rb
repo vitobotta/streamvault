@@ -23,6 +23,31 @@ RSpec.describe "Transcode", type: :request do
 
       expect(response).to have_http_status(:bad_request)
     end
+
+    it "returns bad gateway when ffmpeg fails before producing data" do
+      allow(TranscodeService).to receive(:transcode_to_fmp4).and_raise(
+        TranscodeService::TranscodeError, "FFmpeg exited without producing output. stderr: error"
+      )
+
+      get transcode_stream_path, params: { url: "https://example.com/video.mkv" }
+
+      expect(response).to have_http_status(:bad_gateway)
+      expect(response.content_type).to include("text/plain")
+      expect(response.body).to include("Unable to start stream")
+    end
+
+    it "logs and closes gracefully when ffmpeg stalls after data is committed" do
+      allow(TranscodeService).to receive(:transcode_to_fmp4) do |*_args, &block|
+        block.call("fMP4 data chunk")
+        raise TranscodeService::TranscodeError, "FFmpeg stream stalled — no data for 20s."
+      end
+      allow(Rails.logger).to receive(:error)
+
+      get transcode_stream_path, params: { url: "https://example.com/video.mkv" }
+
+      expect(Rails.logger).to have_received(:error).with(/\[Transcode\].*stream stalled/)
+      expect(response).to have_http_status(:ok)
+    end
   end
 
   describe "GET /transcode/tracks" do

@@ -3,6 +3,9 @@ require 'rails_helper'
 RSpec.describe TranscodeService do
   before do
     described_class.instance_variable_set(:@probe_cache, {})
+    # Tests run against the software fallback (libx264) so the specs
+    # don't depend on VideoToolbox being available on the CI machine.
+    described_class.instance_variable_set(:@videotoolbox_available, false)
   end
 
   describe ".probe_duration" do
@@ -273,6 +276,27 @@ RSpec.describe TranscodeService do
       expect(command).not_to include("-filter_complex")
       expect(argument_pairs(command)).to include([ "-map", "0:v:0" ])
       expect(argument_pairs(command)).to include([ "-c:v", "copy" ])
+      expect(argument_pairs(command)).not_to include([ "-c:v", "libx264" ])
+    end
+
+    it "uses VideoToolbox hardware encoding when available" do
+      described_class.instance_variable_set(:@videotoolbox_available, true)
+      output = {
+        "streams" => [
+          { "codec_name" => "hevc", "width" => 3840, "height" => 2160, "pix_fmt" => "yuv420p10le" }
+        ]
+      }.to_json
+
+      allow(described_class).to receive(:capture_command).and_return(capture_result(output))
+
+      command = described_class.send(:build_ffmpeg_command,
+        "https://example.test/video-4k-hevc.mkv",
+        headers: {},
+        start_seconds: 0
+      )
+
+      expect(argument_pairs(command)).to include([ "-c:v", "h264_videotoolbox" ])
+      expect(argument_pairs(command)).to include([ "-b:v", "4000k" ])
       expect(argument_pairs(command)).not_to include([ "-c:v", "libx264" ])
     end
   end
@@ -645,6 +669,44 @@ RSpec.describe TranscodeService do
         rescue Errno::ESRCH, Errno::ECHILD
         end
       end
+    end
+  end
+
+  describe ".transcode_to_fmp4 stall detection" do
+    it "raises TranscodeError when ffmpeg produces no data before the first-data timeout" do
+      stub_const("TranscodeService::FIRST_DATA_TIMEOUT_SECONDS", 0.5)
+
+      # A process that produces nothing on stdout — simulates ffmpeg
+      # hanging on probe/analysis of a bad remote URL.
+      script = "sleep 10"
+      command = [ RbConfig.ruby, "-e", script ]
+
+      expect {
+        described_class.send(:transcode_to_fmp4_internal, command) { |_chunk| }
+      }.to raise_error(
+        TranscodeService::TranscodeError,
+        /timed out.*waiting for first data/
+      )
+    end
+
+    it "does not time out once ffmpeg has produced data (bursts are normal)" do
+      stub_const("TranscodeService::FIRST_DATA_TIMEOUT_SECONDS", 1)
+
+      # Writes a chunk, pauses, writes more — simulates ffmpeg's bursty
+      # transcoding output. The backend must not kill the process during
+      # the pause; only the frontend watchdog detects true playback stalls.
+      script = <<~RUBY
+        $stdout.sync = true
+        $stdout.write("a" * 1024)
+        sleep 2
+        $stdout.write("b" * 1024)
+      RUBY
+      command = [ RbConfig.ruby, "-e", script ]
+
+      chunks = []
+      described_class.send(:transcode_to_fmp4_internal, command) { |chunk| chunks << chunk }
+
+      expect(chunks.join).to eq("a" * 1024 + "b" * 1024)
     end
   end
 

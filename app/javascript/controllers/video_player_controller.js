@@ -7,6 +7,10 @@ const SUBTITLE_WINDOW_SECONDS = 15
 const SUBTITLE_LOOK_BEHIND_SECONDS = 5
 const EXTERNAL_SUBTITLE_WINDOW_SECONDS = 60
 const SUBTITLE_PREFETCH_SECONDS = 10
+const STREAM_STALL_TIMEOUT_MS = 60000
+const STREAM_MAX_RECOVERY_ATTEMPTS = 3
+const BUFFER_AHEAD_SECONDS = 10
+const BUFFER_AHEAD_MAX_WAIT_MS = 10000
 const INTERACTIVE_SELECTOR = "button, a, input, textarea, select, [contenteditable='true']"
 
 export default class extends Controller {
@@ -44,7 +48,7 @@ export default class extends Controller {
     this.timeUpdateHandler = this.onTimeUpdate.bind(this)
     this.progressHandler = this.onProgress.bind(this)
     this.volumeChangeHandler = this.updateVolumeIcon.bind(this)
-    this.videoWaitingHandler = () => this.showSeekingOverlay()
+    this.videoWaitingHandler = () => this.onVideoWaiting()
     this.videoReadyHandler = () => this.onVideoReady()
     this.audioTracks = []
     this.subtitleTracks = []
@@ -67,9 +71,12 @@ export default class extends Controller {
     this.mediaSource = null
     this.sourceBuffer = null
     this.fetchController = null
-    this.bufferQueue = []
-    this.bufferAppending = false
     this.pendingSeekSeconds = null
+    this.streamRecoveryAttempts = 0
+    this.streamRecoveryActive = false
+    this.stallWatchdogTimer = null
+    this.playbackStarted = false
+    this.bufferAheadDeadline = null
     this.mseSupported = window.MediaSource && MediaSource.isTypeSupported('video/mp4; codecs="avc1.42E01E,mp4a.40.2"')
 
     this.ensureVideoSource()
@@ -122,6 +129,9 @@ export default class extends Controller {
     this.clearUiHideTimer()
     this.clearStartupOverlayTimer()
     this.clearSuppressSeekClickTimer()
+    this.clearStallWatchdog()
+    this.playbackStarted = false
+    this.bufferAheadDeadline = null
     this.cancelSeekDrag()
     this.element.removeEventListener("mousemove", this.mouseMoveHandler)
     document.removeEventListener("keydown", this.keydownHandler)
@@ -193,6 +203,9 @@ export default class extends Controller {
     // Abort current fetch and clear queue
     if (this.fetchController) { this.fetchController.abort(); this.fetchController = null }
     this.bufferQueue = []
+    this.streamRecoveryActive = false
+    this.playbackStarted = false
+    this.bufferAheadDeadline = null
 
     // Tear down old MediaSource
     if (this.mediaSource) {
@@ -224,15 +237,34 @@ export default class extends Controller {
     this.fetchController = new AbortController()
     try {
       const response = await fetch(url, { signal: this.fetchController.signal })
-      if (!response.ok) { console.warn("Stream fetch failed:", response.status); return }
+      if (!response.ok) {
+        console.warn("Stream fetch failed:", response.status)
+        return
+      }
       const reader = response.body.getReader()
       let firstChunk = true
       while (true) {
+        // No per-chunk timeout: ffmpeg transcodes in bursts, and
+        // pausing between bursts is normal. The stall watchdog on the
+        // video element detects true playback stalls (buffer ran dry
+        // with no new data arriving).
         const { done, value } = await reader.read()
-        if (done) break
+        if (done) {
+          // The server closed the response early (e.g. Cloudflare 100s
+          // origin timeout, or ffmpeg exited mid-stream). If the video
+          // is not actually near the end, recover by reconnecting.
+          this.handlePrematureStreamEnd()
+          break
+        }
         if (firstChunk) {
           firstChunk = false
-          const p = this.videoTarget.play(); if (p?.catch) p.catch(() => {})
+          this.streamRecoveryAttempts = 0
+          this.streamRecoveryActive = false
+          // Set a deadline: if the buffer-ahead threshold isn't reached
+          // within BUFFER_AHEAD_MAX_WAIT_MS, start playback with whatever
+          // we have — better to play with a small buffer than stall on
+          // a slow source forever.
+          this.bufferAheadDeadline = Date.now() + BUFFER_AHEAD_MAX_WAIT_MS
         }
         this.queueBufferChunk(value)
       }
@@ -240,6 +272,100 @@ export default class extends Controller {
       if (e.name === "AbortError") return
       console.warn("Stream fetch failed:", e)
     }
+  }
+
+  // ── Stall watchdog ────────────────────────────────────────────────
+  //
+  // The watchdog monitors the VIDEO ELEMENT, not the network fetch.
+  // When the video fires "waiting" (buffer ran dry), we start a timer.
+  // If the video doesn't fire "playing"/"canplay" within
+  // STREAM_STALL_TIMEOUT_MS, the stream is truly stalled — the fetch
+  // is not delivering data fast enough to sustain playback. We then
+  // reconnect from the current position. If the video resumes before
+  // the timer fires, the timer is cancelled and no recovery occurs.
+  //
+  // This avoids false recoveries during normal transcoding pauses:
+  // ffmpeg may pause between bursts, but as long as the MSE buffer
+  // has enough data to keep the video playing, no "waiting" event
+  // fires and the watchdog never triggers.
+
+  onVideoWaiting() {
+    this.showBufferingOverlay()
+    this.startStallWatchdog()
+  }
+
+  startStallWatchdog() {
+    this.clearStallWatchdog()
+    this.stallWatchdogTimer = setTimeout(() => {
+      this.stallWatchdogTimer = null
+      this.handleStreamStall()
+    }, STREAM_STALL_TIMEOUT_MS)
+  }
+
+  clearStallWatchdog() {
+    if (this.stallWatchdogTimer) {
+      clearTimeout(this.stallWatchdogTimer)
+      this.stallWatchdogTimer = null
+    }
+  }
+
+  // Called when the stall watchdog fires — the video element has been
+  // waiting for data longer than STREAM_STALL_TIMEOUT_MS. Aborts the
+  // current fetch and reconnects from the current playback position,
+  // up to STREAM_MAX_RECOVERY_ATTEMPTS times.
+  handleStreamStall() {
+    if (this.streamRecoveryActive) return
+    if (this.streamRecoveryAttempts >= STREAM_MAX_RECOVERY_ATTEMPTS) {
+      console.warn("Stream recovery limit reached — giving up.")
+      this.showSeekingOverlay("Stream stalled — try seeking to resume.")
+      return
+    }
+
+    this.streamRecoveryAttempts += 1
+    this.streamRecoveryActive = true
+    console.warn(`Stream stalled — recovering (attempt ${this.streamRecoveryAttempts}/${STREAM_MAX_RECOVERY_ATTEMPTS})`)
+    this.reconnectFromCurrentPosition()
+  }
+
+  // Called when the server closes the stream response early (done=true)
+  // while the video still has content to play.
+  //
+  // For a slow remote source, ffmpeg transcodes a burst, the upstream
+  // stalls, and ffmpeg exits — this is normal.  The MSE buffer may
+  // still have plenty of data to keep the video playing for a while.
+  // Reconnecting immediately would discard that buffer and restart from
+  // the current position, creating a stuttering cycle.
+  //
+  // Instead, we do nothing here.  The video keeps playing from the
+  // buffer.  If the buffer eventually runs dry, the stall watchdog
+  // (60s of no data) handles reconnection from the current position.
+  // If the video reaches the end naturally, onVideoEnded handles it.
+  handlePrematureStreamEnd() {
+    // Only trigger recovery if we're near the end (no more content
+  // to play) AND the fetch ended — that's a genuine end-of-stream.
+    if (this.knownDuration > 0) {
+      const currentPos = this.currentPlaybackPosition()
+      if (currentPos >= this.knownDuration - 5) return
+    }
+
+    // Not near the end — the fetch ended but we may have buffered data.
+    // Don't reconnect; let the video play through the buffer.  The
+    // stall watchdog will reconnect if the buffer truly runs dry.
+    console.warn("Stream fetch ended early — continuing from buffer.")
+  }
+
+  // Abort the current fetch, tear down the MSE pipeline, and restart
+  // from the current playback position. This is the same machinery
+  // a manual seek uses, but triggered automatically by the watchdog.
+  // The recovery counter is preserved across the restart so repeated
+  // stalls eventually give up instead of looping forever.
+  reconnectFromCurrentPosition() {
+    const targetSeconds = Math.floor(this.currentPlaybackPosition())
+    const savedAttempts = this.streamRecoveryAttempts
+    const savedActive = this.streamRecoveryActive
+    this.restartPlaybackAt(targetSeconds)
+    this.streamRecoveryAttempts = savedAttempts
+    this.streamRecoveryActive = savedActive
   }
 
   queueBufferChunk(chunk) {
@@ -256,14 +382,73 @@ export default class extends Controller {
       this.sourceBuffer.appendBuffer(chunk)
     } catch (e) {
       this.bufferAppending = false
-      if (e.name === "QuotaExceededError") this.evictOldBuffer()
+      if (e.name === "QuotaExceededError") {
+        this.evictOldBuffer()
+      } else {
+        // Any other append error (InvalidStateError from a closed
+        // MediaSource, parse error on a malformed fragment) means the
+        // current MSE pipeline is broken. Clear the queue and trigger
+        // a full reconnect from the current playback position.
+        console.warn("appendBuffer failed, recovering:", e.name)
+        this.bufferQueue = []
+        this.handleStreamStall()
+      }
     }
   }
 
   onBufferUpdateEnd() {
     this.bufferAppending = false
     this.evictOldBuffer()
+    // Data arrived — the fetch is alive.  Restart the stall watchdog
+    // (rather than leaving the old one running) so the 60s countdown
+    // begins fresh from this chunk.  If no more data arrives within
+    // 60s, the watchdog fires and reconnects.  Meanwhile, the rebuffer
+    // gate in maybeStartPlayback keeps the video paused until the
+    // buffer has refilled to BUFFER_AHEAD_SECONDS.
+    this.startStallWatchdog()
+    this.maybeStartPlayback()
     this.flushBufferQueue()
+  }
+
+  // Start (or resume) playback once the buffer holds at least
+  // BUFFER_AHEAD_SECONDS ahead of the current position.  This runs on
+  // every appendBuffer completion — not just the initial start — so it
+  // also gates rebuffering: when the video stalls (buffer ran dry),
+  // it stays paused until enough data accumulates to sustain playback
+  // for a while, rather than resuming on a trickle and immediately
+  // re-stalling.
+  //
+  // For the initial start, a max-wait deadline (BUFFER_AHEAD_MAX_WAIT_MS
+  // from the first chunk) ensures we don't stall forever on a very slow
+  // source: if the threshold isn't reached in time, we start with
+  // whatever we have.
+  maybeStartPlayback() {
+    if (!this.sourceBuffer || this.sourceBuffer.buffered.length === 0) return
+
+    const bufferedEnd = this.sourceBuffer.buffered.end(this.sourceBuffer.buffered.length - 1)
+    const bufferedAhead = bufferedEnd - this.videoTarget.currentTime
+
+    // Initial start: wait for the buffer-ahead threshold (or deadline).
+    if (!this.playbackStarted) {
+      const deadlineReached = this.bufferAheadDeadline && Date.now() >= this.bufferAheadDeadline
+      if (bufferedAhead >= BUFFER_AHEAD_SECONDS || deadlineReached) {
+        this.playbackStarted = true
+        this.bufferAheadDeadline = null
+        const p = this.videoTarget.play()
+        if (p?.catch) p.catch(() => {})
+      }
+      return
+    }
+
+    // Rebuffering: the video is paused (waiting/stalled) after having
+    // started.  Don't resume until the buffer has refilled to the
+    // threshold — playing on a trickle just causes immediate re-stalls.
+    if (this.videoTarget.paused && !this.videoTarget.ended) {
+      if (bufferedAhead >= BUFFER_AHEAD_SECONDS) {
+        const p = this.videoTarget.play()
+        if (p?.catch) p.catch(() => {})
+      }
+    }
   }
 
   evictOldBuffer() {
@@ -367,6 +552,13 @@ export default class extends Controller {
   }
 
   onVideoReady() {
+    // Only hide overlays and cancel the watchdog when the video is
+    // actually playing.  If the video is paused (deliberate rebuffer
+    // gate in maybeStartPlayback), don't interfere — the "Buffering..."
+    // overlay should stay visible until we resume playback.
+    if (this.videoTarget.paused) return
+
+    this.clearStallWatchdog()
     this.hideSeekingOverlay()
     this.hideStartupOverlay()
   }
@@ -1124,6 +1316,10 @@ export default class extends Controller {
   restartPlaybackAt(targetSeconds) {
     this.isSeeking = true
     this.showSeekingOverlay()
+    // A deliberate restart (user seek or auto-advance) resets the
+    // stall-recovery counter — this is not an automatic recovery.
+    this.streamRecoveryAttempts = 0
+    this.streamRecoveryActive = false
     this.startSecondsValue = targetSeconds
     this.element.dataset.videoPlayerStartSecondsValue = targetSeconds.toString()
 
@@ -1222,6 +1418,16 @@ export default class extends Controller {
     if (this.isSeeking) {
       this.seekingOverlayTarget.classList.remove("hidden")
     }
+  }
+
+  // Show the overlay with a "Buffering..." message — used when the
+  // video element runs out of data mid-playback (not a user seek).
+  // Unlike showSeekingOverlay, this shows immediately regardless of
+  // the isSeeking flag, so the user sees a spinner instead of a
+  // frozen frame while the buffer refills.
+  showBufferingOverlay() {
+    if (this.hasSeekingOverlayMessageTarget) this.seekingOverlayMessageTarget.textContent = "Buffering..."
+    this.seekingOverlayTarget.classList.remove("hidden")
   }
 
   hideSeekingOverlay() {
