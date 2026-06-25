@@ -1605,6 +1605,8 @@ export default class extends Controller {
 
   hideOverlayUi() {
     if (!this.videoTarget.paused && !this.trackMenuOpen()) {
+      this.backButtonTarget.style.opacity = "0"
+      this.backButtonTarget.style.pointerEvents = "none"
       this.sourceInfoTarget.style.opacity = "0"
       this.sourceInfoTarget.style.pointerEvents = "none"
       this.controlsTarget.style.opacity = "0"
