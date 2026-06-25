@@ -7,6 +7,7 @@ class HomeController < ApplicationController
     torrentio = TorrentioService.new(rd_api_key: current_user.realdebrid_api_key)
 
     @continue_watching = fetch_continue_watching
+    @recommendations = RecommendationService.recommendations(current_user)
     @recently_added = policy_scope(LibraryEntry).where("created_at > ?", 2.weeks.ago).recently_added.limit(20)
     @wishlist_preview = policy_scope(WishlistEntry).recently_added.limit(20)
     @popular = torrentio.popular("movie", limit: 20)

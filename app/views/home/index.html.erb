@@ -63,6 +63,28 @@
     </section>
   <% end %>
 
+  <%# Recommended for You %>
+  <% if @recommendations.success? && @recommendations.data.any? %>
+    <section class="mb-10" data-controller="carousel">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-xl font-bold text-white">Recommended for You</h2>
+        <div class="flex gap-2">
+          <button data-action="click->carousel#prev" data-carousel-target="prevBtn" class="w-8 h-8 rounded-full bg-sv-surface hover:bg-sv-surface-hover flex items-center justify-center text-white transition-colors invisible">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+          </button>
+          <button data-action="click->carousel#next" data-carousel-target="nextBtn" class="w-8 h-8 rounded-full bg-sv-surface hover:bg-sv-surface-hover flex items-center justify-center text-white transition-colors">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          </button>
+        </div>
+      </div>
+      <div data-carousel-target="track" class="flex gap-4 overflow-x-auto scrollbar-hide pb-2">
+        <% @recommendations.data.each do |item| %>
+          <%= render "shared/poster_card", item: item, link_path: content_path(type: item[:type], imdb_id: item[:imdb_id]) %>
+        <% end %>
+      </div>
+    </section>
+  <% end %>
+
   <%# Recently Added %>
   <% if @recently_added.any? %>
     <section class="mb-10" data-controller="carousel">

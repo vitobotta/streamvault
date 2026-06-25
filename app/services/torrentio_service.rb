@@ -125,7 +125,6 @@ class TorrentioService
     Rails.logger.error("TorrentioService#metadata error: #{e.message}")
     ServiceResult.failure("Failed to fetch metadata")
   end
-
   def popular(type, limit: 20)
     catalog(type, "top", limit: limit)
   end
@@ -136,21 +135,6 @@ class TorrentioService
 
   def featured(type, limit: 20)
     catalog(type, "imdbRating", limit: limit)
-  end
-
-  private
-
-  def filter_by_preferred_languages(streams, preferred_languages, default_language: nil)
-    return streams if preferred_languages.blank?
-    langs = normalize_language_list(preferred_languages)
-
-    streams.select do |s|
-      # Streams with no detectable language are almost always English —
-      # it's the implicit/unmarked language of torrent titles.  Include
-      # them if English is in the preferred list; otherwise filter them
-      # out (user wants only non-English content).
-      (s[:languages] & langs).any? || (s[:languages].empty? && langs.include?("ENG"))
-    end
   end
 
   def catalog(type, catalog_id, genre: nil, limit: 20)
@@ -168,6 +152,21 @@ class TorrentioService
   rescue StandardError => e
     Rails.logger.error("TorrentioService#catalog error: #{e.message}")
     ServiceResult.success([])
+  end
+
+  private
+
+  def filter_by_preferred_languages(streams, preferred_languages, default_language: nil)
+    return streams if preferred_languages.blank?
+    langs = normalize_language_list(preferred_languages)
+
+    streams.select do |s|
+      # Streams with no detectable language are almost always English —
+      # it's the implicit/unmarked language of torrent titles.  Include
+      # them if English is in the preferred list; otherwise filter them
+      # out (user wants only non-English content).
+      (s[:languages] & langs).any? || (s[:languages].empty? && langs.include?("ENG"))
+    end
   end
 
   # Sort: user language preference first, then RD+, quality, and size.
