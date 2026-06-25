@@ -12,6 +12,12 @@ const PROGRESS_STALL_TIMEOUT_MS = 20000
 const PROGRESS_WATCHDOG_INTERVAL_MS = 3000
 const STREAM_MAX_RECOVERY_ATTEMPTS = 3
 const BUFFER_AHEAD_SECONDS = 10
+// After a stall, rebuild a deeper buffer before resuming so the next
+// upstream throughput dip is absorbed instead of immediately re-stalling.
+// Initial start keeps BUFFER_AHEAD_SECONDS (fast playback start, floored
+// by BUFFER_AHEAD_MAX_WAIT_MS); only the rebuffer gate uses this larger
+// value.  ~15 MB extra memory at 4 Mbps — negligible.
+const REBUFFER_AHEAD_SECONDS = 30
 const BUFFER_AHEAD_MAX_WAIT_MS = 10000
 const INTERACTIVE_SELECTOR = "button, a, input, textarea, select, [contenteditable='true']"
 
@@ -525,7 +531,8 @@ export default class extends Controller {
     // begins fresh from this chunk.  If no more data arrives within
     // 60s, the watchdog fires and reconnects.  Meanwhile, the rebuffer
     // gate in maybeStartPlayback keeps the video paused until the
-    // buffer has refilled to BUFFER_AHEAD_SECONDS.
+    // buffer has refilled (BUFFER_AHEAD_SECONDS on initial start,
+    // REBUFFER_AHEAD_SECONDS after a stall).
     this.startStallWatchdog()
     this.resetProgressBaseline()
     this.maybeStartPlayback()
@@ -564,9 +571,11 @@ export default class extends Controller {
 
     // Rebuffering: the video is paused (waiting/stalled) after having
     // started.  Don't resume until the buffer has refilled to the
-    // threshold — playing on a trickle just causes immediate re-stalls.
+    // (larger) REBUFFER_AHEAD_SECONDS threshold — a deeper buffer after a
+    // stall absorbs the next upstream throughput dip instead of
+    // immediately re-stalling, reducing repeated recovery cycles.
     if (this.videoTarget.paused && !this.videoTarget.ended) {
-      if (bufferedAhead >= BUFFER_AHEAD_SECONDS) {
+      if (bufferedAhead >= REBUFFER_AHEAD_SECONDS) {
         const p = this.videoTarget.play()
         if (p?.catch) p.catch(() => {})
       }
