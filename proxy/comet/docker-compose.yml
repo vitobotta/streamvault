@@ -32,7 +32,7 @@ services:
       - "8000:8000"
     environment:
       DATABASE_TYPE: ${DATABASE_TYPE:-postgresql}
-      DATABASE_URL: ${DATABASE_URL:-comet:comet@comet-postgres:5432/comet}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://comet:comet@comet-postgres:5432/comet}
       # Change this before exposing Comet publicly
       ADMIN_DASHBOARD_PASSWORD: ${ADMIN_DASHBOARD_PASSWORD:-change-me-now}
       # Optional: protect the configure page
@@ -46,7 +46,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 30s
     depends_on:
       comet-postgres:
         condition: service_healthy
@@ -62,10 +62,13 @@ services:
     volumes:
       - comet_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U comet -d comet"]
+      # -h forces TCP (not Unix socket) — Postgres 18 changed the
+      # default socket directory, so socket-based checks fail.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U comet -d comet"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 10s
 
 volumes:
   comet_data:
