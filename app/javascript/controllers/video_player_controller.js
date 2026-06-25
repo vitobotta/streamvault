@@ -91,6 +91,9 @@ export default class extends Controller {
     // rebuffer gate in maybeStartPlayback must never auto-resume a
     // user pause — only a rebuffer pause (buffer ran dry).
     this.userPaused = false
+    // True once navigateBack has saved progress and aborted the fetch;
+    // suppresses the duplicate save in the beforeunload handler.
+    this.navigatingAway = false
     this.bufferAheadDeadline = null
     this.mseSupported = window.MediaSource && MediaSource.isTypeSupported('video/mp4; codecs="avc1.42E01E,mp4a.40.2"')
 
@@ -130,8 +133,9 @@ export default class extends Controller {
     this.probeDuration()
     this.loadMediaTracks()
 
-    // Save progress on page unload
-    this.beforeUnloadHandler = () => this.saveProgressSync()
+    // Save progress on page unload — but skip if navigateBack already
+    // saved (navigatingAway flag prevents a duplicate save).
+    this.beforeUnloadHandler = () => { if (!this.navigatingAway) this.saveProgressSync() }
     window.addEventListener("beforeunload", this.beforeUnloadHandler)
 
     // Track progress every 5s
@@ -645,10 +649,21 @@ export default class extends Controller {
     window.location.href = href
   }
 
+  // Tear down playback before navigating away.  The ONLY thing that
+  // must happen synchronously is aborting the fetch so the backend
+  // kills ffmpeg (TranscodeService ensure block on ClientDisconnected).
+  // The video element teardown (pause, revokeObjectURL, src="", load)
+  // is skipped: it forces a synchronous media-engine pipeline flush
+  // that blocks the main thread for a noticeable moment — especially
+  // with a deep MSE buffer and hardware decoding — and the page is
+  // being destroyed anyway.  The beforeunload handler is skipped to
+  // avoid a duplicate save (navigateBack already saved).
   stopPlaybackForNavigation() {
     this.stopProgressTracking()
     this.saveProgressSync()
-    this.pauseAndDetachVideo()
+    this.navigatingAway = true
+    if (this.fetchController) { this.fetchController.abort(); this.fetchController = null }
+    this.bufferQueue = []
   }
 
   // Auto-advance to the next episode when the current one finishes.
@@ -1686,28 +1701,34 @@ export default class extends Controller {
   }
 
   saveProgressSync() {
-    const video = this.videoTarget
-    if (!video) return
-    const progressSeconds = Math.floor(video.currentTime + this.startSecondsValue)
-    const durationSeconds = this.saveableDurationSeconds()
-    if (progressSeconds <= 0) return
+    const payload = this.progressPayload()
+    if (!payload) return
 
     const csrfToken = document.querySelector("meta[name='csrf-token']")?.content
     fetch(`/streaming/play/progress`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-      body: JSON.stringify({
-        imdb_id: this.imdbIdValue,
-        progress_seconds: progressSeconds,
-        duration_seconds: durationSeconds,
-        type: this.typeValue,
-        season: this.seasonValue,
-        episode: this.episodeValue,
-        title: this.titleValue || null,
-        poster_url: this.posterUrlValue || null
-      }),
+      body: JSON.stringify(payload),
       keepalive: true
     })
+  }
+  progressPayload() {
+    const video = this.videoTarget
+    if (!video) return null
+    const progressSeconds = Math.floor(video.currentTime + this.startSecondsValue)
+    const durationSeconds = this.saveableDurationSeconds()
+    if (progressSeconds <= 0) return null
+
+    return {
+      imdb_id: this.imdbIdValue,
+      progress_seconds: progressSeconds,
+      duration_seconds: durationSeconds,
+      type: this.typeValue,
+      season: this.seasonValue,
+      episode: this.episodeValue,
+      title: this.titleValue || null,
+      poster_url: this.posterUrlValue || null
+    }
   }
 
   saveableDurationSeconds() {
