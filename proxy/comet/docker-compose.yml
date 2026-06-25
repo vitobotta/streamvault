@@ -59,6 +59,9 @@ services:
       POSTGRES_USER: comet
       POSTGRES_PASSWORD: comet
       POSTGRES_DB: comet
+      # Postgres 18 changed PGDATA to /var/lib/postgresql/18/docker.
+      # Mount the volume at PGDATA, not the old /var/lib/postgresql/data.
+      PGDATA: /var/lib/postgresql/data
     volumes:
       - comet_postgres_data:/var/lib/postgresql/data
     healthcheck:
