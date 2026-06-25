@@ -324,9 +324,31 @@ export default class extends Controller {
   // fires and the watchdog never triggers.
 
   onVideoWaiting() {
+    // Browsers fire "waiting" even when buffered data remains ahead —
+    // the media element preempts a potential underrun.  Only show the
+    // overlay if the buffer is actually empty at the current position.
+    // This prevents the "Seeking"/"Buffering" flash on transient waits.
+    if (this.hasBufferedAhead()) {
+      return
+    }
     this.stopProgressWatchdog()
     this.showBufferingOverlay()
     this.startStallWatchdog()
+  }
+
+  // Returns true if there's buffered data ahead of the current position.
+  hasBufferedAhead() {
+    const video = this.videoTarget
+    if (!video) return false
+    const ranges = video.buffered
+    if (!ranges || ranges.length === 0) return false
+    const pos = video.currentTime
+    for (let i = 0; i < ranges.length; i++) {
+      if (ranges.start(i) <= pos && ranges.end(i) > pos + 0.5) {
+        return true
+      }
+    }
+    return false
   }
 
   startStallWatchdog() {
