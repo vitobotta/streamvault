@@ -1,9 +1,10 @@
-FROM node:22-slim
+FROM alpine:3.20
 
-WORKDIR /app
+RUN apk add --no-cache tinyproxy
 
-COPY proxy.js .
+COPY tinyproxy.conf /etc/tinyproxy/tinyproxy.conf
+COPY filter /etc/tinyproxy/filter
 
-EXPOSE 3000
+EXPOSE 8888
 
-CMD ["node", "proxy.js"]
+CMD ["tinyproxy", "-d", "-c", "/etc/tinyproxy/tinyproxy.conf"]

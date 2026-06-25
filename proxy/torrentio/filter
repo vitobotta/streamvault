@@ -1,0 +1,16 @@
+# Domain whitelist for tinyproxy.
+# One domain per line. Uses fnmatch (shell glob) matching.
+#
+# Format:
+#   torrentio.strem.fun    — exact match
+#   *.strem.fun            — all subdomains of strem.fun
+#
+# These are the domains StreamVault proxies through TORRENTIO_PROXY.
+# The TORRENTIO_PROXY env var is applied to both the torrentio API
+# and the Cinemeta metadata API (see TorrentioService in the app).
+
+# Torrentio — stream listings and resolve redirects
+torrentio.strem.fun
+
+# Cinemeta — metadata (titles, posters, episodes, ratings)
+v3-cinemeta.strem.io
