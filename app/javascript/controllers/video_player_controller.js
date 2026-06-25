@@ -87,6 +87,10 @@ export default class extends Controller {
     this.progressWatchdogArmed = false
     this.streamRecoveryActive = false
     this.playbackStarted = false
+    // True when the user deliberately paused (button/spacebar). The
+    // rebuffer gate in maybeStartPlayback must never auto-resume a
+    // user pause — only a rebuffer pause (buffer ran dry).
+    this.userPaused = false
     this.bufferAheadDeadline = null
     this.mseSupported = window.MediaSource && MediaSource.isTypeSupported('video/mp4; codecs="avc1.42E01E,mp4a.40.2"')
 
@@ -217,6 +221,7 @@ export default class extends Controller {
     this.bufferQueue = []
     this.streamRecoveryActive = false
     this.playbackStarted = false
+    this.userPaused = false
     this.bufferAheadDeadline = null
     // Clear any stall watchdog from the previous connection so a
     // pending timer can't fire into the new MSE pipeline.
@@ -574,7 +579,11 @@ export default class extends Controller {
     // (larger) REBUFFER_AHEAD_SECONDS threshold — a deeper buffer after a
     // stall absorbs the next upstream throughput dip instead of
     // immediately re-stalling, reducing repeated recovery cycles.
-    if (this.videoTarget.paused && !this.videoTarget.ended) {
+    // Never auto-resume a deliberate user pause (button/spacebar): the
+    // userPaused flag distinguishes "buffer ran dry" from "user paused".
+    // Also skip while a subtitle load holds playback (isSeeking) — the
+    // hold's own finishSubtitlePlaybackHold resumes when ready.
+    if (this.videoTarget.paused && !this.videoTarget.ended && !this.userPaused && !this.isSeeking) {
       if (bufferedAhead >= REBUFFER_AHEAD_SECONDS) {
         const p = this.videoTarget.play()
         if (p?.catch) p.catch(() => {})
@@ -600,9 +609,11 @@ export default class extends Controller {
 
   togglePlay() {
     if (this.videoTarget.paused) {
+      this.userPaused = false
       const playPromise = this.videoTarget.play()
       if (playPromise?.catch) playPromise.catch(() => {})
     } else {
+      this.userPaused = true
       this.videoTarget.pause()
     }
   }
