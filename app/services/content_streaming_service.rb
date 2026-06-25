@@ -48,7 +48,7 @@ class ContentStreamingService
 
   private
 
-  BLOCKED_PATTERNS = /downloading|infringing|failed.infringement|removed|blocked/i
+  BLOCKED_PATTERNS = /downloading|infringing|failed|removed|blocked/i
 
   def fetch_streams(imdb_id, type, season: nil, episode: nil)
     meta = @torrentio.metadata(imdb_id, type)
