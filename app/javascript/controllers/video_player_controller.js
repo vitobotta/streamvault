@@ -8,6 +8,8 @@ const SUBTITLE_LOOK_BEHIND_SECONDS = 5
 const EXTERNAL_SUBTITLE_WINDOW_SECONDS = 60
 const SUBTITLE_PREFETCH_SECONDS = 10
 const STREAM_STALL_TIMEOUT_MS = 60000
+const PROGRESS_STALL_TIMEOUT_MS = 20000
+const PROGRESS_WATCHDOG_INTERVAL_MS = 3000
 const STREAM_MAX_RECOVERY_ATTEMPTS = 3
 const BUFFER_AHEAD_SECONDS = 10
 const BUFFER_AHEAD_MAX_WAIT_MS = 10000
@@ -72,9 +74,12 @@ export default class extends Controller {
     this.sourceBuffer = null
     this.fetchController = null
     this.pendingSeekSeconds = null
-    this.streamRecoveryAttempts = 0
-    this.streamRecoveryActive = false
     this.stallWatchdogTimer = null
+    this.progressWatchdogTimer = null
+    this.lastProgressTime = 0
+    this.lastProgressPosition = 0
+    this.progressWatchdogArmed = false
+    this.streamRecoveryActive = false
     this.playbackStarted = false
     this.bufferAheadDeadline = null
     this.mseSupported = window.MediaSource && MediaSource.isTypeSupported('video/mp4; codecs="avc1.42E01E,mp4a.40.2"')
@@ -130,6 +135,7 @@ export default class extends Controller {
     this.clearStartupOverlayTimer()
     this.clearSuppressSeekClickTimer()
     this.clearStallWatchdog()
+    this.stopProgressWatchdog()
     this.playbackStarted = false
     this.bufferAheadDeadline = null
     this.cancelSeekDrag()
@@ -290,6 +296,7 @@ export default class extends Controller {
   // fires and the watchdog never triggers.
 
   onVideoWaiting() {
+    this.stopProgressWatchdog()
     this.showBufferingOverlay()
     this.startStallWatchdog()
   }
@@ -306,6 +313,91 @@ export default class extends Controller {
     if (this.stallWatchdogTimer) {
       clearTimeout(this.stallWatchdogTimer)
       this.stallWatchdogTimer = null
+    }
+  }
+
+  // ── Progress watchdog (silent freeze detector) ──────────────────
+  //
+  // The `waiting`-based watchdog only fires when the browser emits a
+  // "waiting" event.  In practice, browsers do NOT reliably emit
+  // "waiting" when playback reaches the end of buffered data after a
+  // fetch has ended early (e.g. the server/Cloudflare closed the
+  // response, or ffmpeg exited mid-burst).  The video element sits on
+  // the last buffered frame with readyState >= 2, paused === false,
+  // and currentTime frozen — and never fires "waiting".  The result
+  // is a permanent frozen frame with no "Buffering" indicator, which
+  // only recovers when the user manually seeks.
+  //
+  // This watchdog polls currentTime on a timer.  While the video is
+  // supposedly playing (not paused, not ended, not seeking), if
+  // currentTime does not advance for PROGRESS_STALL_TIMEOUT_MS, the
+  // stream is treated as a silent stall and recovered via the same
+  // handleStreamStall() path.  It complements the `waiting` watchdog:
+  //   - `waiting` fires → progress watchdog is disarmed, `waiting`
+  //     watchdog owns the 60s countdown.
+  //   - silent freeze (no `waiting`) → progress watchdog detects it
+  //     in PROGRESS_STALL_TIMEOUT_MS instead.
+  // The baseline is reset whenever new data is appended, so normal
+  // transcoding bursts (which DO keep currentTime advancing) never
+  // trip it.
+
+  startProgressWatchdog() {
+    if (this.progressWatchdogArmed) return
+    this.lastProgressPosition = this.videoTarget.currentTime
+    this.lastProgressTime = Date.now()
+    this.progressWatchdogArmed = true
+    this.tickProgressWatchdog()
+  }
+
+  tickProgressWatchdog() {
+    this.progressWatchdogTimer = setTimeout(() => {
+      this.progressWatchdogTimer = null
+      this.checkProgressStall()
+      if (this.progressWatchdogArmed) this.tickProgressWatchdog()
+    }, PROGRESS_WATCHDOG_INTERVAL_MS)
+  }
+
+  checkProgressStall() {
+    if (!this.progressWatchdogArmed) return
+    if (this.streamRecoveryActive || this.isSeeking) return
+    // Only meaningful while the video is supposedly playing.
+    if (this.videoTarget.paused || this.videoTarget.ended) return
+    // Don't count a stall before playback has actually begun.
+    if (!this.playbackStarted) return
+
+    const now = Date.now()
+    const pos = this.videoTarget.currentTime
+    const elapsed = now - this.lastProgressTime
+
+    // currentTime advanced → playback is alive.  Reset the baseline.
+    if (pos > this.lastProgressPosition + 0.1) {
+      this.lastProgressPosition = pos
+      this.lastProgressTime = now
+      return
+    }
+
+    // currentTime has not advanced since the last tick.  If this has
+    // persisted longer than the threshold, treat it as a silent stall.
+    // The watchdog is only armed once the video is actually playing
+    // (onVideoReady), so the initial buffer-fill window is excluded.
+    if (elapsed >= PROGRESS_STALL_TIMEOUT_MS) {
+      console.warn(`Silent freeze detected — currentTime stuck at ${pos} for ${Math.round(elapsed / 1000)}s`)
+      this.progressWatchdogArmed = false
+      this.handleStreamStall()
+    }
+  }
+
+  resetProgressBaseline() {
+    if (!this.progressWatchdogArmed) return
+    this.lastProgressPosition = this.videoTarget.currentTime
+    this.lastProgressTime = Date.now()
+  }
+
+  stopProgressWatchdog() {
+    this.progressWatchdogArmed = false
+    if (this.progressWatchdogTimer) {
+      clearTimeout(this.progressWatchdogTimer)
+      this.progressWatchdogTimer = null
     }
   }
 
@@ -406,6 +498,7 @@ export default class extends Controller {
     // gate in maybeStartPlayback keeps the video paused until the
     // buffer has refilled to BUFFER_AHEAD_SECONDS.
     this.startStallWatchdog()
+    this.resetProgressBaseline()
     this.maybeStartPlayback()
     this.flushBufferQueue()
   }
@@ -545,9 +638,15 @@ export default class extends Controller {
     if (this.videoTarget.paused) {
       this.playIconTarget.classList.remove("hidden")
       this.pauseIconTarget.classList.add("hidden")
+      // Disarm the progress watchdog on a deliberate pause —
+      // currentTime won't advance, but this is not a stall.
+      this.stopProgressWatchdog()
     } else {
       this.playIconTarget.classList.add("hidden")
       this.pauseIconTarget.classList.remove("hidden")
+      // Re-arm on resume (also covers recovery from a rebuffer pause
+      // gated by maybeStartPlayback).
+      this.startProgressWatchdog()
     }
   }
 
@@ -559,6 +658,7 @@ export default class extends Controller {
     if (this.videoTarget.paused) return
 
     this.clearStallWatchdog()
+    this.startProgressWatchdog()
     this.hideSeekingOverlay()
     this.hideStartupOverlay()
   }
