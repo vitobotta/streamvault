@@ -94,9 +94,10 @@ RSpec.describe TorrentioService do
       expect(result).to be_success
       expect(result.data.map { |stream| stream[:resolve_url] }).to eq([
         "https://torrentio.strem.fun/resolve/french",
-        "https://torrentio.strem.fun/resolve/eng"
+        "https://torrentio.strem.fun/resolve/eng",
+        "https://torrentio.strem.fun/resolve/unknown"
       ])
-      expect(result.data.map { |stream| stream[:language_score] }).to eq([ 0, 1 ])
+      expect(result.data.map { |stream| stream[:language_score] }).to eq([ 0, 1, 1 ])
     end
 
     it "returns streams for a series episode" do

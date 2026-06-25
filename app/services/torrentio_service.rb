@@ -82,7 +82,7 @@ class TorrentioService
     if response.success? && response.body.is_a?(Hash) && response.body["streams"]
       parsed = parse_streams(response.body["streams"])
       language_priority = normalize_language_priority(default_language, preferred_languages)
-      parsed = filter_by_preferred_languages(parsed, language_priority) if language_priority.present?
+      parsed = filter_by_preferred_languages(parsed, language_priority, default_language: default_language) if language_priority.present?
       parsed = sort_streams(parsed, language_priority: language_priority)
       ServiceResult.success(parsed)
     elsif response.status == 404
@@ -140,10 +140,17 @@ class TorrentioService
 
   private
 
-  def filter_by_preferred_languages(streams, preferred_languages)
+  def filter_by_preferred_languages(streams, preferred_languages, default_language: nil)
     return streams if preferred_languages.blank?
     langs = normalize_language_list(preferred_languages)
-    streams.select { |s| (s[:languages] & langs).any? }
+
+    streams.select do |s|
+      # Streams with no detectable language are almost always English —
+      # it's the implicit/unmarked language of torrent titles.  Include
+      # them if English is in the preferred list; otherwise filter them
+      # out (user wants only non-English content).
+      (s[:languages] & langs).any? || (s[:languages].empty? && langs.include?("ENG"))
+    end
   end
 
   def catalog(type, catalog_id, genre: nil, limit: 20)
@@ -184,6 +191,8 @@ class TorrentioService
     return 0 if language_priority.blank?
 
     stream_languages = Array(stream[:languages]).map(&:to_s).map(&:upcase)
+    # Unmarked streams are assumed English — score them as ENG.
+    stream_languages = [ "ENG" ] if stream_languages.empty?
     matching_indexes = stream_languages.filter_map { |language| language_priority.index(language) }
     matching_indexes.min || language_priority.length
   end
