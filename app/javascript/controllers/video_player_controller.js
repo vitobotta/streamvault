@@ -338,6 +338,12 @@ export default class extends Controller {
     if (this.bufferingOverlayTimer) clearTimeout(this.bufferingOverlayTimer)
     this.bufferingOverlayTimer = setTimeout(() => {
       this.bufferingOverlayTimer = null
+      // Re-check: the video may have resumed during the 500ms delay.
+      // If currentTime advanced or buffer is now available, the stall
+      // resolved — don't show the overlay or start the watchdog.
+      if (!this.videoTarget.paused && this.hasBufferedAhead()) {
+        return
+      }
       this.stopProgressWatchdog()
       this.showBufferingOverlay()
       this.startStallWatchdog()
@@ -363,6 +369,16 @@ export default class extends Controller {
     this.clearStallWatchdog()
     this.stallWatchdogTimer = setTimeout(() => {
       this.stallWatchdogTimer = null
+      // Re-check before firing recovery: the video may have resumed
+      // from buffer without firing "playing" (the media element
+      // doesn't always emit it when transitioning between buffered
+      // ranges). If there's buffer ahead and the video isn't paused,
+      // the stall resolved — don't reconnect.
+      if (!this.videoTarget.paused && this.hasBufferedAhead()) {
+        this.hideSeekingOverlay()
+        this.startProgressWatchdog()
+        return
+      }
       this.handleStreamStall()
     }, STREAM_STALL_TIMEOUT_MS)
   }
