@@ -23,7 +23,16 @@
     <%= javascript_importmap_tags %>
   </head>
 
-  <body class="h-full">
+  <body class="h-full" data-controller="page-loader">
+    <%# Page loading overlay — shown during search and content navigation %>
+    <div data-page-loader-target="overlay"
+         class="hidden fixed inset-0 z-[60] bg-black/80 flex items-center justify-center"
+         role="status" aria-live="polite" aria-hidden="true">
+      <div class="flex flex-col items-center gap-3 px-5 py-4 rounded-lg bg-sv-surface border border-sv-border shadow-xl">
+        <div class="w-10 h-10 border-4 border-white/20 border-t-indigo-500 rounded-full animate-spin"></div>
+        <div class="text-sm font-medium text-white" data-page-loader-target="message">Loading...</div>
+      </div>
+    </div>
     <% if user_signed_in? %>
       <div class="flex h-full">
         <%# Sidebar %>

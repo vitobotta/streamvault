@@ -38,7 +38,7 @@
     <div class="grid gap-4" style="grid-template-columns: repeat(auto-fill, 160px)">
       <% @entries.each do |entry| %>
         <div class="poster-card group shrink-0" style="width: 160px">
-          <%= link_to content_path(type: entry.content_type, imdb_id: entry.imdb_id) do %>
+          <%= link_to content_path(type: entry.content_type, imdb_id: entry.imdb_id), data: { page_loader: "link" } do %>
             <% if entry.poster_url %>
               <img src="<%= entry.poster_url %>" alt="<%= entry.title %>" loading="lazy" class="w-full aspect-[2/3] object-cover">
             <% else %>

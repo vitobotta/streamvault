@@ -1,7 +1,7 @@
 <div class="px-6 py-8">
   <h1 class="text-3xl font-bold text-white mb-6">Search</h1>
 
-  <%= form_tag search_index_path, method: :get, class: "mb-8", data: { turbo_frame: "_top" } do %>
+  <%= form_tag search_index_path, method: :get, class: "mb-8", data: { turbo_frame: "_top", page_loader: "search" } do %>
     <div class="flex gap-3">
       <%= text_field_tag :q, @query, class: "input-field flex-1", placeholder: "Search for movies, TV shows...", autofocus: true %>
       <%= submit_tag "Search", class: "btn-primary cursor-pointer" %>
@@ -33,7 +33,7 @@
     <div class="grid gap-4" style="grid-template-columns: repeat(auto-fill, 160px)">
       <% @results.each do |result| %>
         <div class="poster-card group shrink-0" style="width: 160px">
-          <%= link_to content_path(type: result[:type], imdb_id: result[:imdb_id]) do %>
+        <%= link_to content_path(type: result[:type], imdb_id: result[:imdb_id]), data: { page_loader: "link" } do %>
             <% if result[:poster_url] %>
               <img src="<%= result[:poster_url] %>" alt="<%= result[:title] %>" loading="lazy" class="w-full aspect-[2/3] object-cover">
             <% else %>

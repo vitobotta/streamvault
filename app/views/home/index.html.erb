@@ -1,7 +1,7 @@
 <div class="px-6 py-8">
   <%# Search bar %>
   <div class="mb-8">
-    <%= form_tag search_index_path, method: :get, class: "max-w-2xl", data: { turbo_frame: "_top" } do %>
+    <%= form_tag search_index_path, method: :get, class: "max-w-2xl", data: { turbo_frame: "_top", page_loader: "search" } do %>
       <div class="flex gap-3">
         <%= text_field_tag :q, params[:q], class: "input-field flex-1", placeholder: "Search for movies, TV shows..." %>
         <%= submit_tag "Search", class: "btn-primary cursor-pointer" %>

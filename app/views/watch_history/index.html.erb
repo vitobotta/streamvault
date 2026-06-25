@@ -25,7 +25,7 @@
 
     <div class="space-y-2">
       <% @entries.each do |entry| %>
-        <%= link_to content_path(type: entry.episode? ? "show" : "movie", imdb_id: entry.show_imdb_id || entry.imdb_id, season: entry.season_number, episode: entry.episode_number), class: "flex items-center gap-4 p-3 bg-sv-surface rounded-lg hover:bg-sv-surface-hover transition-colors" do %>
+        <%= link_to content_path(type: entry.episode? ? "show" : "movie", imdb_id: entry.show_imdb_id || entry.imdb_id, season: entry.season_number, episode: entry.episode_number), class: "flex items-center gap-4 p-3 bg-sv-surface rounded-lg hover:bg-sv-surface-hover transition-colors", data: { page_loader: "link" } do %>
           <% if entry.poster_url %>
             <img src="<%= entry.poster_url %>" alt="<%= entry.title %>" class="w-12 h-18 object-cover rounded">
           <% end %>

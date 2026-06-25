@@ -1,5 +1,5 @@
 <div class="poster-card group shrink-0" style="width: 160px">
-  <%= link_to link_path do %>
+  <%= link_to link_path, data: { page_loader: "link" } do %>
     <% if item[:poster_url] %>
       <img src="<%= item[:poster_url] %>" alt="<%= item[:title] %>" loading="lazy" class="w-full aspect-[2/3] object-cover">
     <% else %>

@@ -156,7 +156,7 @@
       <% seasons = @metadata[:episodes].map { |e| e[:season] }.reject { |s| s == 0 }.uniq.sort %>
       <div class="flex flex-wrap gap-2 mt-8 mb-4">
         <% seasons.each do |s| %>
-          <%= link_to content_path(type: @type, imdb_id: @imdb_id, season: s), class: "px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap #{@selected_season == s ? 'bg-sv-accent text-white' : 'bg-sv-surface text-sv-text-muted hover:text-white'}" do %>
+          <%= link_to content_path(type: @type, imdb_id: @imdb_id, season: s), class: "px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap #{@selected_season == s ? 'bg-sv-accent text-white' : 'bg-sv-surface text-sv-text-muted hover:text-white'}", data: { page_loader: "link" } do %>
             Season <%= s %>
           <% end %>
         <% end %>
