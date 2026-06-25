@@ -129,10 +129,13 @@ class ProgressTrackingService
 
     seen = {}
     items = recent.filter_map do |e|
+      # Dedup by show (not per-episode) so watching S01E03 removes
+      # S01E02 from Continue Watching — only the most recent episode
+      # per show should appear. Movies dedup by imdb_id.
       key = if e.episode?
-              [ e.show_imdb_id, e.season_number, e.episode_number ]
+              e.show_imdb_id
             else
-              [ e.imdb_id ]
+              e.imdb_id
             end
       next if seen.key?(key)
       seen[key] = true
