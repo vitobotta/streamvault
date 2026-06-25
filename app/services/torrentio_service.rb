@@ -27,7 +27,12 @@ class TorrentioService
   def initialize(rd_api_key: nil)
     @rd_api_key = rd_api_key
 
-    proxy = ENV["TORRENTIO_PROXY"]
+    torrentio_proxy = ENV["TORRENTIO_PROXY"]
+    # Cinemeta has its own proxy config: it redirects to
+    # cinemeta-catalogs.strem.io, which the torrentio Tinyproxy whitelist
+    # doesn't include (403 "Filtered").  Default to a direct connection
+    # — cinemeta is not behind the same Cloudflare WAF as torrentio.
+    cinemeta_proxy = ENV["CINEMETA_PROXY"]
 
     @torrentio = Faraday.new(url: TORRENTIO_URL) do |f|
       f.request :json
@@ -36,7 +41,7 @@ class TorrentioService
       f.adapter Faraday.default_adapter
       f.options.timeout = 15
       f.options.open_timeout = 5
-      f.proxy = proxy if proxy.present?
+      f.proxy = torrentio_proxy if torrentio_proxy.present?
     end
 
     @cinemeta = Faraday.new(url: CINEMETA_URL) do |f|
@@ -45,7 +50,7 @@ class TorrentioService
       f.adapter Faraday.default_adapter
       f.options.timeout = 10
       f.options.open_timeout = 5
-      f.proxy = proxy if proxy.present?
+      f.proxy = cinemeta_proxy if cinemeta_proxy.present?
     end
   end
 

@@ -13,4 +13,6 @@
 torrentio.strem.fun
 
 # Cinemeta — metadata (titles, posters, episodes, ratings)
+# v3-cinemeta.strem.io redirects to cinemeta-catalogs.strem.io
 v3-cinemeta.strem.io
+cinemeta-catalogs.strem.io
