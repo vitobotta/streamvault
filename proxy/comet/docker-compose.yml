@@ -1,27 +1,28 @@
 # Comet — self-hosted torrent/debrid search addon for Stremio.
 #
-# This runs Comet on the VPS alongside the existing Tinyproxy.  Comet
-# scrapes torrent indexers and resolves streams through RealDebrid,
-# serving the standard Stremio addon protocol (/stream/{type}/{id}.json).
+# This runs Comet on the VPS alongside the existing Tinyproxy. Comet
+# scrapes torrent indexers independently (via Jackett + Zilean) and
+# resolves streams through RealDebrid, serving the standard Stremio
+# addon protocol (/stream/{type}/{id}.json).
 #
-# StreamVault connects to Comet via COMET_URL (set in .env).  When
-# STREAM_PROVIDER=comet (or auto), StreamVault uses Comet as the primary
-# stream source, falling back to Torrentio if Comet is unavailable.
+# Comet is INDEPENDENT of Torrentio — it uses its own scrapers, not
+# the Torrentio API. Torrentio remains as StreamVault's fallback only.
 #
 # Setup:
 #   1. Copy .env.example → .env, fill in ADMIN_DASHBOARD_PASSWORD
 #   2. docker compose up -d
-#   3. Visit http://<vps-ip>:8000/configure to verify (optional)
-#   4. Set in StreamVault's .env:
+#   3. Get the Jackett API key:
+#        docker compose exec jackett bash -c "cat /config/Jackett/ServerConfig.json | jq -r .APIKey"
+#      (or visit http://<vps-ip>:9117 in a browser)
+#   4. Add the Jackett API key to .env, then:
+#        docker compose up -d
+#   5. Set in StreamVault's .env:
 #        COMET_URL=http://<vps-tailscale-ip>:8000
-#        STREAM_PROVIDER=comet
-#   5. Restart StreamVault
+#        STREAM_PROVIDER=auto
+#   6. Restart StreamVault
 #
 # The health endpoint is at http://<vps-ip>:8000/health
-#
-# For remote access over HTTPS, put Comet behind the Caddy reverse proxy
-# (see Caddyfile in this directory).  Stremio requires HTTPS for non-
-# local addon URLs, but StreamVault can use HTTP over Tailscale.
+# Jackett admin is at http://<vps-ip>:9117
 
 services:
   comet:
@@ -33,10 +34,20 @@ services:
     environment:
       DATABASE_TYPE: ${DATABASE_TYPE:-postgresql}
       DATABASE_URL: ${DATABASE_URL:-postgresql://comet:comet@comet-postgres:5432/comet}
-      # Change this before exposing Comet publicly
       ADMIN_DASHBOARD_PASSWORD: ${ADMIN_DASHBOARD_PASSWORD:-change-me-now}
-      # Optional: protect the configure page
       CONFIGURE_PAGE_PASSWORD: ${CONFIGURE_PAGE_PASSWORD:-}
+      # ── Scrapers (independent of Torrentio) ──────────────────────
+      # Jackett: self-hosted indexer aggregator. Scrapes torrent
+      # sites directly (1337x, TPB, etc.) — no dependency on the
+      # Torrentio API. Requires API key (see setup step 3).
+      SCRAPE_JACKETT: ${SCRAPE_JACKETT:-live}
+      JACKETT_URL: http://jackett:9117
+      JACKETT_API_KEY: ${JACKETT_API_KEY:-}
+      # Zilean: DMM hashlist index. Uses pre-computed torrent hashes
+      # from DebridMediaManager — no scraping, no rate limits. The
+      # public instance works out of the box.
+      SCRAPE_ZILEAN: ${SCRAPE_ZILEAN:-live}
+      ZILEAN_URL: ${ZILEAN_URL:-https://zileanfortheweebs.midnightignite.me}
     env_file:
       - .env
     volumes:
@@ -65,14 +76,30 @@ services:
     volumes:
       - comet_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      # -h forces TCP (not Unix socket) — Postgres 18 changed the
-      # default socket directory, so socket-based checks fail.
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U comet -d comet"]
       interval: 5s
       timeout: 5s
       retries: 10
       start_period: 10s
 
+  # Jackett — self-hosted torrent indexer aggregator.
+  # Scrapes torrent sites directly. Comet uses it as a scraper,
+  # replacing the dependency on the Torrentio API. Configure indexers
+  # at http://<vps-ip>:9117 after first start.
+  jackett:
+    container_name: jackett
+    image: lscr.io/linuxserver/jackett:latest
+    restart: unless-stopped
+    ports:
+      - "9117:9117"
+    environment:
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      TZ: ${TZ:-Etc/UTC}
+    volumes:
+      - jackett_config:/config
+
 volumes:
   comet_data:
   comet_postgres_data:
+  jackett_config:
