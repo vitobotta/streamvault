@@ -10,14 +10,10 @@ RSpec.describe "Home", type: :request do
         stub_request(:get, %r{v3-cinemeta\.strem\.io/catalog/#{type}/#{cat}})
           .to_return(status: 200, body: { "metas" => [] }.to_json, headers: { 'Content-Type' => 'application/json' })
       end
-      # Stub metadata endpoint used by RecommendationService
-      stub_request(:get, %r{v3-cinemeta\.strem\.io/meta/#{type}/})
-        .to_return(
-          status: 200,
-          body: { "meta" => { "id" => "tt1375666", "name" => "Inception", "genres" => [ "Action", "Sci-Fi" ] } }.to_json,
-          headers: { 'Content-Type' => 'application/json' }
-        )
     end
+
+    # TMDB not configured in tests — RecommendationService returns []
+    ENV["TMDB_READ_ACCESS_TOKEN"] = ""
   end
 
   describe "Continue Watching removal" do

@@ -1,39 +1,48 @@
 # frozen_string_literal: true
 
+require "set"
+
 class RecommendationService
   MAX_RECOMMENDATIONS = 20
-  MAX_GENRES_TO_QUERY = 3
-  MAX_HISTORY_FOR_GENRES = 10
+  MAX_HISTORY_FOR_RECS = 8
+  MAX_RECS_PER_SOURCE = 5
 
-  # Returns recommended content based on the user's watch history.
+  # Returns recommended content based on the user's watch history
+  # using TMDB's recommendation API (collaborative filtering —
+  # "because you watched X" style, not genre matching).
   #
-  # Strategy: extract genres from recently watched content via Cinemeta
-  # metadata, then fetch Cinemeta's top-rated catalog filtered by those
-  # genres. Excludes content the user has already watched or added to
-  # their library/wishlist. Returns a mix of movies and shows.
+  # For each recently watched title:
+  #   1. Resolve its TMDB ID from the IMDb ID
+  #   2. Fetch TMDB's /recommendations endpoint (viewers of this
+  #      also watched...)
+  #   3. Map results back to IMDb IDs
+  #
+  # Excludes content already watched, in library, or on wishlist.
+  # Returns a mix of movies and shows.
   def self.recommendations(user)
+    return ServiceResult.success([]) if ENV["TMDB_READ_ACCESS_TOKEN"].blank?
+
     watched_ids = watched_imdb_ids(user)
     return ServiceResult.success([]) if watched_ids.empty?
 
-    genres = top_genres(watched_ids)
-    return ServiceResult.success([]) if genres.empty?
-
+    tmdb = TmdbService.new
     exclude_ids = exclude_set(user)
-
-    torrentio = TorrentioService.new
     results = []
-    genres.first(MAX_GENRES_TO_QUERY).each do |genre|
-      %w[movie show].each do |type|
-        break if results.length >= MAX_RECOMMENDATIONS
-        catalog_result = torrentio.catalog(type, "top", genre: genre, limit: 30)
-        next if catalog_result.failure?
+    seen = Set.new
 
-        catalog_result.data.each do |item|
-          break if results.length >= MAX_RECOMMENDATIONS
-          next if exclude_ids.include?(item[:imdb_id])
-          next if results.any? { |r| r[:imdb_id] == item[:imdb_id] }
-          results << item
-        end
+    watched_ids.each do |imdb_id|
+      break if results.length >= MAX_RECOMMENDATIONS
+      tmdb_recs = tmdb.recommendations_for_imdb_id(imdb_id)
+      next if tmdb_recs.failure?
+
+      tmdb_recs.data.first(MAX_RECS_PER_SOURCE).each do |item|
+        break if results.length >= MAX_RECOMMENDATIONS
+        tmdb_id = item[:tmdb_id]
+        next if seen.include?(tmdb_id)
+        next if exclude_ids.include?(item[:imdb_id])
+        next if item[:imdb_id].blank?
+        seen.add(tmdb_id)
+        results << item
       end
     end
 
@@ -43,41 +52,16 @@ class RecommendationService
     ServiceResult.success([])
   end
 
-  private
+  private_class_method
 
-  # Unique IMDb IDs from the user's recent watch history (show_imdb_id
-  # for episodes, imdb_id for movies).
   def self.watched_imdb_ids(user)
     user.watch_history_entries
       .order(watched_at: :desc)
-      .limit(MAX_HISTORY_FOR_GENRES)
+      .limit(MAX_HISTORY_FOR_RECS)
       .map { |e| e.show_imdb_id.presence || e.imdb_id }
       .uniq
   end
 
-  # Fetch genres for the given IMDb IDs via Cinemeta metadata, count
-  # occurrences, and return the most frequent genres.
-  def self.top_genres(imdb_ids)
-    torrentio = TorrentioService.new
-    genre_counts = Hash.new(0)
-
-    imdb_ids.each do |imdb_id|
-      # Try movie first, then show — we don't know the type from IMDb ID alone
-      %w[movie show].each do |type|
-        result = torrentio.metadata(imdb_id, type)
-        next if result.failure?
-
-        genres = result.data[:genre]&.split(", ")&.map(&:strip)
-        genres&.each { |g| genre_counts[g] += 1 }
-        break # metadata found for this type, stop trying
-      end
-    end
-
-    genre_counts.sort_by { |_, count| -count }.map(&:first)
-  end
-
-  # IMDb IDs to exclude from recommendations: everything the user has
-  # watched, plus library and wishlist entries.
   def self.exclude_set(user)
     watched = user.watch_history_entries.pluck(:imdb_id, :show_imdb_id).flatten.compact
     library = user.library_entries.pluck(:imdb_id)
