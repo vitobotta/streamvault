@@ -59,6 +59,10 @@ class ProgressTrackingService
     # Update library entry watch status
     update_library_watch_status(user, imdb_id, type, progress_pct)
 
+    # Refresh recommendations in the background (debounced — only
+    # runs once per 10 minutes per user despite 5s progress saves).
+    RefreshRecommendationsJob.enqueue_debounced(user.id)
+
     ServiceResult.success(entry)
   rescue ActiveRecord::RecordInvalid => e
     ServiceResult.failure(e.message)
