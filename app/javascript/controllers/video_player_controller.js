@@ -81,7 +81,7 @@ export default class extends Controller {
     this.fetchController = null
     this.pendingSeekSeconds = null
     this.stallWatchdogTimer = null
-    this.progressWatchdogTimer = null
+    this.bufferingOverlayTimer = null
     this.lastProgressTime = 0
     this.lastProgressPosition = 0
     this.progressWatchdogArmed = false
@@ -149,6 +149,7 @@ export default class extends Controller {
     this.clearStartupOverlayTimer()
     this.clearSuppressSeekClickTimer()
     this.clearStallWatchdog()
+    if (this.bufferingOverlayTimer) clearTimeout(this.bufferingOverlayTimer)
     this.stopProgressWatchdog()
     this.playbackStarted = false
     this.bufferAheadDeadline = null
@@ -331,9 +332,16 @@ export default class extends Controller {
     if (this.hasBufferedAhead()) {
       return
     }
-    this.stopProgressWatchdog()
-    this.showBufferingOverlay()
-    this.startStallWatchdog()
+    // Debounce: wait 500ms before showing the overlay.  Many stalls
+    // resolve in under 500ms (ffmpeg burst arrived, MSE appended).
+    // Showing a spinner for a sub-500ms gap is visual noise.
+    if (this.bufferingOverlayTimer) clearTimeout(this.bufferingOverlayTimer)
+    this.bufferingOverlayTimer = setTimeout(() => {
+      this.bufferingOverlayTimer = null
+      this.stopProgressWatchdog()
+      this.showBufferingOverlay()
+      this.startStallWatchdog()
+    }, 500)
   }
 
   // Returns true if there's buffered data ahead of the current position.
@@ -743,6 +751,12 @@ export default class extends Controller {
     // overlay should stay visible until we resume playback.
     if (this.videoTarget.paused) return
 
+    // Cancel a pending buffering-overlay debounce — the video resumed
+    // before the 500ms delay elapsed, so no overlay should be shown.
+    if (this.bufferingOverlayTimer) {
+      clearTimeout(this.bufferingOverlayTimer)
+      this.bufferingOverlayTimer = null
+    }
     this.clearStallWatchdog()
     this.startProgressWatchdog()
     this.hideSeekingOverlay()
