@@ -4,6 +4,14 @@ RSpec.describe ProgressTrackingService do
   let(:user) { create(:user) }
 
   describe ".save_progress" do
+    before do
+      stub_request(:get, %r{v3-cinemeta\.strem\.io/meta/})
+        .to_return(
+          status: 200,
+          body: { "meta" => { "id" => "tt1375666", "name" => "Inception", "poster" => "https://img.example.com/cinemeta.jpg" } }.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+    end
     it "creates a watch history entry for a movie" do
       create(:library_entry, user: user, imdb_id: "tt1375666", title: "Inception")
 
@@ -65,15 +73,14 @@ RSpec.describe ProgressTrackingService do
       expect(user.watch_history_entries.first.poster_url).to eq("https://img.example.com/wish.jpg")
     end
 
-    it "stores nil poster when not passed and not in library or wishlist" do
+    it "falls back to cinemeta poster when not passed and not in library or wishlist" do
       result = described_class.save_progress(user, "tt1375666", 3600, 7200, type: "movie")
       expect(result).to be_success
-      expect(user.watch_history_entries.first.poster_url).to be_nil
+      expect(user.watch_history_entries.first.poster_url).to eq("https://img.example.com/cinemeta.jpg")
     end
 
     it "creates a continue-watching entry when duration is not known yet" do
       result = described_class.save_progress(user, "tt1375666", 12, 0, type: "movie", title: "Inception")
-
       expect(result).to be_success
       entry = user.watch_history_entries.first
       expect(entry.duration_seconds).to eq(0)

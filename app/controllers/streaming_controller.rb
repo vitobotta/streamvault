@@ -114,7 +114,7 @@ class StreamingController < ApplicationController
     )
 
     if result.success?
-      show_title = fetch_show_title(imdb_id, type)
+      metadata = fetch_show_metadata(imdb_id, type)
       redirect_to streaming_path(
         "play",
         streaming_url: result.data[:streaming_url],
@@ -123,8 +123,8 @@ class StreamingController < ApplicationController
         type: type,
         season: target_season,
         episode: target_episode,
-        title: show_title,
-        poster_url: nil,
+        title: metadata[:title],
+        poster_url: metadata[:poster_url],
         resume_at: resume_at,
         duration: 0
       )
@@ -203,12 +203,12 @@ class StreamingController < ApplicationController
     end
   end
 
-  def fetch_show_title(imdb_id, type)
+  def fetch_show_metadata(imdb_id, type)
     meta_result = TorrentioService.new(rd_api_key: current_user.realdebrid_api_key).metadata(imdb_id, type)
-    return nil if meta_result.failure?
-    meta_result.data[:title]
+    return { title: nil, poster_url: nil } if meta_result.failure?
+    { title: meta_result.data[:title], poster_url: meta_result.data[:poster_url] }
   rescue StandardError
-    nil
+    { title: nil, poster_url: nil }
   end
 
   def find_duration_seconds(progress_entry, imdb_id, type, season, episode)

@@ -440,7 +440,15 @@ RSpec.describe "Streaming", type: :request do
   end
 
   describe "PATCH /streaming/:id/progress" do
-    before { sign_in user }
+    before do
+      sign_in user
+      stub_request(:get, %r{v3-cinemeta\.strem\.io/meta/})
+        .to_return(
+          status: 200,
+          body: { "meta" => { "id" => "tt1375666", "name" => "Inception", "poster" => "https://img.example.com/poster.jpg" } }.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+    end
 
     it "saves progress" do
       create(:library_entry, user: user, imdb_id: "tt1375666")

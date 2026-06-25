@@ -188,8 +188,18 @@ class ProgressTrackingService
     user.library_entries.find_by(imdb_id: imdb_id)&.title || "Unknown"
   end
 
-  def self.fetch_poster(user, imdb_id, _type)
+  def self.fetch_poster(user, imdb_id, type)
     user.library_entries.find_by(imdb_id: imdb_id)&.poster_url ||
-      user.wishlist_entries.find_by(imdb_id: imdb_id)&.poster_url
+      user.wishlist_entries.find_by(imdb_id: imdb_id)&.poster_url ||
+      fetch_poster_from_metadata(imdb_id, type)
+  end
+
+  def self.fetch_poster_from_metadata(imdb_id, type)
+    return nil if imdb_id.blank?
+    meta_result = TorrentioService.new.metadata(imdb_id, type)
+    return nil if meta_result.failure?
+    meta_result.data[:poster_url].presence
+  rescue StandardError
+    nil
   end
 end
