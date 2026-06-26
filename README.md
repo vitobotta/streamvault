@@ -38,10 +38,10 @@ StreamVault (Rails app + FFmpeg)
   │
   ├──► Torrentio / Comet  →  finds available streams for the content
   │
-  ├──► RealDebrid          →  caches the file on their servers, gives back a direct streaming link
+  ├──► RealDebrid         →  caches the file on their servers, gives back a direct streaming link
   │
-  └──► FFmpeg              →  converts the file on-the-fly to a browser-friendly format
-                               (MKV → MP4, DTS/AC3 → AAC, burns subtitles if needed)
+  └──► FFmpeg             →  converts the file on-the-fly to a browser-friendly format
+                             (MKV → MP4, DTS/AC3 → AAC, burns subtitles if needed)
 ```
 
 1. **Search** — Type a title. StreamVault queries metadata catalogues (Cinemeta) and returns matching content with posters, ratings, and plots.
@@ -229,16 +229,16 @@ The public Torrentio instance (`torrentio.strem.fun`) is behind Cloudflare. Clou
 The author's deployment uses a **two-server architecture** that separates compute from network access:
 
 ```
-┌─────────────────────────────────────┐          ┌──────────────────────────────────┐
-│  Dedicated server (powerful)        │          │  Cheap VPS (clean IP)             │
-│                                     │          │                                  │
-│  • StreamVault (Rails app)          │  Tailscale│  • Torrentio proxy (Tinyproxy)  │
-│  • PostgreSQL                       │ ◄──────► │  • Comet (self-hosted)          │
-│  • FFmpeg (transcoding)             │  tunnel  │  • Jackett (torrent indexer)    │
-│                                     │          │                                  │
-│  Why: needs CPU/RAM for transcoding │          │  Why: clean IP not blocked by    │
-│  and bandwidth for streaming        │          │  Cloudflare; cheap to run       │
-└─────────────────────────────────────┘          └──────────────────────────────────┘
+┌─────────────────────────────────────┐             ┌──────────────────────────────────┐
+│  Dedicated server (powerful)        │             │  Cheap VPS (clean IP)            │
+│                                     │             │                                  │
+│  • StreamVault (Rails app)          │  Tailscale  │  • Torrentio proxy (Tinyproxy)   │
+│  • PostgreSQL                       │ ◄─────────► │  • Comet (self-hosted)           │
+│  • FFmpeg (transcoding)             │   tunnel    │  • Jackett (torrent indexer)     │
+│                                     │             │                                  │
+│  Why: needs CPU/RAM for transcoding │             │  Why: clean IP not blocked by    │
+│  and bandwidth for streaming        │             │  Cloudflare; cheap to run         │
+└─────────────────────────────────────┘             └──────────────────────────────────┘
 ```
 
 - **Dedicated server** (e.g. Hetzner dedicated, OVH Eco) — runs StreamVault, PostgreSQL, and FFmpeg. This machine needs enough CPU and RAM for smooth transcoding. Its IP may or may not be blocked by Cloudflare — that's fine, because it doesn't talk to Torrentio directly.
