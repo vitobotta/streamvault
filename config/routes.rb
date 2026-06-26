@@ -48,6 +48,12 @@ Rails.application.routes.draw do
   get "transcode/subtitles", to: "transcode_subtitles#show", as: :transcode_subtitles
   get "transcode", to: "transcode#stream", as: :transcode_stream
 
+  # HLS streaming (iOS fallback — iPhone Safari lacks MSE support)
+  post "hls/start", to: "hls#start", as: :hls_start
+  get "hls/:id/playlist.m3u8", to: "hls#playlist", as: :hls_playlist
+  get "hls/:id/:segment", to: "hls#segment", as: :hls_segment, constraints: { segment: /\d+\.ts/ }
+  post "hls/:id/stop", to: "hls#stop", as: :hls_stop
+
   # Settings
   get "settings", to: "settings#show", as: :settings
   patch "settings", to: "settings#update"

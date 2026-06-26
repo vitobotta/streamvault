@@ -79,6 +79,9 @@ class StreamingController < ApplicationController
     # ffmpeg seeks to the right position (-ss) — the stream starts at
     # the resume point and the browser never needs to seek (which
     # would cancel and re-request).
+    # Preserve the original RealDebrid URL for the iOS HLS path before
+    # overwriting @streaming_url with the transcode proxy URL below.
+    @direct_url = @streaming_url
     if @streaming_url.present?
       transcode_params = { url: @streaming_url }
       transcode_params[:start_seconds] = @resume_at if @resume_at.present? && @resume_at.to_f > 0

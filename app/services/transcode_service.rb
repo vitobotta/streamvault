@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "fileutils"
 
 # Remuxes/transcodes streams via FFmpeg for browser playback.
 # Browser-safe H.264 video is copied when possible; risky/unsupported
@@ -21,6 +22,13 @@ class TranscodeService
   FFMPEG_PATH = "ffmpeg"
   FFPROBE_PATH = "ffprobe"
   FMP4_FLAGS = "+frag_keyframe+empty_moov+default_base_moof+negative_cts_offsets"
+  # HLS segment duration in seconds — balances latency against overhead.
+  HLS_SEGMENT_DURATION = 4
+  # HLS flags: temp_file writes segments via a .tmp~ sidecar and renames
+  # them only once complete, so clients never read a partial segment.
+  HLS_FLAGS = "temp_file".freeze
+  # How long to wait for ffmpeg to emit the first segment before giving up.
+  FIRST_SEGMENT_TIMEOUT_SECONDS = 30
   SHUTDOWN_GRACE_SECONDS = 1
   FIRST_DATA_TIMEOUT_SECONDS = 30
   # No mid-stream idle timeout: ffmpeg produces data in bursts, and
@@ -120,6 +128,83 @@ class TranscodeService
     )
 
     transcode_to_fmp4_internal(cmd, &block)
+  end
+
+  # Transcode to HLS segments on disk for iOS Safari playback.
+  #
+  # Unlike transcode_to_fmp4 (which pipes fMP4 to stdout), HLS output
+  # is written to files in segment_dir: playlist.m3u8 plus 0.ts, 1.ts, ...
+  # ffmpeg keeps running after this method returns — the caller owns
+  # the process and must kill it (via HlsSession.stop) when playback ends.
+  #
+  # Spawns ffmpeg in its own process group, drains stderr in a background
+  # thread (preventing pipe-buffer deadlock) and waits until the first
+  # segment appears on disk.  Raises TranscodeError if ffmpeg exits before
+  # producing any output (bad URL, auth failure, expired link) or if the
+  # first segment does not appear within FIRST_SEGMENT_TIMEOUT_SECONDS.
+  # Returns the pid so the caller can kill the group later.
+  def self.transcode_to_hls(input_url, segment_dir:, headers: {}, start_seconds: 0, audio_stream: nil, subtitle_stream: nil, default_language: nil, preferred_languages: [])
+    FileUtils.mkdir_p(segment_dir)
+
+    cmd = build_ffmpeg_command(
+      input_url,
+      headers: headers,
+      start_seconds: start_seconds,
+      audio_stream: audio_stream,
+      subtitle_stream: subtitle_stream,
+      default_language: default_language,
+      preferred_languages: preferred_languages,
+      output_spec: :hls,
+      segment_dir: segment_dir
+    )
+
+    err_rd, err_wr = IO.pipe
+    pid = Process.spawn(*cmd, in: "/dev/null", out: "/dev/null", err: err_wr, pgroup: true)
+    err_wr.close
+
+    # Drain stderr in background to prevent pipe-buffer deadlock and
+    # capture diagnostics for TranscodeError when ffmpeg fails.
+    stderr_buf = +""
+    stderr_thread = Thread.new do
+      loop { stderr_buf << err_rd.readpartial(4096) }
+    rescue EOFError, IOError, Errno::EBADF
+    end
+
+    playlist_path = File.join(segment_dir, "playlist.m3u8")
+    begin
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + FIRST_SEGMENT_TIMEOUT_SECONDS
+      produced_segment = false
+
+      loop do
+        # ffmpeg may exit quickly on failure (bad URL, auth) — detect that
+        # before the timeout so the error surfaces fast.
+        _, status = Process.waitpid2(pid, Process::WNOHANG)
+        if status
+          raise TranscodeError, "FFmpeg exited (status #{status.exitstatus}) without producing segments. #{stderr_summary(stderr_buf)}" unless produced_segment
+          break  # ffmpeg finished naturally after producing segments
+        end
+
+        if File.exist?(playlist_path) && Dir.glob(File.join(segment_dir, "*.ts")).any?
+          produced_segment = true
+          break
+        end
+
+        if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+          raise TranscodeError, "FFmpeg timed out after #{FIRST_SEGMENT_TIMEOUT_SECONDS}s waiting for first segment. #{stderr_summary(stderr_buf)}"
+        end
+
+        sleep 0.1
+      end
+    rescue TranscodeError
+      kill_process_group(pid)
+      raise
+    ensure
+      stderr_thread.kill
+      stderr_thread.join(1)
+      err_rd.close
+    end
+
+    pid
   end
 
   # Spawns a subprocess from the given command array, streams its stdout
@@ -452,7 +537,7 @@ class TranscodeService
   end
   private_class_method :format_vtt_timestamp
 
-  def self.build_ffmpeg_command(input_url, headers: {}, start_seconds: 0, audio_stream: nil, subtitle_stream: nil, default_language: nil, preferred_languages: [])
+  def self.build_ffmpeg_command(input_url, headers: {}, start_seconds: 0, audio_stream: nil, subtitle_stream: nil, default_language: nil, preferred_languages: [], output_spec: :fmp4, segment_dir: nil)
     header_str = ffmpeg_headers(headers)
     video_stream = probe_video_stream(input_url, headers: headers)
     selected_audio_index = selected_audio_stream_index(
@@ -502,13 +587,27 @@ class TranscodeService
     cmd += [ "-sn", "-dn" ]
     cmd += video_args
     cmd += [ "-c:a", "aac", "-b:a", "192k", "-ac", "2" ]
-    cmd += [
-      "-f", "mp4",
-      "-movflags", FMP4_FLAGS,
-      "-frag_duration", "100000",  # 0.1s for fast first fragment
-      "-fflags", "+genpts",
-      "pipe:1"
-    ]
+    cmd += case output_spec
+    when :hls
+      raise ArgumentError, "segment_dir is required for HLS output" if segment_dir.blank?
+      [
+        "-f", "hls",
+        "-hls_time", HLS_SEGMENT_DURATION.to_s,
+        "-hls_playlist_type", "event",
+        "-hls_segment_type", "mpegts",
+        "-hls_flags", HLS_FLAGS,
+        "-hls_segment_filename", File.join(segment_dir, "%d.ts"),
+        File.join(segment_dir, "playlist.m3u8")
+      ]
+    else  # :fmp4 (default)
+      [
+        "-f", "mp4",
+        "-movflags", FMP4_FLAGS,
+        "-frag_duration", "100000",  # 0.1s for fast first fragment
+        "-fflags", "+genpts",
+        "pipe:1"
+      ]
+    end
     cmd
   end
   private_class_method :build_ffmpeg_command

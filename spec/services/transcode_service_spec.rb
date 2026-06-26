@@ -301,6 +301,84 @@ RSpec.describe TranscodeService do
     end
   end
 
+  describe "HLS output spec" do
+    let(:video_output) do
+      { "streams" => [ { "codec_name" => "h264", "width" => 1920, "height" => 1080, "pix_fmt" => "yuv420p" } ] }.to_json
+    end
+
+    before do
+      allow(described_class).to receive(:capture_command).and_return(capture_result(video_output))
+    end
+
+    it "appends HLS output args when output_spec is :hls" do
+      command = described_class.send(:build_ffmpeg_command,
+        "https://example.test/video.mkv",
+        headers: {},
+        start_seconds: 0,
+        output_spec: :hls,
+        segment_dir: "/tmp/hls/session1"
+      )
+
+      expect(argument_pairs(command)).to include([ "-f", "hls" ])
+      expect(argument_pairs(command)).to include([ "-hls_time", "4" ])
+      expect(argument_pairs(command)).to include([ "-hls_playlist_type", "event" ])
+      expect(argument_pairs(command)).to include([ "-hls_segment_type", "mpegts" ])
+      expect(argument_pairs(command)).to include([ "-hls_flags", "temp_file" ])
+      expect(argument_pairs(command)).to include([ "-hls_segment_filename", "/tmp/hls/session1/%d.ts" ])
+      expect(command).to include("/tmp/hls/session1/playlist.m3u8")
+      # fMP4 output must NOT appear on the HLS path
+      expect(command).not_to include("pipe:1")
+      expect(argument_pairs(command)).not_to include([ "-movflags", anything ])
+    end
+
+    it "defaults to fMP4 output when output_spec is omitted" do
+      command = described_class.send(:build_ffmpeg_command,
+        "https://example.test/video.mkv",
+        headers: {},
+        start_seconds: 0
+      )
+
+      expect(argument_pairs(command)).to include([ "-f", "mp4" ])
+      expect(command).to include("pipe:1")
+      expect(command).not_to include("playlist.m3u8")
+    end
+
+    it "raises ArgumentError when :hls is requested without segment_dir" do
+      expect {
+        described_class.send(:build_ffmpeg_command,
+          "https://example.test/video.mkv",
+          headers: {},
+          start_seconds: 0,
+          output_spec: :hls
+        )
+      }.to raise_error(ArgumentError, /segment_dir is required for HLS output/)
+    end
+
+    it "preserves audio/video selection on the HLS path" do
+      track_output = {
+        "streams" => [
+          { "index" => 1, "codec_type" => "audio", "codec_name" => "aac", "tags" => { "language" => "eng" }, "disposition" => { "default" => 1 } }
+        ]
+      }.to_json
+      allow(described_class).to receive(:capture_command) do |cmd, **_kwargs|
+        cmd.include?("-select_streams") ? capture_result(video_output) : capture_result(track_output)
+      end
+
+      command = described_class.send(:build_ffmpeg_command,
+        "https://example.test/video.mkv",
+        headers: {},
+        start_seconds: 0,
+        audio_stream: "1",
+        output_spec: :hls,
+        segment_dir: "/tmp/hls/abc"
+      )
+
+      expect(argument_pairs(command)).to include([ "-map", "0:1" ])
+      expect(argument_pairs(command)).to include([ "-c:a", "aac" ])
+      expect(argument_pairs(command)).to include([ "-f", "hls" ])
+    end
+  end
+
   describe ".extract_subtitles_to_vtt" do
     it "extracts text subtitle cues from ffprobe packets before falling back to ffmpeg" do
       track_output = {

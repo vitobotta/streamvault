@@ -34,7 +34,7 @@ export default class extends Controller {
   }
   static get values() {
     return {
-      streamingUrl: String, filename: String, imdbId: String, type: String,
+      streamingUrl: String, directUrl: String, filename: String, imdbId: String, type: String,
       season: String, episode: String, resumeAt: String, startSeconds: Number,
       title: String, duration: Number, posterUrl: String,
       defaultLanguage: String, preferredLanguages: String,
@@ -96,6 +96,7 @@ export default class extends Controller {
     this.navigatingAway = false
     this.bufferAheadDeadline = null
     this.mseSupported = window.MediaSource && MediaSource.isTypeSupported('video/mp4; codecs="avc1.42E01E,mp4a.40.2"')
+    this.hlsSessionId = null
 
     this.ensureVideoSource()
 
@@ -143,6 +144,7 @@ export default class extends Controller {
   }
 
   disconnect() {
+    this.stopHlsSession()
     this.stopProgressTracking()
     this.saveProgressSync()
     this.clearUiHideTimer()
@@ -214,7 +216,9 @@ export default class extends Controller {
   }
   ensureVideoSource() {
     if (!this.streamingUrlValue) return
-    if (this.mseSupported) {
+    if (this.isIOS()) {
+      this.startHlsPlayback()
+    } else if (this.mseSupported) {
       this.setupMseSource(this.streamingUrlValue)
     } else if (!this.videoTarget.getAttribute("src")) {
       this.videoTarget.src = this.streamingUrlValue
@@ -256,6 +260,78 @@ export default class extends Controller {
       this.sourceBuffer.addEventListener("updateend", () => this.onBufferUpdateEnd())
       this.startStreamingFetch(streamUrl)
     }, { once: true })
+  }
+
+  // iPhone and iPod Touch don't support MediaSource Extensions.
+  // iPad (iPadOS 17.1+) supports ManagedMediaSource, so the MSE
+  // path works there — exclude it explicitly.
+  isIOS() {
+    const ua = navigator.userAgent
+    return /iPhone|iPod/.test(ua) && !/iPad/.test(ua)
+  }
+
+  // iOS-only fallback: start a server-side HLS transcode and hand the
+  // playlist to Safari's native player.  iOS Safari can't play the
+  // chunked fMP4 stream the MSE pipeline produces, so ffmpeg segments
+  // to .ts and serves an .m3u8 playlist instead.
+  async startHlsPlayback() {
+    const directUrl = this.directUrlValue || this.extractRawUrl()
+    if (!directUrl) {
+      console.warn('HLS: no direct URL available')
+      return
+    }
+
+    try {
+      const params = new URLSearchParams({ url: directUrl })
+      if (this.startSecondsValue && this.startSecondsValue > 0) {
+        params.set('start_seconds', this.startSecondsValue)
+      }
+      const audioStream = this.currentUrlParam('audio_stream')
+      if (audioStream) params.set('audio_stream', audioStream)
+      const subtitleStream = this.currentUrlParam('subtitle_stream')
+      if (subtitleStream) params.set('subtitle_stream', subtitleStream)
+
+      const csrfToken = document.querySelector("meta[name='csrf-token']")?.content
+      const response = await fetch('/hls/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': csrfToken },
+        body: params.toString()
+      })
+
+      if (!response.ok) {
+        console.warn('HLS: start failed', response.status)
+        return
+      }
+
+      const data = await response.json()
+      this.hlsSessionId = data.session_id
+
+      // Native HLS playback — iOS Safari handles the playlist natively.
+      this.videoTarget.src = data.playlist_url
+      this.videoTarget.load()
+      const p = this.videoTarget.play()
+      if (p?.catch) p.catch(() => {})
+    } catch (e) {
+      console.warn('HLS: start error', e)
+    }
+  }
+
+  // Best-effort: tell the backend to kill the ffmpeg HLS process for
+  // the current session.  Fire-and-forget — disconnect must not block,
+  // and the session TTL cleans up if the request never lands.
+  async stopHlsSession() {
+    if (!this.hlsSessionId) return
+    const sessionId = this.hlsSessionId
+    this.hlsSessionId = null
+    try {
+      const csrfToken = document.querySelector("meta[name='csrf-token']")?.content
+      await fetch(`/hls/${sessionId}/stop`, {
+        method: 'POST',
+        headers: { 'X-CSRF-Token': csrfToken }
+      })
+    } catch {
+      // Best-effort — don't block teardown
+    }
   }
 
   async startStreamingFetch(url) {
@@ -705,6 +781,7 @@ export default class extends Controller {
   // being destroyed anyway.  The beforeunload handler is skipped to
   // avoid a duplicate save (navigateBack already saved).
   stopPlaybackForNavigation() {
+    this.stopHlsSession()
     this.stopProgressTracking()
     this.saveProgressSync()
     this.navigatingAway = true
