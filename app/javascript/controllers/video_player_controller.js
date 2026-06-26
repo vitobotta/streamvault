@@ -1531,6 +1531,15 @@ export default class extends Controller {
 
   restartPlaybackAt(targetSeconds) {
     this.isSeeking = true
+    console.warn("[SEEK DEBUG] restartPlaybackAt called", {
+      targetSeconds,
+      currentTime: this.videoTarget.currentTime,
+      paused: this.videoTarget.paused,
+      bufferedRanges: this.bufferedRangesDebug(),
+      streamRecoveryAttempts: this.streamRecoveryAttempts,
+      streamRecoveryActive: this.streamRecoveryActive,
+      stack: new Error().stack?.split("\n").slice(1, 4).map(s => s.trim()).join(" | ")
+    })
     this.showSeekingOverlay()
     // A deliberate restart (user seek or auto-advance) resets the
     // stall-recovery counter — this is not an automatic recovery.
@@ -1630,18 +1639,29 @@ export default class extends Controller {
   // ── Seeking overlay ───────────────────────────────────────────────
 
   showSeekingOverlay(message = "Seeking...") {
+    console.warn("[SEEK DEBUG] showSeekingOverlay called", { message, isSeeking: this.isSeeking })
     if (this.hasSeekingOverlayMessageTarget) this.seekingOverlayMessageTarget.textContent = message
     if (this.isSeeking) {
       this.seekingOverlayTarget.classList.remove("hidden")
     }
   }
 
+  bufferedRangesDebug() {
+    const r = this.videoTarget.buffered
+    if (!r || r.length === 0) return "empty"
+    return Array.from({ length: r.length }, (_, i) =>
+      `[${r.start(i).toFixed(1)}-${r.end(i).toFixed(1)}]`
+    ).join(" ")
+  }
+
   // Show the overlay with a "Buffering..." message — used when the
   // video element runs out of data mid-playback (not a user seek).
-  // Unlike showSeekingOverlay, this shows immediately regardless of
-  // the isSeeking flag, so the user sees a spinner instead of a
-  // frozen frame while the buffer refills.
   showBufferingOverlay() {
+    console.warn("[SEEK DEBUG] showBufferingOverlay called", {
+      paused: this.videoTarget.paused,
+      bufferedRanges: this.bufferedRangesDebug(),
+      currentTime: this.videoTarget.currentTime
+    })
     if (this.hasSeekingOverlayMessageTarget) this.seekingOverlayMessageTarget.textContent = "Buffering..."
     this.seekingOverlayTarget.classList.remove("hidden")
   }
