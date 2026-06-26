@@ -15,9 +15,27 @@
     <div class="bg-sv-surface rounded-xl p-6 border border-sv-border">
       <h2 class="text-lg font-semibold text-white mb-4">Account</h2>
 
-      <div>
+      <div class="mb-4">
         <label class="block text-sm font-medium text-sv-text-muted mb-1.5">Email</label>
         <input type="email" value="<%= @user.email %>" class="input-field" disabled>
+      </div>
+
+      <div class="border-t border-sv-border pt-4">
+        <h3 class="text-sm font-medium text-white mb-3">Change Password</h3>
+        <div class="space-y-3">
+          <div>
+            <%= f.label :current_password, "Current Password", class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
+            <%= f.password_field :current_password, class: "input-field", autocomplete: "current-password" %>
+          </div>
+          <div>
+            <%= f.label :password, "New Password", class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
+            <%= f.password_field :password, class: "input-field", autocomplete: "new-password", placeholder: "Leave blank to keep current" %>
+          </div>
+          <div>
+            <%= f.label :password_confirmation, "Confirm New Password", class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
+            <%= f.password_field :password_confirmation, class: "input-field", autocomplete: "new-password" %>
+          </div>
+        </div>
       </div>
     </div>
 
