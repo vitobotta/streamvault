@@ -34,6 +34,8 @@ class TranscodeController < ApplicationController
     # reaches the browser immediately, not buffered in the proxy.
     response.headers["X-Accel-Buffering"] = "no"
 
+    playback_id = normalized_playback_id(params[:playback_id])
+
     begin
       TranscodeService.transcode_to_fmp4(
         input_url,
@@ -43,12 +45,13 @@ class TranscodeController < ApplicationController
         subtitle_stream: params[:subtitle_stream],
         default_language: current_user.default_stream_language,
         preferred_languages: current_user.preferred_stream_languages,
-        remux: params[:remux] == "1"
+        remux: params[:remux] == "1",
+        telemetry_id: playback_id
       ) do |chunk|
         response.stream.write(chunk)
       end
     rescue TranscodeService::TranscodeError => e
-      Rails.logger.error("[Transcode] #{e.message}")
+      Rails.logger.error("[Transcode] playback_id=#{playback_id} #{e.message}")
       if response.stream.closed? || response.committed?
         # Data was already sent (mid-stream stall).  Headers are committed;
         # we cannot rewrite the response.  The frontend watchdog will detect
@@ -71,6 +74,11 @@ class TranscodeController < ApplicationController
   end
 
   private
+
+  def normalized_playback_id(value)
+    sanitized = value.to_s.gsub(/[^a-zA-Z0-9_-]/, "").first(80)
+    sanitized.presence || "unknown"
+  end
 
   def normalized_start_seconds(value)
     seconds = value.to_f

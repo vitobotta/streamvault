@@ -13,11 +13,9 @@ production:
   clear_solid_queue_finished_jobs:
     command: "SolidQueue::Job.clear_finished_in_batches(sleep_between_batches: 0.3)"
     schedule: every hour at minute 12
-  # Kill orphaned HLS ffmpeg processes and remove expired sessions.
-  # HlsSession.stop can only kill the ffmpeg PID in the worker that
-  # spawned it; cleanup_expired relies on the OS reaping the process
-  # group when the session record is destroyed.  Sessions older than
-  # SESSION_TTL (30 min) with no active client are leaked without this.
+  # Stop inactive/over-age HLS sessions and remove stale untracked
+  # segment directories. Active playlist and segment requests refresh
+  # session activity, while an absolute lifetime still bounds storage.
   cleanup_hls_sessions:
     command: "HlsSession.cleanup_expired"
     schedule: every 5 minutes

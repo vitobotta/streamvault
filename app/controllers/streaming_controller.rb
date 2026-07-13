@@ -174,19 +174,32 @@ class StreamingController < ApplicationController
     end
   end
 
-  # POST /streaming/stall_telemetry — log client-side stall events for
-  # diagnostics.  No DB write — only structured logs that can be grepped.
+  # POST /streaming/stall_telemetry — structured, credential-free
+  # diagnostics correlated by a client-generated playback ID.
   def stall_telemetry
-    event = sanitize_log_value(params[:event])
-    position = params[:position].to_f
-    buffer_ahead = params[:buffer_ahead].to_f
-    mode = sanitize_log_value(params[:mode])
-    recovery_count = params[:recovery_count].to_i
+    payload = {
+      event: sanitize_log_value(params[:event], 48),
+      playback_id: sanitize_log_value(params[:playback_id], 80),
+      path: sanitize_log_value(params[:path], 32),
+      position: finite_log_number(params[:position]),
+      buffer_ahead: finite_log_number(params[:buffer_ahead]),
+      recovery_count: bounded_log_integer(params[:recovery_count], 0, 100),
+      ready_state: bounded_log_integer(params[:ready_state], 0, 4),
+      network_state: bounded_log_integer(params[:network_state], 0, 3),
+      paused: ActiveModel::Type::Boolean.new.cast(params[:paused]),
+      ended: ActiveModel::Type::Boolean.new.cast(params[:ended]),
+      mse_pending_bytes: bounded_log_integer(params[:mse_pending_bytes], 0, 1.gigabyte),
+      mse_quota_errors: bounded_log_integer(params[:mse_quota_errors], 0, 10_000),
+      system_rebuffer_paused: ActiveModel::Type::Boolean.new.cast(params[:system_rebuffer_paused]),
+      buffered_ranges: sanitized_buffered_ranges(params[:buffered_ranges]),
+      video_codec: sanitize_log_value(params[:video_codec], 24),
+      video_width: bounded_log_integer(params[:video_width], 0, 16_384),
+      video_height: bounded_log_integer(params[:video_height], 0, 16_384),
+      start_seconds: finite_log_number(params[:start_seconds]),
+      user_id: current_user.id
+    }
 
-    Rails.logger.info("[StallTelemetry] event=#{event} position=#{position}s " \
-                      "buffer_ahead=#{buffer_ahead}s mode=#{mode} " \
-                      "recovery_count=#{recovery_count} user=#{current_user.id}")
-
+    Rails.logger.info("[StallTelemetry] #{payload.to_json}")
     render json: { recorded: true }
   end
 
@@ -200,8 +213,25 @@ class StreamingController < ApplicationController
 
   # Strip CR/LF/tab from log values to prevent log injection (forging
   # fake log lines that a naive log consumer might ingest as real).
-  def sanitize_log_value(value)
-    value.to_s.gsub(/[\r\n\t]/, " ")
+  def sanitize_log_value(value, max_length = 128)
+    value.to_s.gsub(/[\r\n\t]/, " ").first(max_length)
+  end
+
+  def finite_log_number(value)
+    number = Float(value, exception: false)
+    number&.finite? ? number.round(2) : 0
+  end
+
+  def bounded_log_integer(value, minimum, maximum)
+    value.to_i.clamp(minimum, maximum)
+  end
+
+  def sanitized_buffered_ranges(value)
+    Array(value).first(8).filter_map do |range|
+      next unless range.is_a?(Array) && range.length >= 2
+
+      [ finite_log_number(range[0]), finite_log_number(range[1]) ]
+    end
   end
 
   def find_progress_entry(imdb_id, type, season, episode)

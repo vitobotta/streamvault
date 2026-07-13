@@ -350,6 +350,7 @@ RSpec.describe "Streaming", type: :request do
       expect(response.body).to include("Starting playback")
       expect(response.body).to include(%(data-video-player-default-language-value="ENG"))
       expect(response.body).to include(%(data-video-player-tracks-url-value="/transcode/tracks"))
+      expect(response.body).to include(%(data-video-player-seek-url-value="/transcode/seek"))
       expect(response.body).to include(%(data-video-player-subtitles-url-value="/transcode/subtitles"))
       expect(response.body).to include(%(data-video-player-target="audioControls"))
       expect(response.body).to include(%(data-video-player-target="subtitleControls"))
@@ -512,6 +513,42 @@ RSpec.describe "Streaming", type: :request do
       expect(entry.title).to eq("Inception")
       expect(entry.duration_seconds).to eq(0)
       expect(entry.progress_percentage).to eq(1)
+    end
+  end
+
+  describe "POST /streaming/stall_telemetry" do
+    before { sign_in user }
+
+    it "logs the correlated playback state from the JSON request body" do
+      allow(Rails.logger).to receive(:info)
+
+      post stall_telemetry_streaming_index_path, as: :json, params: {
+        event: "mse_quota",
+        playback_id: "playback-123",
+        path: "mse_transcode",
+        position: 120.5,
+        buffer_ahead: 29.5,
+        recovery_count: 1,
+        ready_state: 3,
+        network_state: 2,
+        mse_pending_bytes: 4096,
+        mse_quota_errors: 1,
+        buffered_ranges: [ [ 90.0, 150.0 ] ],
+        video_codec: "hevc",
+        video_width: 3840,
+        video_height: 2160
+      }
+
+      expect(response).to have_http_status(:ok)
+      expect(Rails.logger).to have_received(:info).with(
+        include(
+          '[StallTelemetry] {"event":"mse_quota"',
+          '"playback_id":"playback-123"',
+          '"path":"mse_transcode"',
+          '"position":120.5',
+          '"buffered_ranges":[[90.0,150.0]]'
+        )
+      )
     end
   end
 end

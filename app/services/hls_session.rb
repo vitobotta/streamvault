@@ -5,44 +5,33 @@ require "securerandom"
 
 # Manages HLS transcoding sessions for iOS Safari playback.
 #
-# Session metadata (session_id, segment_dir, user_id) is persisted in
-# the hls_sessions table so any Puma worker or Dokku process can serve
-# playlist/segment requests.  The ffmpeg PID is kept in memory in the
-# worker that spawned it — only that worker can kill the process, but
-# that's fine: the stop endpoint is best-effort, and the 30-minute TTL
-# cleans up orphaned sessions.
+# Session metadata is persisted in hls_sessions so any Puma worker or
+# Dokku process can serve playlist and segment requests. The spawning
+# worker retains the full ffmpeg process handle, including stderr
+# diagnostics, until exit. Activity-based expiry protects active
+# sessions while an absolute lifetime bounds abandoned sessions.
 #
-# Thread-safe: the in-memory PID registry uses a mutex.  DB operations
+# Thread-safe: the in-memory process registry uses a mutex. DB operations
 # go through ActiveRecord's own connection pool.
 class HlsSession
-  SESSION_TTL = 30.minutes
+  SESSION_IDLE_TTL = 30.minutes
+  MAX_SESSION_LIFETIME = 12.hours
+  ACTIVITY_TOUCH_INTERVAL = 1.minute
+  SEGMENTS_BEHIND_PLAYHEAD = 6
   SHUTDOWN_GRACE_SECONDS = 1
-
-  # In-memory PID registry: session_id => pid (only the worker that
-  # spawned ffmpeg can kill it).
-  @pids = {}
-  @mutex = Mutex.new
-
-  # Errors are stored in Rails.cache (shared across all workers via
-  # Solid Cache) so the playlist endpoint on worker B can see an error
-  # set by the monitor thread on worker A.  The old in-memory @errors
-  # hash was per-worker, so under multi-worker the 424 error path
-  # never fired if the playlist request landed on a different worker.
   ERROR_CACHE_TTL = 5.minutes
+
+  # The worker that spawned ffmpeg retains the complete process handle,
+  # including stderr diagnostics, until the process exits or is stopped.
+  @processes = {}
+  @mutex = Mutex.new
 
   attr_reader :id, :pid, :segment_dir, :user_id
 
   def self.create(user_id:, input_url:, headers:, start_seconds:, audio_stream:, subtitle_stream:, default_language:, preferred_languages:)
     session_id = SecureRandom.hex(16)
     dir = Rails.root.join("tmp", "hls", session_id).to_s
-
-    # Non-blocking: spawn ffmpeg and return immediately.  A background
-    # monitor thread detects failure (ffmpeg exits before producing
-    # any segments) and stores the error so the playlist endpoint can
-    # return a meaningful failure instead of making the client poll
-    # forever.  The client polls the playlist URL until the playlist
-    # file appears (200) or the error is set (424).
-    pid = TranscodeService.transcode_to_hls(
+    process = TranscodeService.transcode_to_hls(
       input_url,
       segment_dir: dir,
       headers: headers,
@@ -51,82 +40,51 @@ class HlsSession
       subtitle_stream: subtitle_stream,
       default_language: default_language,
       preferred_languages: preferred_languages,
-      wait_for_first_segment: false
+      wait_for_first_segment: false,
+      telemetry_id: session_id
     )
 
-    # Store the PID in memory (only this worker can kill it).
-    @mutex.synchronize { @pids[session_id] = pid }
-
-    # Persist session metadata to the DB so any worker can find it.
-    record = HlsSessionRecord.create!(
+    @mutex.synchronize { @processes[session_id] = process }
+    HlsSessionRecord.create!(
       user_id: user_id,
       session_id: session_id,
       segment_dir: dir,
-      pid: pid
+      pid: process.pid
     )
+    monitor_process(session_id, process)
 
-    # Background monitor: detect ffmpeg failure so the playlist
-    # endpoint can return 424 instead of making the client poll
-    # forever.  Runs for up to FIRST_SEGMENT_TIMEOUT_SECONDS; once a
-    # segment appears, ffmpeg is healthy and the thread exits.
-    monitor_thread = Thread.new do
-      begin
-        deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + TranscodeService::FIRST_SEGMENT_TIMEOUT_SECONDS
-        playlist_path = File.join(dir, "playlist.m3u8")
-        loop do
-          _, status = Process.waitpid2(pid, Process::WNOHANG)
-          if status
-            if status.success? && File.exist?(playlist_path) && Dir.glob(File.join(dir, "*.ts")).any?
-              break  # ffmpeg finished naturally after producing segments
-            end
-            # ffmpeg exited without producing segments — record error.
-            self.class.set_error(session_id, "FFmpeg exited (status #{status.exitstatus}) without producing segments.")
-            break
-          end
-
-          if File.exist?(playlist_path) && Dir.glob(File.join(dir, "*.ts")).any?
-            break  # first segment produced — ffmpeg is healthy
-          end
-
-          if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
-            self.class.set_error(session_id, "FFmpeg timed out after #{TranscodeService::FIRST_SEGMENT_TIMEOUT_SECONDS}s waiting for first segment.")
-            break
-          end
-
-          sleep 0.2
-        end
-      rescue StandardError => e
-        self.class.set_error(session_id, e.message)
-      end
-    end
-    # Don't block shutdown on this thread.
-    monitor_thread.abort_on_exception = false
-
-    new(id: session_id, pid: pid, segment_dir: dir, user_id: user_id)
+    new(id: session_id, pid: process.pid, segment_dir: dir, user_id: user_id)
+  rescue StandardError
+    @mutex.synchronize { @processes.delete(session_id) } if session_id
+    HlsSessionKiller.new(process.pid).kill if process
+    process&.close_diagnostics
+    FileUtils.rm_rf(dir) if dir
+    raise
   end
 
   def self.find(id)
     record = HlsSessionRecord.find_by(session_id: id)
     return nil unless record
 
-    # Check TTL — clean up expired sessions.
-    if record.created_at < SESSION_TTL.ago
+    if inactive?(record) || record.created_at < MAX_SESSION_LIFETIME.ago
       stop(id)
       return nil
     end
 
-    pid = @mutex.synchronize { @pids[id] }
-    new(id: record.session_id, pid: pid, segment_dir: record.segment_dir, user_id: record.user_id)
+    touch_activity(record)
+    process = @mutex.synchronize { @processes[id] }
+    new(
+      id: record.session_id,
+      pid: process&.pid || record.pid,
+      segment_dir: record.segment_dir,
+      user_id: record.user_id
+    )
   end
 
-  # Returns the error message if ffmpeg failed before producing any
-  # segments, or nil if ffmpeg is still starting or succeeded.  Stored
-  # in Rails.cache so any worker can read it.
   def self.error(id)
     Rails.cache.read(error_cache_key(id))
   end
 
-  # Store an error for a session in Rails.cache (shared across workers).
   def self.set_error(id, message)
     Rails.cache.write(error_cache_key(id), message, expires_in: ERROR_CACHE_TTL)
   end
@@ -137,31 +95,83 @@ class HlsSession
 
   def self.stop(id)
     record = HlsSessionRecord.find_by(session_id: id)
-    return unless record
+    process = @mutex.synchronize { @processes.delete(id) }
+    return unless record || process
 
-    # Prefer the in-memory PID (same worker that spawned ffmpeg — the
-    # only place that can reliably target the process group).  Fall
-    # back to the persisted record.pid so the recurring cleanup job
-    # (running in the SolidQueue worker, whose @pids is empty) can
-    # still kill orphaned ffmpeg processes from other workers.
-    pid = @mutex.synchronize { @pids.delete(id) }
+    pid = process&.pid || record&.pid
+    HlsSessionKiller.new(pid).kill if pid
+    process&.close_diagnostics
+    FileUtils.rm_rf(record.segment_dir) if record
+    record&.destroy!
     Rails.cache.delete(error_cache_key(id))
-    pid ||= record.pid
-    if pid
-      HlsSessionKiller.new(pid).kill
-    end
-
-    FileUtils.rm_rf(record.segment_dir)
-    record.destroy!
   rescue ActiveRecord::RecordNotFound
-    # already gone
+    # Another request or cleanup worker already stopped the session.
   end
 
   def self.cleanup_expired
-    HlsSessionRecord.where("created_at < ?", SESSION_TTL.ago).find_each do |record|
-      stop(record.session_id)
+    HlsSessionRecord.where(
+      "updated_at < :idle_cutoff OR created_at < :absolute_cutoff",
+      idle_cutoff: SESSION_IDLE_TTL.ago,
+      absolute_cutoff: MAX_SESSION_LIFETIME.ago
+    ).find_each { |record| stop(record.session_id) }
+
+    cleanup_orphan_directories
+  end
+
+  def self.cleanup_orphan_directories
+    root = Rails.root.join("tmp", "hls")
+    return unless root.directory?
+
+    active = HlsSessionRecord.pluck(:segment_dir).to_h { |dir| [ File.expand_path(dir), true ] }
+    cutoff = SESSION_IDLE_TTL.ago
+    root.children.each do |path|
+      next unless path.directory?
+      next if active[File.expand_path(path.to_s)]
+      next if File.mtime(path) >= cutoff
+
+      FileUtils.rm_rf(path)
+    rescue Errno::ENOENT
+      # Concurrent cleanup already removed it.
     end
   end
+
+  def self.monitor_process(session_id, process)
+    thread = Thread.new do
+      status = nil
+      begin
+        _, status = Process.waitpid2(process.pid)
+      rescue Errno::ECHILD, Errno::ESRCH
+      ensure
+        process.close_diagnostics
+      end
+
+      if status && !status.success?
+        diagnostic = process.diagnostic.strip
+        message = "FFmpeg exited (status #{status.exitstatus})"
+        message = "#{message}. stderr: #{diagnostic}" if diagnostic.present?
+        set_error(session_id, message)
+      end
+
+      @mutex.synchronize do
+        @processes.delete(session_id) if @processes[session_id].equal?(process)
+      end
+      HlsSessionRecord.where(session_id: session_id, pid: process.pid).update_all(pid: nil)
+    end
+    thread.abort_on_exception = false
+  end
+  private_class_method :monitor_process
+
+  def self.inactive?(record)
+    record.updated_at < SESSION_IDLE_TTL.ago
+  end
+  private_class_method :inactive?
+
+  def self.touch_activity(record)
+    return if record.updated_at >= ACTIVITY_TOUCH_INTERVAL.ago
+
+    record.update_column(:updated_at, Time.current)
+  end
+  private_class_method :touch_activity
 
   def playlist_path
     File.join(segment_dir, "playlist.m3u8")
@@ -171,18 +181,28 @@ class HlsSession
     File.join(segment_dir, "#{index}.ts")
   end
 
-  # Returns true if the playlist file exists AND contains at least
-  # one segment entry.  ffmpeg writes the #EXTM3U header immediately
-  # but doesn't add segment lines until the first segment is complete.
-  # Checking only File.exist? would treat an empty header-only
-  # playlist as ready, causing the client to set it as the video src
-  # before any segments are available.
   def playlist_ready?
     return false unless File.exist?(playlist_path)
+
     content = File.read(playlist_path)
     content.include?("#EXTINF") || content.include?("#EXT-X-ENDLIST")
   rescue StandardError
     false
+  end
+
+  # FFmpeg is paced at realtime after its initial burst.  Delete only
+  # segments safely behind the segment Safari has actually requested;
+  # never delete future media merely because the producer is fast.
+  def prune_consumed_segments(current_index)
+    delete_before = current_index.to_i - SEGMENTS_BEHIND_PLAYHEAD
+    return if delete_before <= 0
+
+    Dir.glob(File.join(segment_dir, "[0-9]*.ts")).each do |path|
+      index = File.basename(path, ".ts").to_i
+      File.delete(path) if index < delete_before
+    rescue Errno::ENOENT
+      # A concurrent segment request already pruned it.
+    end
   end
 
   private
@@ -206,10 +226,14 @@ class HlsSessionKiller
 
     signal_group("CONT")
     signaled = signal_group("TERM")
-    return unless signaled
+    unless signaled
+      waitpid_safely
+      return
+    end
 
     deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + HlsSession::SHUTDOWN_GRACE_SECONDS
     while group_alive?
+      reap_exited_leader
       break if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
       sleep 0.05
     end
@@ -236,6 +260,11 @@ class HlsSessionKiller
     false
   rescue Errno::EPERM
     true
+  end
+
+  def reap_exited_leader
+    Process.waitpid2(@pid, Process::WNOHANG)
+  rescue Errno::ESRCH, Errno::ECHILD
   end
 
   def waitpid_safely

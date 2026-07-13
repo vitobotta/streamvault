@@ -2,7 +2,6 @@
 
 require "json"
 require "fileutils"
-require "tempfile"
 require "shellwords"
 
 # Remuxes/transcodes streams via FFmpeg for browser playback.
@@ -39,6 +38,14 @@ class TranscodeService
   FIRST_SEGMENT_TIMEOUT_SECONDS = 30
   SHUTDOWN_GRACE_SECONDS = 1
   FIRST_DATA_TIMEOUT_SECONDS = 30
+  STREAM_CHUNK_BYTES = 131_072
+  STREAM_QUEUE_MAX_BYTES = 32 * 1024 * 1024
+  STREAM_QUEUE_MAX_CHUNKS = STREAM_QUEUE_MAX_BYTES / STREAM_CHUNK_BYTES
+  KEYFRAME_INTERVAL_SECONDS = 2
+  HLS_READ_RATE = "1.0"
+  HLS_INITIAL_BURST_SECONDS = 30
+  REMUX_KEYFRAME_PROBE_TIMEOUT_SECONDS = 10
+  MAX_REMUX_PREROLL_SECONDS = 120
   # No mid-stream idle timeout: ffmpeg produces data in bursts, and
   # pausing between bursts is normal. The frontend watchdog detects
   # true playback stalls (video element buffer ran dry) — the backend
@@ -117,6 +124,32 @@ class TranscodeService
 
   class TranscodeError < StandardError; end
 
+  # Owns the diagnostic resources that must remain alive for the full
+  # lifetime of a non-blocking HLS ffmpeg process.
+  class HlsProcess
+    attr_reader :pid
+
+    def initialize(pid:, stderr_io:, stderr_thread:, stderr_buffer:, stderr_mutex:)
+      @pid = pid
+      @stderr_io = stderr_io
+      @stderr_thread = stderr_thread
+      @stderr_buffer = stderr_buffer
+      @stderr_mutex = stderr_mutex
+    end
+
+    def diagnostic
+      @stderr_mutex.synchronize { @stderr_buffer.dup }
+    end
+
+    def close_diagnostics
+      finished = @stderr_thread.join(1)
+      @stderr_io.close unless @stderr_io.closed?
+      @stderr_thread.join(1) unless finished
+    rescue IOError, Errno::EBADF
+      @stderr_thread.join(1)
+    end
+  end
+
   CommandCaptureResult = Struct.new(:stdout, :stderr, :status, :timed_out, keyword_init: true)
 
   SubtitleExtractionResult = Struct.new(:status, :vtt, :cue_count, :source, :diagnostic, keyword_init: true) do
@@ -142,7 +175,7 @@ class TranscodeService
   # (bad URL, auth failure, expired link).  When the caller stops reading
   # (client disconnect → exception propagates through the yield), the
   # ensure block kills ffmpeg.
-  def self.transcode_to_fmp4(input_url, headers: {}, start_seconds: 0, audio_stream: nil, subtitle_stream: nil, default_language: nil, preferred_languages: [], remux: false, &block)
+  def self.transcode_to_fmp4(input_url, headers: {}, start_seconds: 0, audio_stream: nil, subtitle_stream: nil, default_language: nil, preferred_languages: [], remux: false, telemetry_id: nil, &block)
     cmd = build_ffmpeg_command(
       input_url,
       headers: headers,
@@ -151,32 +184,20 @@ class TranscodeService
       subtitle_stream: subtitle_stream,
       default_language: default_language,
       preferred_languages: preferred_languages,
-      remux: remux
+      remux: remux,
+      telemetry_id: telemetry_id
     )
 
-    transcode_to_fmp4_internal(cmd, &block)
+    transcode_to_fmp4_internal(cmd, telemetry_id: telemetry_id, &block)
   end
 
   # Transcode to HLS segments on disk for iOS Safari playback.
   #
-  # Unlike transcode_to_fmp4 (which pipes fMP4 to stdout), HLS output
-  # is written to files in segment_dir: playlist.m3u8 plus 0.ts, 1.ts, ...
-  # ffmpeg keeps running after this method returns — the caller owns
-  # the process and must kill it (via HlsSession.stop) when playback ends.
-  #
-  # Spawns ffmpeg in its own process group, drains stderr in a background
-  # thread (preventing pipe-buffer deadlock) and waits until the first
-  # segment appears on disk.  Raises TranscodeError if ffmpeg exits before
-  # producing any output (bad URL, auth failure, expired link) or if the
-  # first segment does not appear within FIRST_SEGMENT_TIMEOUT_SECONDS.
-  #
-  # When wait_for_first_segment is false (used by HlsSession for faster
-  # iOS startup), the method returns immediately after spawning ffmpeg
-  # without waiting for the first segment.  The caller is responsible
-  # for monitoring ffmpeg and detecting failure — the client polls the
-  # playlist endpoint until the playlist file appears.
-  # Returns the pid so the caller can kill the group later.
-  def self.transcode_to_hls(input_url, segment_dir:, headers: {}, start_seconds: 0, audio_stream: nil, subtitle_stream: nil, default_language: nil, preferred_languages: [], wait_for_first_segment: true)
+  # The returned HlsProcess owns the stderr pipe and drain thread.  The
+  # caller must retain it until ffmpeg exits or the session is stopped;
+  # closing the reader while ffmpeg is alive would leave stderr attached
+  # to a readerless pipe and can terminate ffmpeg on its next diagnostic.
+  def self.transcode_to_hls(input_url, segment_dir:, headers: {}, start_seconds: 0, audio_stream: nil, subtitle_stream: nil, default_language: nil, preferred_languages: [], wait_for_first_segment: true, telemetry_id: nil)
     FileUtils.mkdir_p(segment_dir)
 
     cmd = build_ffmpeg_command(
@@ -188,95 +209,76 @@ class TranscodeService
       default_language: default_language,
       preferred_languages: preferred_languages,
       output_spec: :hls,
-      segment_dir: segment_dir
+      segment_dir: segment_dir,
+      telemetry_id: telemetry_id
     )
 
     err_rd, err_wr = IO.pipe
     pid = Process.spawn(*cmd, in: "/dev/null", out: "/dev/null", err: err_wr, pgroup: true)
     err_wr.close
 
-    # Drain stderr in background to prevent pipe-buffer deadlock and
-    # capture diagnostics for TranscodeError when ffmpeg fails.
     stderr_buf = +""
+    stderr_mutex = Mutex.new
     stderr_thread = Thread.new do
-      loop { stderr_buf << err_rd.readpartial(4096) }
+      loop do
+        chunk = err_rd.readpartial(4096)
+        stderr_mutex.synchronize do
+          stderr_buf << chunk
+          stderr_buf.replace(stderr_buf.byteslice(-STDERR_MAX_BYTES, STDERR_MAX_BYTES)) if stderr_buf.bytesize > STDERR_MAX_BYTES
+        end
+      end
     rescue EOFError, IOError, Errno::EBADF
     end
+    process = HlsProcess.new(
+      pid: pid,
+      stderr_io: err_rd,
+      stderr_thread: stderr_thread,
+      stderr_buffer: stderr_buf,
+      stderr_mutex: stderr_mutex
+    )
 
-    # Non-blocking mode: spawn ffmpeg and return immediately without
-    # waiting for the first segment.  A background monitor thread
-    # (started by the caller via HlsSession) detects ffmpeg failure.
-    # The client polls the playlist endpoint until the playlist file
-    # appears.  This eliminates the server-side wait for the first
-    # segment, significantly reducing time-to-playback on iOS.
-    unless wait_for_first_segment
-      stderr_thread.kill
-      stderr_thread.join(1)
-      err_rd.close
-      return pid
-    end
+    return process unless wait_for_first_segment
 
     playlist_path = File.join(segment_dir, "playlist.m3u8")
     begin
       deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + FIRST_SEGMENT_TIMEOUT_SECONDS
-      produced_segment = false
 
       loop do
-        # ffmpeg may exit quickly on failure (bad URL, auth) — detect that
         _, status = Process.waitpid2(pid, Process::WNOHANG)
         if status
-          # ffmpeg exited.  It may have finished successfully after
-          # producing all segments — check before declaring failure.
-          # With short sources (or very fast machines), ffmpeg can
-          # produce the first segment and exit between two iterations
-          # of this loop, so the produced_segment flag hasn't been set yet.
+          process.close_diagnostics
           if status.success? && File.exist?(playlist_path) && Dir.glob(File.join(segment_dir, "*.ts")).any?
-            produced_segment = true
             break
           end
-          raise TranscodeError, "FFmpeg exited (status #{status.exitstatus}) without producing segments. #{stderr_summary(stderr_buf)}" unless produced_segment
-          break  # ffmpeg finished naturally after producing segments
+
+          raise TranscodeError,
+            "FFmpeg exited (status #{status.exitstatus}) without producing segments. #{stderr_summary(process.diagnostic)}"
         end
 
-        if File.exist?(playlist_path) && Dir.glob(File.join(segment_dir, "*.ts")).any?
-          produced_segment = true
-          break
-        end
+        break if File.exist?(playlist_path) && Dir.glob(File.join(segment_dir, "*.ts")).any?
 
         if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
-          raise TranscodeError, "FFmpeg timed out after #{FIRST_SEGMENT_TIMEOUT_SECONDS}s waiting for first segment. #{stderr_summary(stderr_buf)}"
+          raise TranscodeError,
+            "FFmpeg timed out after #{FIRST_SEGMENT_TIMEOUT_SECONDS}s waiting for first segment. #{stderr_summary(process.diagnostic)}"
         end
 
         sleep 0.1
       end
     rescue TranscodeError
       kill_process_group(pid)
+      process.close_diagnostics
       raise
-    ensure
-      stderr_thread.kill
-      stderr_thread.join(1)
-      err_rd.close
     end
 
-    pid
+    process
   end
 
-  # Spawns a subprocess from the given command array, streams its stdout
-  # to the block, and enforces first-data timeout.  Raises TranscodeError
-  # if the process exits without producing data.
-  #
-  # Uses a Tempfile on disk as an unlimited buffer between ffmpeg's stdout
-  # and the HTTP response.  A reader thread reads from ffmpeg and writes
-  # to the file; the main thread reads from the file and yields to the
-  # block (response.stream.write).
-  #
-  # This prevents backpressure from killing the upstream connection.
-  # When the browser pauses reading (its internal media buffer is full),
-  # response.stream.write blocks, but the reader thread keeps reading
-  # from ffmpeg and writing to the file.  ffmpeg never blocks on stdout,
-  # so it keeps reading from the upstream — the connection stays alive.
-  # The file grows on disk (unlimited buffer) until the browser resumes.
-  def self.transcode_to_fmp4_internal(cmd, &block)
+  # Spawns a subprocess from the given command array and streams stdout
+  # through a bounded in-memory queue.  Backpressure propagates to ffmpeg
+  # once the queue reaches STREAM_QUEUE_MAX_BYTES; unlike the previous
+  # Tempfile spool, consumed bytes do not accumulate on disk for the full
+  # duration of every movie.
+  def self.transcode_to_fmp4_internal(cmd, telemetry_id: nil, &block)
     rd, wr = IO.pipe
     err_rd, err_wr = IO.pipe
     pid = Process.spawn(*cmd, in: "/dev/null", out: wr, err: err_wr, pgroup: true)
@@ -284,99 +286,82 @@ class TranscodeService
     err_wr.close
 
     stderr_buf = +""
+    stderr_mutex = Mutex.new
     stderr_thread = Thread.new do
-      loop { stderr_buf << err_rd.readpartial(4096) }
+      loop do
+        chunk = err_rd.readpartial(4096)
+        stderr_mutex.synchronize do
+          stderr_buf << chunk
+          stderr_buf.replace(stderr_buf.byteslice(-STDERR_MAX_BYTES, STDERR_MAX_BYTES)) if stderr_buf.bytesize > STDERR_MAX_BYTES
+        end
+      end
     rescue EOFError, IOError, Errno::EBADF
     end
 
-    # Disk-based buffer: reader thread writes ffmpeg output to a Tempfile,
-    # main thread reads from it.  File position is managed explicitly
-    # (write_pos / read_pos) under a mutex so concurrent read/write don't
-    # corrupt each other's file position.
-    buffer = Tempfile.create("streamvault")
-    buffer.binmode
-    write_pos = 0
-    read_pos = 0
-    eof = false
-    mutex = Mutex.new
-    cv = ConditionVariable.new
-
+    chunks = SizedQueue.new(STREAM_QUEUE_MAX_CHUNKS)
+    reader_error = nil
     reader_thread = Thread.new do
       begin
-        loop do
-          chunk = rd.readpartial(131_072)
-          mutex.synchronize do
-            buffer.pos = write_pos
-            buffer.write(chunk)
-            write_pos += chunk.bytesize
-            cv.signal
-          end
-        end
-      rescue EOFError, IOError, Errno::EBADF
-        mutex.synchronize do
-          eof = true
-          cv.signal
-        end
+        loop { chunks.push(rd.readpartial(STREAM_CHUNK_BYTES)) }
+      rescue EOFError
+      rescue ClosedQueueError, IOError, Errno::EBADF
+      rescue StandardError => e
+        reader_error = e
+      ensure
+        chunks.close
       end
     end
 
     begin
-      produced_output = false
       total_bytes = 0
       start_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-
-      # Wait for first data with timeout.  Poll the write_pos instead of
-      # using cv.wait — avoids a race where cv.wait returns spuriously and
-      # the timeout fires before the reader thread has a chance to read.
       deadline = start_time + FIRST_DATA_TIMEOUT_SECONDS
+      first_chunk = nil
+
       loop do
-        done = false
-        mutex.synchronize { done = (write_pos > 0 || eof) }
-        break if done
+        begin
+          first_chunk = chunks.pop(true)
+        rescue ThreadError
+          # Queue is temporarily empty while ffmpeg is still starting.
+        end
+        break if first_chunk
+
+        if chunks.closed?
+          diagnostic = stderr_mutex.synchronize { stderr_buf.dup }
+          if reader_error
+            raise TranscodeError, "FFmpeg output reader failed: #{reader_error.message}. #{stderr_summary(diagnostic)}"
+          end
+          raise TranscodeError, "FFmpeg exited without producing output. #{stderr_summary(diagnostic)}"
+        end
+
         if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
-          raise TranscodeError, "FFmpeg timed out after #{FIRST_DATA_TIMEOUT_SECONDS}s waiting for first data. #{stderr_summary(stderr_buf)}"
+          diagnostic = stderr_mutex.synchronize { stderr_buf.dup }
+          raise TranscodeError,
+            "FFmpeg timed out after #{FIRST_DATA_TIMEOUT_SECONDS}s waiting for first data. #{stderr_summary(diagnostic)}"
         end
         sleep 0.05
       end
 
-      if eof && write_pos == 0
-        raise TranscodeError, "FFmpeg exited without producing output. #{stderr_summary(stderr_buf)}"
-      end
-
-      # Read from the file and yield to the block.  When the reader
-      # catches up to the writer, wait for more data.  The yield
-      # (response.stream.write) may block when the browser pauses —
-      # that's fine, the reader thread keeps buffering to the file.
-      loop do
-        chunk = nil
-        done = false
-        mutex.synchronize do
-          while read_pos >= write_pos && !eof
-            cv.wait(mutex)
-          end
-          if read_pos < write_pos
-            available = write_pos - read_pos
-            read_size = [ available, 131_072 ].min
-            buffer.pos = read_pos
-            chunk = buffer.read(read_size)
-            read_pos += read_size
-          elsif eof
-            done = true
-          end
-        end
-
-        break if done
-        next if chunk.nil? || chunk.empty?
-
+      chunk = first_chunk
+      while chunk
         yield chunk
         total_bytes += chunk.bytesize
-        produced_output = true
+        chunk = chunks.pop
+      end
+
+      if reader_error
+        diagnostic = stderr_mutex.synchronize { stderr_buf.dup }
+        raise TranscodeError, "FFmpeg output reader failed: #{reader_error.message}. #{stderr_summary(diagnostic)}"
       end
 
       elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - start_time
       rate_kbps = elapsed.positive? ? (total_bytes * 8 / 1000.0 / elapsed).round : 0
-      Rails.logger.info("[Transcode] ffmpeg finished: #{total_bytes} bytes in #{elapsed.round(1)}s (#{rate_kbps} kbps)") if defined?(Rails)
+      if defined?(Rails)
+        id = sanitize_telemetry_id(telemetry_id)
+        Rails.logger.info("[Transcode] playback_id=#{id} ffmpeg_finished bytes=#{total_bytes} elapsed=#{elapsed.round(1)}s rate_kbps=#{rate_kbps}")
+      end
     ensure
+      chunks.close
       reader_thread.kill
       reader_thread.join(1)
       kill_process_group(pid)
@@ -384,8 +369,6 @@ class TranscodeService
       stderr_thread.join(1)
       rd.close
       err_rd.close
-      buffer.close
-      File.delete(buffer.path) rescue nil
     end
   end
   private_class_method :transcode_to_fmp4_internal
@@ -649,7 +632,7 @@ class TranscodeService
   end
   private_class_method :format_vtt_timestamp
 
-  def self.build_ffmpeg_command(input_url, headers: {}, start_seconds: 0, audio_stream: nil, subtitle_stream: nil, default_language: nil, preferred_languages: [], output_spec: :fmp4, segment_dir: nil, remux: false)
+  def self.build_ffmpeg_command(input_url, headers: {}, start_seconds: 0, audio_stream: nil, subtitle_stream: nil, default_language: nil, preferred_languages: [], output_spec: :fmp4, segment_dir: nil, remux: false, telemetry_id: nil)
     header_str = ffmpeg_headers(headers)
     # Probe video stream and media tracks in parallel — these are
     # independent ffprobe calls that each take 1-3s on a cold cache.
@@ -678,16 +661,14 @@ class TranscodeService
     # Subtitle burn requires re-encoding video, so remux is ignored if a
     # burn subtitle track is selected — falls through to normal transcode.
     #
-    # A non-zero seek must also be decoded/re-encoded.  Fast input seeking
-    # starts a copied video stream at the preceding keyframe, while decoded
-    # audio is accurately trimmed to the requested time.  With a long GOP
-    # that puts audio seconds ahead of video after every resume, seek, or
-    # recovery.  Decoding video lets ffmpeg discard the same pre-roll from
-    # both streams and start them on one timeline.
+    # Remux mode copies video for both initial playback and keyframe-aligned
+    # seeks.  The browser asks the seek-plan endpoint for the preceding
+    # keyframe, sends that anchor as start_seconds, then skips the short
+    # pre-roll locally.  Standard MSE seeks still transcode for exactness.
     effective_remux = remux && !selected_burn_subtitle_track
     video_args = if selected_burn_subtitle_track
       transcode_args
-    elsif effective_remux && seek_start_seconds.zero?
+    elsif effective_remux
       [ "-c:v", "copy" ]
     elsif browser_safe_video?(video_stream) && seek_start_seconds.zero?
       [ "-c:v", "copy" ]
@@ -696,22 +677,18 @@ class TranscodeService
     end
 
     if defined?(Rails)
-      encoder = video_args.each_cons(2).find { |k, _| k == "-c:v" }&.last || "copy"
-      Rails.logger.info("[Transcode] codec=#{video_stream[:codec_name]} #{video_stream[:width]}x#{video_stream[:height]} encoder=#{encoder}")
+      encoder = video_args.each_cons(2).find { |key, _| key == "-c:v" }&.last || "copy"
+      id = sanitize_telemetry_id(telemetry_id)
+      Rails.logger.info(
+        "[Transcode] playback_id=#{id} codec=#{video_stream[:codec_name]} " \
+        "resolution=#{video_stream[:width]}x#{video_stream[:height]} encoder=#{encoder} " \
+        "start_seconds=#{seek_start_seconds.round(2)} remux=#{effective_remux}"
+      )
     end
 
     cmd = [ FFMPEG_PATH, "-loglevel", "error" ]
-    # No -re flag: by default ffmpeg reads the input as fast as possible.
-    # This is the correct behaviour for remux/copy (-c:v copy) because the
-    # native <video> element downloading the fMP4 output needs data at
-    # *network* speed to build a buffer ahead — capping throughput at 1×
-    # playback speed (what -re does) leaves zero buffer margin and any
-    # transient transcode dip (probe, audio re-encode, CDN latency spike)
-    # immediately stalls the video.  The disk-based Tempfile buffer in
-    # transcode_to_fmp4_internal decouples ffmpeg stdout from HTTP
-    # backpressure, so a fast ffmpeg never overflows anything.
-    # The upstream-keepalive concern (ffmpeg finishes early and the CDN
-    # closes the connection) is handled by -reconnect below + -rw_timeout.
+    # fMP4/remux reads as fast as the bounded producer/consumer queues
+    # allow. HLS applies its own realtime pacing plus initial burst below.
     # Reconnect on HTTP connection drops — RealDebrid CDN / Cloudflare
     # may close the connection after a period.  Without reconnect,
     # ffmpeg exits when the upstream dies.  With reconnect, ffmpeg
@@ -743,6 +720,13 @@ class TranscodeService
     # is too much for large remote files. 1M is the sweet spot.
     cmd += [ "-analyzeduration", "1000000", "-probesize", "1000000" ]
     cmd += [ "-headers", header_str + "\r\n" ] if header_str.present?
+    if output_spec == :hls
+      # Build an initial playback cushion, then pace production at realtime.
+      # This prevents a max-speed producer from racing so far ahead that
+      # consumer-aware segment cleanup removes media before Safari requests it.
+      cmd += [ "-readrate", HLS_READ_RATE, "-readrate_initial_burst", HLS_INITIAL_BURST_SECONDS.to_s ]
+    end
+    cmd << "-noaccurate_seek" if effective_remux && seek_start_seconds.positive?
     # Input seeking (before -i): fast, uses the container's seek table.
     cmd += [ "-ss", seek_start_seconds.to_s ] if seek_start_seconds.positive?
     cmd += [ "-i", input_url ]
@@ -759,7 +743,9 @@ class TranscodeService
     end
     cmd += [ "-sn", "-dn" ]
     cmd += video_args
-    # Normalize every audio codec to AAC and continuously reconcile samples
+    if video_args != [ "-c:v", "copy" ]
+      cmd += [ "-force_key_frames", "expr:gte(t,n_forced*#{KEYFRAME_INTERVAL_SECONDS})" ]
+    end
     # with the source timestamps.  Copying AAC bypassed synchronization for
     # timestamp gaps/discontinuities, while async=1 on other codecs only did
     # hard fill/trim and could not correct gradual clock drift.  first_pts=0
@@ -1166,6 +1152,46 @@ class TranscodeService
   end
   public_class_method :probe_video_stream
 
+  # Find the keyframe immediately preceding a remux seek target.  Stream
+  # copy cannot start on an arbitrary inter-frame packet, so the browser
+  # starts this short pre-roll and advances locally to the exact target.
+  # Returns nil when the source cannot provide a trustworthy seek anchor;
+  # callers must fall back to accurate transcoding in that case.
+  def self.probe_remux_seek(input_url, target_seconds:, headers: {})
+    target = normalized_start_seconds(target_seconds)
+    return { anchor_seconds: 0.0, skip_seconds: 0.0 } if target.zero?
+
+    header_str = ffmpeg_headers(headers)
+    cmd = [ FFPROBE_PATH, "-v", "error" ]
+    cmd += [ "-headers", header_str + "\r\n" ] if header_str.present?
+    cmd += [
+      "-select_streams", "v:0",
+      "-skip_frame", "nokey",
+      "-read_intervals", "#{target}%+0.1",
+      "-show_entries", "frame=best_effort_timestamp_time",
+      "-of", "json",
+      input_url
+    ]
+
+    result = capture_command(cmd, timeout_seconds: REMUX_KEYFRAME_PROBE_TIMEOUT_SECONDS)
+    return nil unless result.status&.success? && !result.timed_out
+
+    data = JSON.parse(result.stdout)
+    anchor = Array(data["frames"])
+      .filter_map { |frame| finite_float(frame["best_effort_timestamp_time"]) }
+      .select { |timestamp| timestamp >= 0 && timestamp <= target + 0.25 }
+      .max
+    return nil unless anchor
+
+    skip = target - anchor
+    return nil if skip.negative? || skip > MAX_REMUX_PREROLL_SECONDS
+
+    { anchor_seconds: anchor, skip_seconds: skip }
+  rescue JSON::ParserError, StandardError
+    nil
+  end
+  public_class_method :probe_remux_seek
+
   def self.extract_video_stream(output)
     data = JSON.parse(output)
     stream = Array(data["streams"]).first || {}
@@ -1347,6 +1373,12 @@ class TranscodeService
   end
   private_class_method :stderr_summary
 
+  def self.sanitize_telemetry_id(value)
+    sanitized = value.to_s.gsub(/[^a-zA-Z0-9_-]/, "").first(80)
+    sanitized.empty? ? "unknown" : sanitized
+  end
+  private_class_method :sanitize_telemetry_id
+
   # ── Process management ────────────────────────────────────────────
 
   def self.capture_command(cmd, timeout_seconds:)
@@ -1434,7 +1466,10 @@ class TranscodeService
     signal_group(pid, "CONT")
 
     signaled = signal_group(pid, "TERM")
-    return unless signaled  # ESRCH → already gone
+    unless signaled
+      waitpid_safely(pid)
+      return
+    end
 
     deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + SHUTDOWN_GRACE_SECONDS
     while group_alive?(pid)

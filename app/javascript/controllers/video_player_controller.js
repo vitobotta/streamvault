@@ -34,6 +34,14 @@ const REBUFFER_STALL_TIMEOUT_MS = 20000
 // "Buffering" forever.  12s gives ffmpeg time to build buffer even on
 // a slow source; the stall watchdog handles a genuinely dead source.
 const REBUFFER_MAX_WAIT_MS = 12000
+const MSE_FORWARD_BUFFER_HIGH_SECONDS = 45
+const MSE_FORWARD_BUFFER_LOW_SECONDS = 30
+const MSE_PENDING_BUFFER_HIGH_BYTES = 16 * 1024 * 1024
+const MSE_PENDING_BUFFER_LOW_BYTES = 8 * 1024 * 1024
+const MSE_CAPACITY_POLL_MS = 250
+const MSE_QUOTA_RETRY_MS = 250
+const MSE_BACK_BUFFER_SECONDS = 30
+const MSE_QUOTA_BACK_BUFFER_SECONDS = 2
 const INTERACTIVE_SELECTOR = "button, a, input, textarea, select, [contenteditable='true']"
 
 export default class extends Controller {
@@ -53,7 +61,7 @@ export default class extends Controller {
       season: String, episode: String, resumeAt: String, startSeconds: Number,
       title: String, duration: Number, posterUrl: String,
       defaultLanguage: String, preferredLanguages: String,
-      tracksUrl: String, subtitlesUrl: String, resumeUrl: String
+      tracksUrl: String, seekUrl: String, subtitlesUrl: String, resumeUrl: String
     }
   }
 
@@ -98,8 +106,19 @@ export default class extends Controller {
     this.sourceBuffer = null
     this.fetchController = null
     this.pendingSeekSeconds = null
+    this.remuxLoadToken = 0
+    this.remuxSeekController = null
+    this.remuxLoadCleanup = null
     this.stallWatchdogTimer = null
     this.bufferingOverlayTimer = null
+    this.pendingAppendBuffer = null
+    this.quotaRetryTimer = null
+    this.quotaBlockedAtTime = null
+    this.mseReadPaused = false
+    this.mseQuotaErrorCount = 0
+    this.systemRebufferPaused = false
+    this.rebufferDeadlineTimer = null
+    this.bufferAheadDeadlineTimer = null
     this.lastProgressTime = 0
     this.lastProgressPosition = 0
     this.lastBufferEnd = 0
@@ -120,6 +139,8 @@ export default class extends Controller {
     this.rebufferDeadline = null
     this.mseSupported = window.MediaSource && MediaSource.isTypeSupported('video/mp4; codecs="avc1.42E01E,mp4a.40.2"')
     this.hlsSessionId = null
+    this.playbackId = globalThis.crypto?.randomUUID?.() ||
+      `${Date.now()}-${Math.random().toString(16).slice(2)}`
 
     this.ensureVideoSource()
 
@@ -179,11 +200,18 @@ export default class extends Controller {
     this.clearStartupOverlayTimer()
     this.clearSuppressSeekClickTimer()
     this.clearStallWatchdog()
-    if (this.bufferingOverlayTimer) clearTimeout(this.bufferingOverlayTimer)
+    clearTimeout(this.bufferingOverlayTimer)
+    clearTimeout(this.quotaRetryTimer)
+    clearTimeout(this.rebufferDeadlineTimer)
+    clearTimeout(this.bufferAheadDeadlineTimer)
     this.stopProgressWatchdog()
     this.playbackStarted = false
     this.bufferAheadDeadline = null
     this.rebufferDeadline = null
+    this.cancelRemuxLoad()
+    this.remuxLoadToken += 1
+    this.pendingAppendBuffer = null
+    this.systemRebufferPaused = false
     this.cancelSeekDrag()
     this.element.removeEventListener("mousemove", this.mouseMoveHandler)
     document.removeEventListener("keydown", this.keydownHandler)
@@ -250,6 +278,12 @@ export default class extends Controller {
       return null
     }
   }
+
+  urlWithPlaybackId(value) {
+    const url = new URL(value, window.location.origin)
+    url.searchParams.set("playback_id", this.playbackId)
+    return url.pathname + url.search
+  }
   async ensureVideoSource() {
     if (!this.streamingUrlValue) return
     if (this.isIOS()) {
@@ -284,6 +318,14 @@ export default class extends Controller {
     this.bufferQueue = []
     this.fmp4Buffer = null
     this.fmp4BufferSize = 0
+    this.pendingAppendBuffer = null
+    this.quotaBlockedAtTime = null
+    this.mseReadPaused = false
+    clearTimeout(this.quotaRetryTimer)
+    this.quotaRetryTimer = null
+    this.clearSystemRebufferGate()
+    clearTimeout(this.bufferAheadDeadlineTimer)
+    this.bufferAheadDeadlineTimer = null
     this.playbackStarted = false
     this.isStalled = false
     this.userPaused = false
@@ -364,24 +406,19 @@ export default class extends Controller {
     return !!this.remuxDirectPlay
   }
 
-  // Can the current stream be played directly by the browser?  Requires:
-  //   1. A direct stream proxy URL is available
-  //   2. The tracks probe confirmed direct_playable (H.264/AAC MP4)
-  //   3. No subtitle burn is active (browser renders text subs natively)
-  //   4. No audio track switch is active — the native <video> element
-  //      plays whatever audio is muxed as default in the file; it can't
-  //      reliably switch audio tracks for MP4/MKV sources across browsers.
-  //      Direct play is allowed when selectedAudioStream is null (no
-  //      preference) OR when it matches the default audio track (the
-  //      browser will play that track anyway).  Only an explicit switch
-  //      to a non-default track blocks direct play.
-  //   5. Not in a stall recovery cycle (recovery always uses MSE/transcode)
+  // Can the current stream be played without ffmpeg? The server confirms
+  // an MP4-family container plus default AAC audio; the browser makes the
+  // final codec decision because HEVC support is platform-specific.
   directPlayEligible() {
     if (!this.directStreamUrlValue) return false
     if (this.streamRecoveryAttempts > 0) return false
     if (this.burnedSubtitleSelected()) return false
     if (this.selectedAudioStream && this.selectedAudioStream !== this.defaultAudioStreamIndex()) return false
-    return this.tracksData?.direct_playable === true
+    if (this.tracksData?.direct_playable !== true) return false
+
+    const codec = this.tracksData?.video_codec
+    if (!codec) return false
+    return codec === "h264" || this.browserCanPlayCodec(codec)
   }
 
   // Return the index (as string) of the default audio track, or null if
@@ -479,7 +516,7 @@ export default class extends Controller {
     }
     if (this.fetchController) { this.fetchController.abort(); this.fetchController = null }
 
-    this.videoTarget.src = this.directStreamUrlValue
+    this.videoTarget.src = this.urlWithPlaybackId(this.directStreamUrlValue)
     this.videoTarget.load()
 
     if (this.startSecondsValue > 0) {
@@ -494,12 +531,12 @@ export default class extends Controller {
     // onVideoReady() sets them when "playing" fires.
   }
 
-  // Start remux direct play: set <video> src to the transcode endpoint
-  // with remux=1 so ffmpeg copies the video stream verbatim (-c:v copy)
-  // and only transcodes audio to AAC.  The browser downloads the fMP4
-  // stream and plays it natively — no MSE, no SourceBuffer, no B-frame
-  // limitation.  Runs at near network speed — no video re-encode.
-  startRemuxDirectPlay() {
+  // Start remux direct play.  Non-zero positions first resolve to the
+  // preceding source keyframe; ffmpeg copies from that anchor and the
+  // native video element skips the short pre-roll locally.  This keeps
+  // resume, seek, and recovery on -c:v copy instead of silently turning
+  // them into full video transcodes.
+  async startRemuxDirectPlay() {
     this.directPlayActive = true
     this.remuxDirectPlay = true
     this.isSeeking = false
@@ -514,36 +551,158 @@ export default class extends Controller {
     }
     if (this.fetchController) { this.fetchController.abort(); this.fetchController = null }
 
-    const remuxUrl = this.buildRemuxDirectUrl()
-    this.videoTarget.src = remuxUrl
-    this.videoTarget.load()
-
-    // Wait for the first frame to be decoded before starting playback.
-    // HEVC (h265) via VideoToolbox has higher startup latency than
-    // H.264 — the decoder needs a few frames to initialise.  Without
-    // this, audio starts playing before the first video frame is
-    // ready, causing a brief video freeze that catches up abruptly.
-    this.videoTarget.addEventListener("loadeddata", () => {
-      this.videoTarget.play().catch(() => {})
-    }, { once: true })
+    await this.loadRemuxAt(this.startSecondsValue)
   }
 
-  // Build the remux transcode URL with the current start_seconds and
-  // audio/subtitle stream params.  The base URL comes from the tracks
-  // response (remux_direct_url) and already includes remux=1.
-  buildRemuxDirectUrl() {
+  async loadRemuxAt(targetSeconds) {
+    this.cancelRemuxLoad()
+    const token = ++this.remuxLoadToken
+    const seekController = new AbortController()
+    this.remuxSeekController = seekController
+    const plan = await this.loadRemuxSeekPlan(targetSeconds, seekController.signal)
+    if (this.remuxSeekController === seekController) this.remuxSeekController = null
+    if (token !== this.remuxLoadToken) return
+    if (!plan) {
+      this.fallbackRemuxToMse(targetSeconds)
+      return
+    }
+
+    const anchorSeconds = Number(plan.anchor_seconds)
+    const skipSeconds = Number(plan.skip_seconds)
+    if (!Number.isFinite(anchorSeconds) || !Number.isFinite(skipSeconds)) {
+      this.fallbackRemuxToMse(targetSeconds)
+      return
+    }
+
+    this.startSecondsValue = anchorSeconds
+    this.element.dataset.videoPlayerStartSecondsValue = anchorSeconds.toString()
+    this.loadRemuxSource(
+      this.buildRemuxDirectUrl(anchorSeconds),
+      skipSeconds,
+      targetSeconds,
+      token
+    )
+  }
+
+  async loadRemuxSeekPlan(targetSeconds, signal = null) {
+    const rawUrl = this.extractRawUrl()
+    if (!rawUrl) return null
+
+    try {
+      const endpoint = this.hasSeekUrlValue ? this.seekUrlValue : "/transcode/seek"
+      const url = new URL(endpoint, window.location.origin)
+      url.searchParams.set("url", rawUrl)
+      url.searchParams.set("start_seconds", targetSeconds)
+      const response = await fetch(url.pathname + url.search, {
+        headers: { "Accept": "application/json" },
+        signal
+      })
+      if (!response.ok) return null
+      const plan = await response.json()
+      return plan.copy_safe === true ? plan : null
+    } catch (error) {
+      if (error.name !== "AbortError") console.warn("Remux seek planning failed:", error)
+      return null
+    }
+  }
+
+  cancelRemuxLoad() {
+    if (this.remuxSeekController) {
+      this.remuxSeekController.abort()
+      this.remuxSeekController = null
+    }
+    if (this.remuxLoadCleanup) {
+      const cleanup = this.remuxLoadCleanup
+      this.remuxLoadCleanup = null
+      cleanup()
+    }
+  }
+
+  loadRemuxSource(remuxUrl, skipSeconds, targetSeconds, token) {
+    const video = this.videoTarget
+    let completed = false
+    let timeoutId = null
+
+    const cleanup = () => {
+      video.removeEventListener("loadeddata", maybeStart)
+      video.removeEventListener("canplay", maybeStart)
+      video.removeEventListener("progress", maybeStart)
+      clearTimeout(timeoutId)
+      if (this.remuxLoadCleanup === cleanup) this.remuxLoadCleanup = null
+    }
+    const play = () => {
+      if (token !== this.remuxLoadToken) return
+      const playPromise = video.play()
+      if (playPromise?.catch) playPromise.catch(() => {})
+    }
+    const maybeStart = () => {
+      if (completed) return
+      if (token !== this.remuxLoadToken) {
+        cleanup()
+        return
+      }
+      if (!this.mediaRangeContains(skipSeconds, 0.5)) return
+
+      completed = true
+      cleanup()
+      if (skipSeconds > 0) {
+        video.addEventListener("seeked", play, { once: true })
+        video.currentTime = skipSeconds
+      } else {
+        play()
+      }
+    }
+
+    this.remuxLoadCleanup = cleanup
+    video.addEventListener("loadeddata", maybeStart)
+    video.addEventListener("canplay", maybeStart)
+    video.addEventListener("progress", maybeStart)
+    timeoutId = setTimeout(() => {
+      if (completed || token !== this.remuxLoadToken) return
+      completed = true
+      cleanup()
+      this.fallbackRemuxToMse(targetSeconds)
+    }, STREAM_STALL_TIMEOUT_MS)
+
+    video.src = remuxUrl
+    video.load()
+  }
+
+  mediaRangeContains(position, minAhead = 0) {
+    const ranges = this.videoTarget.buffered
+    for (let index = 0; index < ranges.length; index++) {
+      if (ranges.start(index) <= position && ranges.end(index) >= position + minAhead) return true
+    }
+    return false
+  }
+
+  fallbackRemuxToMse(targetSeconds) {
+    this.cancelRemuxLoad()
+    this.remuxLoadToken += 1
+    this.directPlayActive = false
+    this.remuxDirectPlay = false
+    this.startSecondsValue = targetSeconds
+    this.element.dataset.videoPlayerStartSecondsValue = targetSeconds.toString()
+
+    const url = new URL(this.streamingUrlValue, window.location.origin)
+    url.searchParams.set("start_seconds", targetSeconds)
+    if (this.selectedAudioStream) url.searchParams.set("audio_stream", this.selectedAudioStream)
+    if (this.burnedSubtitleSelected()) url.searchParams.set("subtitle_stream", this.selectedSubtitleStream)
+    const nextSrc = url.pathname + url.search
+    this.streamingUrlValue = nextSrc
+    this.element.dataset.videoPlayerStreamingUrlValue = nextSrc
+    this.setupMseSource(nextSrc)
+  }
+
+  // Build the remux URL from the resolved keyframe anchor.
+  buildRemuxDirectUrl(startSeconds = this.startSecondsValue) {
     const base = this.tracksData?.remux_direct_url
     if (!base) return this.streamingUrlValue
     const url = new URL(base, window.location.origin)
-    if (this.startSecondsValue > 0) {
-      url.searchParams.set("start_seconds", this.startSecondsValue)
-    }
-    if (this.selectedAudioStream) {
-      url.searchParams.set("audio_stream", this.selectedAudioStream)
-    }
-    if (this.burnedSubtitleSelected()) {
-      url.searchParams.set("subtitle_stream", this.selectedSubtitleStream)
-    }
+    if (startSeconds > 0) url.searchParams.set("start_seconds", startSeconds)
+    if (this.selectedAudioStream) url.searchParams.set("audio_stream", this.selectedAudioStream)
+    if (this.burnedSubtitleSelected()) url.searchParams.set("subtitle_stream", this.selectedSubtitleStream)
+    url.searchParams.set("playback_id", this.playbackId)
     return url.pathname + url.search
   }
 
@@ -561,6 +720,7 @@ export default class extends Controller {
 
     try {
       const params = new URLSearchParams({ url: directUrl })
+      params.set("playback_id", this.playbackId)
       if (this.startSecondsValue && this.startSecondsValue > 0) {
         params.set('start_seconds', this.startSecondsValue)
       }
@@ -716,6 +876,7 @@ export default class extends Controller {
 
     try {
       const params = new URLSearchParams({ url: directUrl })
+      params.set("playback_id", this.playbackId)
       if (startSeconds > 0) {
         params.set('start_seconds', startSeconds)
       }
@@ -799,7 +960,8 @@ export default class extends Controller {
   }
 
   async startStreamingFetch(url) {
-    this.fetchController = new AbortController()
+    const fetchController = new AbortController()
+    this.fetchController = fetchController
     // Arm the stall watchdog before awaiting the fetch.  If the source
     // is dead (e.g. an expired RealDebrid link) the server returns a
     // 502 after its first-data timeout, and the only thing that will
@@ -807,7 +969,7 @@ export default class extends Controller {
     // a fresh "waiting" event will fire when no data ever arrives.
     this.startStallWatchdog()
     try {
-      const response = await fetch(url, { signal: this.fetchController.signal })
+      const response = await fetch(this.urlWithPlaybackId(url), { signal: fetchController.signal })
       if (!response.ok) {
         console.warn("Stream fetch failed:", response.status)
         // A 502 means ffmpeg couldn't open the source (expired link,
@@ -823,6 +985,8 @@ export default class extends Controller {
         // pausing between bursts is normal. The stall watchdog on the
         // video element detects true playback stalls (buffer ran dry
         // with no new data arriving).
+        const capacityAvailable = await this.waitForMseReadCapacity(fetchController.signal)
+        if (!capacityAvailable) return
         const { done, value } = await reader.read()
         if (done) {
           // The server closed the response early (e.g. Cloudflare 100s
@@ -840,13 +1004,48 @@ export default class extends Controller {
           // we have — better to play with a small buffer than stall on
           // a slow source forever.
           this.bufferAheadDeadline = Date.now() + BUFFER_AHEAD_MAX_WAIT_MS
+          clearTimeout(this.bufferAheadDeadlineTimer)
+          this.bufferAheadDeadlineTimer = setTimeout(() => {
+            this.bufferAheadDeadlineTimer = null
+            this.maybeStartPlayback(true)
+          }, BUFFER_AHEAD_MAX_WAIT_MS)
         }
         this.queueBufferChunk(value)
       }
     } catch (e) {
       if (e.name === "AbortError") return
       console.warn("Stream fetch failed:", e)
+      this.handlePrematureStreamEnd()
     }
+  }
+
+  async waitForMseReadCapacity(signal) {
+    while (!signal.aborted) {
+      const bufferedAhead = this.playbackStarted
+        ? this.bufferedAheadOfCurrent()
+        : Math.max(0, this.currentBufferEnd() - this.videoTarget.currentTime)
+      const pendingBytes = this.fmp4BufferSize || 0
+      const overHighWater =
+        this.pendingAppendBuffer !== null ||
+        bufferedAhead >= MSE_FORWARD_BUFFER_HIGH_SECONDS ||
+        pendingBytes >= MSE_PENDING_BUFFER_HIGH_BYTES
+
+      if (!this.mseReadPaused && !overHighWater) return true
+      this.mseReadPaused = true
+
+      const belowLowWater =
+        this.pendingAppendBuffer === null &&
+        bufferedAhead <= MSE_FORWARD_BUFFER_LOW_SECONDS &&
+        pendingBytes <= MSE_PENDING_BUFFER_LOW_BYTES
+      if (belowLowWater) {
+        this.mseReadPaused = false
+        return true
+      }
+
+      await this.#sleep(MSE_CAPACITY_POLL_MS)
+    }
+
+    return false
   }
 
   // ── Stall watchdog ────────────────────────────────────────────────
@@ -882,14 +1081,10 @@ export default class extends Controller {
       return
     }
 
-    // Direct play (including remux): the browser manages its own
-    // buffering and recovery.  "waiting" fires for transient reasons
-    // (internal buffer management, codec reinit, network hiccup) that
-    // the browser resolves on its own within a second or two.  Use a
-    // 1500ms debounce — much longer than MSE's 200ms — to avoid showing
-    // "Buffering..." for transient waits that the browser handles
-    // silently.  If the video is still frozen after 1500ms with no
-    // buffer ahead, then it's a real stall.
+    // Native media playback, including remux, is browser-buffered. Chrome
+    // deliberately maintains only a small buffer for chunked remux responses,
+    // so forcing a deep application-level gate here creates the stalls it is
+    // meant to prevent. Debounce transient waits and let the browser resume.
     if (this.isDirectPlay()) {
       clearTimeout(this.bufferingOverlayTimer)
       const waitPos = this.videoTarget.currentTime
@@ -899,10 +1094,6 @@ export default class extends Controller {
         if (this.hasBufferedAhead(2)) return
         this.isStalled = true
         this.showBufferingOverlay()
-        // Don't start the stall watchdog for direct play — the browser
-        // handles its own recovery.  The progress watchdog (silent
-        // freeze detector) is sufficient to catch a genuinely dead
-        // stream without prematurely switching to MSE/transcode.
         this.startProgressWatchdog()
       }, 1500)
       return
@@ -916,35 +1107,47 @@ export default class extends Controller {
     // paused stays false during an MSE underrun.
     clearTimeout(this.bufferingOverlayTimer)
     const waitPos = this.videoTarget.currentTime
-      this.bufferingOverlayTimer = setTimeout(() => {
+    const hadBufferedAheadAtWait = this.hasBufferedAhead(2)
+    this.bufferingOverlayTimer = setTimeout(() => {
         this.bufferingOverlayTimer = null
-        // If currentTime advanced, the stall resolved — don't show overlay.
-        if (this.videoTarget.currentTime > waitPos + 0.1) return
-        // If there's buffered data ahead, the "waiting" event is a
-        // transient decoder re-init (e.g. after sourceBuffer.remove()
-        // from evictOldBuffer flushes the decode pipeline), not a real
-        // data starvation.  The browser will resume on its own once the
-        // decoder catches up — don't show "Buffering..." for this.
-        // The progress watchdog is still armed (we return before
-        // stopProgressWatchdog below) and will catch a true stall.
-        if (this.hasBufferedAhead(2)) return
-        this.stopProgressWatchdog()
-        this.isStalled = true
-        this.showBufferingOverlay()
-        // Set a rebuffer deadline: if the gate threshold isn't reached
-      // within REBUFFER_MAX_WAIT_MS, resume with whatever we have.
-      // Without this, a trickling source keeps resetting the stall
-      // watchdog on each tiny burst and the video hangs on "Buffering"
-      // forever because the rebuffer gate is never reached.
-      if (!this.rebufferDeadline) {
-        this.rebufferDeadline = Date.now() + REBUFFER_MAX_WAIT_MS
-      }
-      // After a stall with playback already started, use a shorter
-      // stall watchdog timeout — the 60s default is for initial
-      // connection; a rebuffer stall means the fetch may have ended
-      // and no data is arriving, so reconnect sooner.
-      this.startStallWatchdog(this.playbackStarted ? REBUFFER_STALL_TIMEOUT_MS : STREAM_STALL_TIMEOUT_MS)
+        const playbackAdvanced = this.videoTarget.currentTime > waitPos + 0.1
+        // A wait that began with data is a decoder re-init and can resolve
+        // through either playback progress or the existing buffer. A wait
+        // that began dry must not be dismissed by a tiny append that moves
+        // the playhead briefly; require the full rebuffer high-water mark.
+        if (hadBufferedAheadAtWait) {
+          if (playbackAdvanced || this.hasBufferedAhead(2)) return
+        } else if (playbackAdvanced && this.bufferedAheadOfCurrent() >= REBUFFER_AHEAD_SECONDS) {
+          return
+        }
+        this.beginSystemRebuffer()
+        // After a stall with playback already started, use a shorter
+        // watchdog. The explicit system pause prevents trickle-resume churn.
+        this.startStallWatchdog(this.playbackStarted ? REBUFFER_STALL_TIMEOUT_MS : STREAM_STALL_TIMEOUT_MS)
     }, 200)
+  }
+
+  beginSystemRebuffer() {
+    if (this.userPaused) return
+
+    this.stopProgressWatchdog()
+    this.isStalled = true
+    this.systemRebufferPaused = true
+    this.showBufferingOverlay()
+    this.videoTarget.pause()
+    this.rebufferDeadline = Date.now() + REBUFFER_MAX_WAIT_MS
+    clearTimeout(this.rebufferDeadlineTimer)
+    this.rebufferDeadlineTimer = setTimeout(() => {
+      this.rebufferDeadlineTimer = null
+      this.maybeStartPlayback(true)
+    }, REBUFFER_MAX_WAIT_MS)
+  }
+
+  clearSystemRebufferGate() {
+    clearTimeout(this.rebufferDeadlineTimer)
+    this.rebufferDeadlineTimer = null
+    this.rebufferDeadline = null
+    this.systemRebufferPaused = false
   }
 
   // Returns true if there's at least `minSeconds` (default 0.5s) of
@@ -1047,29 +1250,18 @@ export default class extends Controller {
     const now = Date.now()
     const pos = this.videoTarget.currentTime
     const elapsed = now - this.lastProgressTime
+    const playbackAdvanced = pos > this.lastProgressPosition + 0.1
 
-    // currentTime advanced → playback is alive.  Reset the baseline.
-    if (pos > this.lastProgressPosition + 0.1) {
+    if (playbackAdvanced) {
       this.lastProgressPosition = pos
       this.lastProgressTime = now
     }
 
-    // ── Download stall detection (direct/remux play) ──────────────
-    // For direct play, the browser manages its own download.  When the
-    // server (ffmpeg/RealDebrid) dies or the connection drops, the
-    // browser stops receiving data.  The 'progress' event stops firing,
-    // but currentTime keeps advancing (playing from buffer).  The freeze
-    // detection below only fires when currentTime stops — by then the
-    // buffer has already run out and the user sees "Buffering...".
-    //
-    // Use two signals to detect a download stall:
-    // 1. lastProgressEventTime: the 'progress' event fires when new
-    //    data arrives.  If it hasn't fired for 15s, the download has
-    //    stopped.  This is the most reliable signal — it doesn't depend
-    //    on buffered ranges being reported correctly.
-    // 2. Buffer growth: if the buffer end hasn't grown for 15s, the
-    //    download has stopped.  Fallback for browsers that don't fire
-    //    'progress' reliably.
+    // ── Download starvation detection (direct/remux play) ─────────
+    // Native media elements may intentionally stop requesting data and
+    // report only a small buffer while playback remains healthy. Missing
+    // progress events are actionable only when the playhead also stopped,
+    // readyState lost future data, and the contiguous buffer is dry.
     if (this.isDirectPlay()) {
       const dlStalledMs = now - this.lastProgressEventTime
       const bufEnd = this.currentBufferEnd()
@@ -1079,43 +1271,38 @@ export default class extends Controller {
         this.lastBufferDataTime = now
       }
       const bufStalledMs = now - this.lastBufferDataTime
-      const stalled = dlStalledMs > 15000 || (bufStalledMs > 15000 && !bufGrowing)
+      const networkQuiet = dlStalledMs > 15000 || (bufStalledMs > 15000 && !bufGrowing)
 
-      if (stalled) {
+      if (networkQuiet) {
         const bufferAhead = this.bufferedAheadOfCurrent()
+        const genuinelyStarved =
+          !playbackAdvanced &&
+          this.videoTarget.readyState < 3 &&
+          bufferAhead < 0.5
 
-        // For remux direct play (native <video>), the browser manages its
-        // own download.  When the browser's internal media buffer is full,
-        // it stops reading from the HTTP response — no 'progress' event
-        // fires.  This is NORMAL: the browser is playing from its buffer
-        // and will resume reading when it needs more data.  Only reconnect
-        // when the buffer is actually running dry (< 5s ahead).
-        if (this.isRemuxDirectPlay() && bufferAhead > 5) {
-          this.lastProgressEventTime = now
-          this.lastBufferDataTime = now
-          this.lastBufferEnd = bufEnd
+        if (genuinelyStarved) {
+          console.warn(`Download starved — no progress event for ${Math.round(dlStalledMs / 1000)}s — reconnecting`)
+          this.progressWatchdogArmed = false
+          this.handleStreamStall("download_stall")
           return
         }
 
-        console.warn(`Download stalled — no progress event for ${Math.round(dlStalledMs / 1000)}s, buffer ahead: ${bufferAhead.toFixed(1)}s — reconnecting`)
-        this.progressWatchdogArmed = false
-        this.reportStall("download_stall")
-        this.handleStreamStall()
-        return
+        this.lastProgressEventTime = now
+        this.lastBufferDataTime = now
+        this.lastBufferEnd = bufEnd
       }
     }
 
     // ── Freeze detection (all paths) ──────────────────────────────
     // currentTime has not advanced since the last tick.  If this has
     // persisted longer than the threshold, treat it as a silent stall.
-    if (elapsed >= PROGRESS_STALL_TIMEOUT_MS) {
+    if (!playbackAdvanced && elapsed >= PROGRESS_STALL_TIMEOUT_MS) {
       console.warn(`Silent freeze detected — currentTime stuck at ${pos} for ${Math.round(elapsed / 1000)}s`)
       this.progressWatchdogArmed = false
-      this.reportStall("silent_freeze")
       if (this.isHls()) {
-        this.handleHlsStall()
+        this.handleHlsStall("silent_freeze")
       } else {
-        this.handleStreamStall()
+        this.handleStreamStall("silent_freeze")
       }
     }
   }
@@ -1155,7 +1342,7 @@ export default class extends Controller {
   // waiting for data longer than STREAM_STALL_TIMEOUT_MS. Aborts the
   // current fetch and reconnects from the current playback position,
   // up to STREAM_MAX_RECOVERY_ATTEMPTS times.
-  handleStreamStall() {
+  handleStreamStall(eventType = "stall") {
     // Never trigger recovery while the user has deliberately paused.
     // The stall watchdog and progress watchdog can fire long after a
     // user pause (60s/30s), and reconnectFromCurrentPosition resets
@@ -1177,7 +1364,7 @@ export default class extends Controller {
     this.streamRecoveryAttempts += 1
     this.streamRecoveryActive = true
     console.warn(`Stream stalled — recovering (attempt ${this.streamRecoveryAttempts}/${STREAM_MAX_RECOVERY_ATTEMPTS})`)
-    this.reportStall("stall")
+    this.reportStall(eventType)
 
     // For direct play (including remux), restart the same path — don't
     // switch to MSE/transcode.  The stall watchdog fires on genuine data
@@ -1210,38 +1397,30 @@ export default class extends Controller {
     // reconnect, but with pointer-events-none so they can still seek.
     this.showBufferingOverlay()
 
-    if (this.isRemuxDirectPlay()) {
-      // Remux: rebuild the URL with new start_seconds and reload.
-      const remuxUrl = this.buildRemuxDirectUrl()
-      console.log(`[Player] Reconnecting remux direct play at ${targetSeconds}s`)
-      this.videoTarget.src = remuxUrl
-    } else {
-      // Direct play: reload the same URL.  The browser handles seeking
-      // via Range requests, so just reload and seek to the target.
-      console.log(`[Player] Reconnecting direct play at ${targetSeconds}s`)
-      this.videoTarget.src = this.directStreamUrlValue
-    }
-
-    this.videoTarget.load()
-    if (this.isRemuxDirectPlay()) {
-      // Wait for the first frame before playing — HEVC decoder warmup.
-      this.videoTarget.addEventListener("loadeddata", () => {
-        this.videoTarget.play().catch(() => {})
-      }, { once: true })
-    } else {
-      // Direct play (H.264) — no decoder warmup delay needed.
-      const p = this.videoTarget.play()
-      if (p?.catch) p.catch(() => {})
-    }
-
     this.clearStallWatchdog()
     this.stopProgressWatchdog()
-
-    // Don't start the progress watchdog here — onVideoReady() will
-    // start it when "playing" fires.  But DO arm a stall watchdog
-    // with the initial timeout (60s) in case "playing" never fires
-    // (ffmpeg takes a while to start, or the upstream is still dead).
     this.startStallWatchdog(STREAM_STALL_TIMEOUT_MS)
+
+    if (this.isRemuxDirectPlay()) {
+      console.log(`[Player] Reconnecting remux direct play at ${targetSeconds}s`)
+      this.loadRemuxAt(targetSeconds)
+      return
+    }
+
+    // Native direct play reloads the Range-capable source, then seeks back
+    // to the absolute playhead after metadata is available.
+    console.log(`[Player] Reconnecting direct play at ${targetSeconds}s`)
+    const play = () => this.videoTarget.play().catch(() => {})
+    this.videoTarget.addEventListener("loadedmetadata", () => {
+      if (targetSeconds > 0) {
+        this.videoTarget.addEventListener("seeked", play, { once: true })
+        this.videoTarget.currentTime = targetSeconds
+      } else {
+        play()
+      }
+    }, { once: true })
+    this.videoTarget.src = this.urlWithPlaybackId(this.directStreamUrlValue)
+    this.videoTarget.load()
   }
 
   // HLS stall recovery (iOS).  When the progress watchdog detects
@@ -1251,7 +1430,7 @@ export default class extends Controller {
   // transcode from the current playback position — the same path a
   // user seek takes — so playback resumes instead of hanging on a
   // frozen frame or "Buffering" forever.
-  handleHlsStall() {
+  handleHlsStall(eventType = "hls_stall") {
     if (this.userPaused) return
     if (this.isSeeking) return
     if (this.streamRecoveryAttempts >= STREAM_MAX_RECOVERY_ATTEMPTS) {
@@ -1262,7 +1441,7 @@ export default class extends Controller {
         overlay.removeEventListener("click", onRetry)
         this.hideSeekingOverlay()
         this.streamRecoveryAttempts = 0
-        this.handleHlsStall()
+        this.handleHlsStall("manual_retry")
       }
       overlay.addEventListener("click", onRetry)
       return
@@ -1270,6 +1449,7 @@ export default class extends Controller {
 
     this.streamRecoveryAttempts += 1
     console.warn(`HLS stall detected — restarting session (attempt ${this.streamRecoveryAttempts}/${STREAM_MAX_RECOVERY_ATTEMPTS})`)
+    this.reportStall(eventType)
     const targetSeconds = Math.floor(this.currentPlaybackPosition())
     this.isSeeking = true
     this.showSeekingOverlay("Reconnecting...")
@@ -1300,7 +1480,7 @@ export default class extends Controller {
     // No buffer to play through — recover immediately.
     if (!this.playbackStarted || !this.sourceBuffer || this.sourceBuffer.buffered.length === 0) {
       console.warn("Stream fetch ended early with no buffer — recovering.")
-      this.handleStreamStall()
+      this.handleStreamStall("premature_end")
       return
     }
 
@@ -1315,8 +1495,7 @@ export default class extends Controller {
     const bufferedAhead = this.bufferedAheadOfCurrent()
     if (bufferedAhead < 30) {
       console.warn(`Stream fetch ended early with ${bufferedAhead.toFixed(1)}s buffer — reconnecting.`)
-      this.reportStall("premature_end")
-      this.handleStreamStall()
+      this.handleStreamStall("premature_end")
       return
     }
     console.warn(`Stream fetch ended early with ${bufferedAhead.toFixed(1)}s buffer — continuing from buffer.`)
@@ -1342,24 +1521,52 @@ export default class extends Controller {
     return 0
   }
 
-  // Report a stall event to the server for telemetry/diagnostics.
-  // Fire-and-forget — never blocks or recovers on failure.
-  reportStall(eventType) {
-    const pos = this.currentPlaybackPosition()
-    const bufAhead = this.bufferedAheadOfCurrent()
-    const mode = this.isDirectPlay() ? "direct" : this.isHls() ? "hls" : "transcode"
+  // Report one structured event per recovery decision.  No stream URL,
+  // filename, token, or API credential is included.
+  reportStall(eventType, details = {}) {
+    const ranges = this.sourceBuffer?.buffered || this.videoTarget.buffered
+    const bufferedRanges = []
+    for (let index = 0; index < Math.min(ranges?.length || 0, 8); index++) {
+      bufferedRanges.push([
+        Math.round(ranges.start(index) * 10) / 10,
+        Math.round(ranges.end(index) * 10) / 10
+      ])
+    }
+
     const body = JSON.stringify({
       event: eventType,
-      position: Math.floor(pos),
-      buffer_ahead: Math.round(bufAhead * 10) / 10,
-      mode: mode,
-      recovery_count: this.streamRecoveryAttempts
+      playback_id: this.playbackId,
+      path: this.playbackPath(),
+      position: Math.round(this.currentPlaybackPosition() * 10) / 10,
+      buffer_ahead: Math.round(this.bufferedAheadOfCurrent() * 10) / 10,
+      recovery_count: this.streamRecoveryAttempts,
+      ready_state: this.videoTarget.readyState,
+      network_state: this.videoTarget.networkState,
+      paused: this.videoTarget.paused,
+      ended: this.videoTarget.ended,
+      mse_pending_bytes: (this.fmp4BufferSize || 0) + (this.pendingAppendBuffer?.byteLength || 0),
+      mse_quota_errors: this.mseQuotaErrorCount,
+      system_rebuffer_paused: this.systemRebufferPaused,
+      buffered_ranges: bufferedRanges,
+      video_codec: this.tracksData?.video_codec,
+      video_width: this.tracksData?.video_width,
+      video_height: this.tracksData?.video_height,
+      start_seconds: this.startSecondsValue,
+      ...details
     })
     fetch("/streaming/stall_telemetry", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-CSRF-Token": document.querySelector("[name='csrf-token']")?.content },
+      body,
       keepalive: true
     }).catch(() => {})
+  }
+
+  playbackPath() {
+    if (this.isHls()) return "hls"
+    if (this.isRemuxDirectPlay()) return "remux"
+    if (this.isNativeDirectPlay()) return "direct"
+    return "mse_transcode"
   }
 
   // Abort the current fetch, tear down the MSE pipeline, and restart
@@ -1536,25 +1743,64 @@ export default class extends Controller {
 
   flushBufferQueue() {
     if (this.bufferAppending || !this.sourceBuffer || this.sourceBuffer.updating) return
-    const data = this.extractCompleteBoxes()
+    const data = this.pendingAppendBuffer || this.extractCompleteBoxes()
     if (!data) return
+
+    clearTimeout(this.quotaRetryTimer)
+    this.quotaRetryTimer = null
     this.bufferAppending = true
     try {
       this.sourceBuffer.appendBuffer(data)
+      this.pendingAppendBuffer = null
+      this.quotaBlockedAtTime = null
     } catch (e) {
       this.bufferAppending = false
       if (e.name === "QuotaExceededError") {
-        this.evictOldBuffer()
+        // extractCompleteBoxes has already removed this exact fragment
+        // from fmp4Buffer. Retain it until old media can be evicted, then
+        // retry the same bytes; dropping it creates a permanent timeline gap.
+        this.pendingAppendBuffer = data
+        this.quotaBlockedAtTime ??= this.videoTarget.currentTime
+        this.mseQuotaErrorCount += 1
+        this.reportStall("mse_quota")
+        if (!this.evictForQuota()) this.scheduleQuotaRetry()
+        this.maybeStartPlayback(true)
       } else {
-        // Any other append error (InvalidStateError from a closed
-        // MediaSource, parse error on a malformed fragment) means the
-        // current MSE pipeline is broken. Clear the queue and trigger
-        // a full reconnect from the current playback position.
         console.warn("appendBuffer failed, recovering:", e.name)
-        this.fmp4Buffer = null; this.fmp4BufferSize = 0
+        this.pendingAppendBuffer = null
+        this.fmp4Buffer = null
+        this.fmp4BufferSize = 0
         this.handleStreamStall()
       }
     }
+  }
+
+  evictForQuota() {
+    if (!this.sourceBuffer || this.sourceBuffer.updating) return false
+    const evictBefore = this.videoTarget.currentTime - MSE_QUOTA_BACK_BUFFER_SECONDS
+    if (evictBefore <= 0) return false
+
+    for (let index = 0; index < this.sourceBuffer.buffered.length; index++) {
+      const start = this.sourceBuffer.buffered.start(index)
+      const end = this.sourceBuffer.buffered.end(index)
+      if (start >= evictBefore) continue
+      try {
+        this.sourceBuffer.remove(start, Math.min(end, evictBefore))
+        return true
+      } catch {
+        return false
+      }
+    }
+    return false
+  }
+
+  scheduleQuotaRetry() {
+    clearTimeout(this.quotaRetryTimer)
+    this.quotaRetryTimer = setTimeout(() => {
+      this.quotaRetryTimer = null
+      if (!this.pendingAppendBuffer) return
+      if (!this.evictForQuota()) this.scheduleQuotaRetry()
+    }, MSE_QUOTA_RETRY_MS)
   }
 
   onBufferUpdateEnd() {
@@ -1593,50 +1839,37 @@ export default class extends Controller {
   // from the first chunk) ensures we don't stall forever on a very slow
   // source: if the threshold isn't reached in time, we start with
   // whatever we have.
-  maybeStartPlayback() {
+  maybeStartPlayback(deadlineTriggered = false) {
+
     if (!this.sourceBuffer || this.sourceBuffer.buffered.length === 0) return
 
     const bufferedAhead = this.bufferedAheadOfCurrent()
 
-    // Initial start: wait for the buffer-ahead threshold (or deadline).
     if (!this.playbackStarted) {
-      const deadlineReached = this.bufferAheadDeadline && Date.now() >= this.bufferAheadDeadline
-      if (bufferedAhead >= BUFFER_AHEAD_SECONDS || deadlineReached) {
+      const deadlineReached = deadlineTriggered ||
+        (this.bufferAheadDeadline && Date.now() >= this.bufferAheadDeadline)
+      if (bufferedAhead >= BUFFER_AHEAD_SECONDS || (deadlineReached && bufferedAhead >= 0.5)) {
         this.playbackStarted = true
         this.bufferAheadDeadline = null
-        const p = this.videoTarget.play()
-        if (p?.catch) p.catch(() => {})
+        clearTimeout(this.bufferAheadDeadlineTimer)
+        this.bufferAheadDeadlineTimer = null
+        const playPromise = this.videoTarget.play()
+        if (playPromise?.catch) playPromise.catch(() => {})
       }
       return
     }
 
-    // Rebuffering: the video paused because the buffer ran dry.
-    // Resume only when enough buffer has accumulated to sustain playback
-    // for a while (REBUFFER_AHEAD_SECONDS).  Resuming with a tiny buffer
-    // (bufferedAhead > 0) causes a rapid stall-resume-stall cycle when
-    // ffmpeg transcodes below 1× — the video plays for a fraction of a
-    // second, stalls again, and the user sees periodic black screen.
-    // A rebuffer deadline (REBUFFER_MAX_WAIT_MS) ensures we don't sit on
-    // "Buffering" forever on a very slow source — after the deadline,
-    // resume with whatever we have.
-    // Never auto-resume a deliberate user pause (button/spacebar): the
-    // Rebuffering: the buffer ran dry and the video stalled.
-    // In Chrome, the video element does NOT set paused=true when the
-    // MSE buffer runs dry — it stays "playing" but frozen (currentTime
-    // stops advancing).  So we can't rely on paused to detect a rebuffer
-    // stall.  Instead, use the isStalled flag set by onVideoWaiting.
-    // Resume only when enough buffer has accumulated (REBUFFER_AHEAD_SECONDS).
-    // A rebuffer deadline ensures we don't sit on "Buffering" forever
-    // on a very slow source.
-    // Never auto-resume a deliberate user pause (userPaused) or while a
-    // subtitle load holds playback (isSeeking).
-    if (this.isStalled && !this.videoTarget.ended && !this.userPaused && !this.isSeeking) {
-      const deadlineReached = this.rebufferDeadline && Date.now() >= this.rebufferDeadline
-      if (bufferedAhead >= REBUFFER_AHEAD_SECONDS || deadlineReached) {
-        this.rebufferDeadline = null
+    // A confirmed MSE underrun explicitly pauses the element. Resume only
+    // after rebuilding the high-water buffer, or after the real deadline
+    // timer fires with at least a playable amount of data.
+    if (this.systemRebufferPaused && !this.videoTarget.ended && !this.userPaused && !this.isSeeking) {
+      const deadlineReached = deadlineTriggered ||
+        (this.rebufferDeadline && Date.now() >= this.rebufferDeadline)
+      if (bufferedAhead >= REBUFFER_AHEAD_SECONDS || (deadlineReached && bufferedAhead >= 0.5)) {
+        this.clearSystemRebufferGate()
         this.isStalled = false
-        const p = this.videoTarget.play()
-        if (p?.catch) p.catch(() => {})
+        const playPromise = this.videoTarget.play()
+        if (playPromise?.catch) playPromise.catch(() => {})
       }
     }
   }
@@ -1669,15 +1902,15 @@ export default class extends Controller {
 
   evictOldBuffer() {
     if (!this.sourceBuffer || this.sourceBuffer.updating) return
-    const evictBefore = this.videoTarget.currentTime - 30
-    if (evictBefore <= 0) return
-    for (let i = 0; i < this.sourceBuffer.buffered.length; i++) {
-      const start = this.sourceBuffer.buffered.start(i)
-      const end = this.sourceBuffer.buffered.end(i)
-      if (start < evictBefore) {
-        try { this.sourceBuffer.remove(start, Math.min(end, evictBefore)) } catch {}
-        return
-      }
+    const evictBefore = this.videoTarget.currentTime - MSE_BACK_BUFFER_SECONDS
+    if (evictBefore <= MSE_BACK_BUFFER_SECONDS) return
+
+    for (let index = 0; index < this.sourceBuffer.buffered.length; index++) {
+      const start = this.sourceBuffer.buffered.start(index)
+      const end = this.sourceBuffer.buffered.end(index)
+      if (start >= evictBefore) continue
+      try { this.sourceBuffer.remove(start, Math.min(end, evictBefore)) } catch {}
+      return
     }
   }
 
@@ -1686,18 +1919,19 @@ export default class extends Controller {
   togglePlay() {
     if (this.videoTarget.paused) {
       this.userPaused = false
+      if (this.systemRebufferPaused) {
+        this.maybeStartPlayback(true)
+        return
+      }
       const playPromise = this.videoTarget.play()
       if (playPromise?.catch) playPromise.catch(() => {})
     } else {
       this.userPaused = true
       this.videoTarget.pause()
-      // A deliberate pause must not be auto-resumed by the stall or
-      // progress watchdogs firing later, nor by the rebuffer deadline.
-      // Clear them so the video stays paused until the user resumes.
       this.clearStallWatchdog()
       this.stopProgressWatchdog()
+      this.clearSystemRebufferGate()
       this.isStalled = false
-      this.rebufferDeadline = null
     }
   }
   onVideoClick(event) {
@@ -1793,6 +2027,20 @@ export default class extends Controller {
         }
       }
       overlay.addEventListener("click", onRetry)
+      return
+    }
+
+    // Remux can repair a failed network/container delivery, but it copies
+    // the video codec unchanged. Decode/unsupported-source errors must go
+    // directly to video transcoding instead of retrying the same codec.
+    if (err.code === 2 && this.isNativeDirectPlay() && this.remuxDirectEligible()) {
+      console.warn("Native direct network failed — falling back to remux.")
+      const targetSeconds = Math.floor(this.currentPlaybackPosition())
+      this.directPlayActive = false
+      this.startSecondsValue = targetSeconds
+      this.element.dataset.videoPlayerStartSecondsValue = targetSeconds.toString()
+      this.showBufferingOverlay()
+      this.startRemuxDirectPlay()
       return
     }
 
@@ -2675,6 +2923,13 @@ export default class extends Controller {
     if (targetSeconds === Math.floor(this.currentPlaybackPosition())) return
 
     if (this.isSeeking) {
+      if (this.isRemuxDirectPlay()) {
+        this.pendingSeekSeconds = null
+        this.restartPlaybackAt(targetSeconds)
+        this.currentTimeTarget.textContent = this.formatTime(targetSeconds)
+        this.updateSeekVisuals(targetSeconds / this.knownDuration)
+        return
+      }
       this.pendingSeekSeconds = targetSeconds
       return
     }
@@ -2693,25 +2948,17 @@ export default class extends Controller {
       return
     }
 
-    // Remux direct play: the streaming response is non-seekable, so
-    // seeking requires changing the src to a new URL with the updated
-    // start_seconds.  ffmpeg re-seeks and starts outputting fMP4 from
-    // the new position.  The browser downloads and plays it natively.
+    // Remux seeks resolve the preceding source keyframe and skip its
+    // pre-roll in the native element, preserving -c:v copy.
     if (this.isRemuxDirectPlay()) {
       this.isSeeking = true
       this.showSeekingOverlay("Seeking...")
-      this.startSecondsValue = targetSeconds
-      this.element.dataset.videoPlayerStartSecondsValue = targetSeconds.toString()
-      const remuxUrl = this.buildRemuxDirectUrl()
-      this.videoTarget.src = remuxUrl
-      this.videoTarget.load()
-      // Wait for the first frame before playing (same as startRemuxDirectPlay).
-      this.videoTarget.addEventListener("loadeddata", () => {
-        this.videoTarget.play().catch(() => {})
-      }, { once: true })
+      this.videoTarget.pause()
+      this.stopProgressWatchdog()
       this.clearSubtitleCues()
       this.reloadTextSubtitlesAt(targetSeconds)
       this.resetProgressBaseline()
+      this.loadRemuxAt(targetSeconds)
       return
     }
 
@@ -2799,7 +3046,7 @@ export default class extends Controller {
     // fires whenever currentTime changes, making it the most reliable
     // signal that playback is alive.  Clear the overlay if there's buffer
     // ahead — no point showing "Buffering..." when the video is moving.
-    if (this.isStalled && !this.videoTarget.paused && !this.userPaused && !this.isSeeking && this.hasBufferedAhead(2)) {
+    if (this.isStalled && !this.systemRebufferPaused && !this.videoTarget.paused && !this.userPaused && !this.isSeeking && this.hasBufferedAhead(2)) {
       clearTimeout(this.bufferingOverlayTimer)
       this.bufferingOverlayTimer = null
       this.isStalled = false

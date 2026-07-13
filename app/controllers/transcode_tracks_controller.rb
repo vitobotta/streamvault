@@ -5,6 +5,7 @@ class TranscodeTracksController < ApplicationController
 
   MP4_EXTENSIONS = %w[.mp4 .m4v .mov].freeze
   AAC_CODEC = "aac"
+  HEVC_CODECS = %w[hevc h265].freeze
 
   before_action :authenticate_user!
 
@@ -32,11 +33,36 @@ class TranscodeTracksController < ApplicationController
     render json: tracks.merge(
       subtitles: subtitles,
       video_codec: video_stream[:codec_name].to_s.downcase,
+      video_width: video_stream[:width],
+      video_height: video_stream[:height],
+      video_pix_fmt: video_stream[:pix_fmt],
       direct_playable: direct_playable?(input_url, tracks, video_stream),
       direct_stream_url: direct_stream_url(input_url),
       remux_direct_playable: remux_direct_playable?(video_stream),
       remux_direct_url: remux_direct_url(input_url)
     )
+  end
+
+  # Return a keyframe-aligned remux start plus the short local pre-roll
+  # the browser must skip to land on the exact requested position.
+  def seek
+    input_url = params[:url].to_s
+    unless valid_stream_url?(input_url) && verify_stream_url!
+      render json: { copy_safe: false }, status: :bad_request
+      return
+    end
+
+    plan = TranscodeService.probe_remux_seek(
+      input_url,
+      target_seconds: params[:start_seconds],
+      headers: transcode_headers
+    )
+
+    if plan
+      render json: plan.merge(copy_safe: true)
+    else
+      render json: { copy_safe: false }
+    end
   end
 
   private
@@ -59,15 +85,12 @@ class TranscodeTracksController < ApplicationController
   # Requirements:
   #   1. Container is MP4 (.mp4/.m4v/.mov) — the browser plays these
   #      natively without MSE.
-  #   2. Video codec is H.264 with yuv420p pixel format, ≤ 1080p.
-  #   3. Audio is AAC (or absent) — the browser decodes it natively.
+  #   2. Video is safe H.264, or HEVC that the client confirms its
+  #      platform can decode natively.
+  #   3. The default audio track is AAC (or audio is absent).
   #
-  # NOT required: B-frame-free.  The B-frame constraint only applies to
-  # MSE's SourceBuffer (Chrome's fMP4 chunk demuxer rejects B-frames).
-  # The native <video> element handles B-frames correctly, so most x264
-  # releases (which HAVE B-frames) qualify for direct play.  This is the
-  # key difference from TranscodeService.browser_safe_video? which is used
-  # for the MSE stream-copy path and DOES reject B-frames.
+  # NOT required: B-frame-free. The native <video> element handles
+  # B-frames; that constraint applies only to MSE SourceBuffer.
   def direct_playable?(input_url, tracks, video_stream = nil)
     filename = params[:filename].to_s.downcase
     return false unless MP4_EXTENSIONS.any? { |ext| filename.end_with?(ext) }
@@ -75,27 +98,28 @@ class TranscodeTracksController < ApplicationController
     video_stream ||= probe_video_stream(input_url)
     return false unless direct_play_video?(video_stream)
 
-    audio_codecs = tracks[:audio].filter_map { |t| t[:codec] }
-    return true if audio_codecs.empty? || audio_codecs.any? { |c| c == AAC_CODEC }
+    audio_tracks = tracks[:audio]
+    return true if audio_tracks.empty?
 
-    false
+    default_audio = audio_tracks.find { |track| track[:default] } || audio_tracks.first
+    default_audio[:codec] == AAC_CODEC
   end
 
-  # Check if the video stream is directly playable by the browser.
-  # Same as TranscodeService.browser_safe_video? but WITHOUT the B-frame
-  # constraint — the native <video> element handles B-frames correctly.
+  # Identify a native-video candidate. H.264 constraints remain
+  # conservative; HEVC support is decided by the actual browser because
+  # it varies by platform and installed decoder.
   def direct_play_video?(video_stream)
     return false unless video_stream.is_a?(Hash)
 
-    codec = video_stream[:codec_name].to_s
+    codec = video_stream[:codec_name].to_s.downcase
     width = video_stream[:width].to_i
     height = video_stream[:height].to_i
     pix_fmt = video_stream[:pix_fmt].to_s
+    return false unless width.positive? && height.positive?
 
-    codec == "h264" &&
-      width.positive? &&
-      height.positive? &&
-      width <= TranscodeService::MAX_COPY_VIDEO_WIDTH &&
+    return HEVC_CODECS.include?(codec) unless codec == "h264"
+
+    width <= TranscodeService::MAX_COPY_VIDEO_WIDTH &&
       height <= TranscodeService::MAX_COPY_VIDEO_HEIGHT &&
       TranscodeService::SAFE_H264_PIXEL_FORMATS.include?(pix_fmt)
   end

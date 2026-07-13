@@ -114,6 +114,68 @@ RSpec.describe "Transcode", type: :request do
       expect(response.parsed_body["subtitles"].pluck("index")).to eq([ 2 ])
     end
 
+    it "offers HEVC MP4 with default AAC audio as a native direct-play candidate" do
+      tracks = {
+        audio: [ { index: 1, codec: "aac", default: true, language: "ENG" } ],
+        subtitles: []
+      }
+      video = { codec_name: "hevc", width: 1920, height: 816, pix_fmt: "yuv420p10le" }
+      allow(TranscodeService).to receive(:probe_media_tracks).and_return(tracks)
+      allow(TranscodeService).to receive(:probe_video_stream).and_return(video)
+      allow(ExternalSubtitleService).to receive(:search).and_return([])
+
+      get transcode_tracks_path, params: {
+        url: "https://download.real-debrid.com/d/file123/movie.mp4",
+        filename: "movie.mp4"
+      }
+
+      expect(response).to have_http_status(:ok)
+      expect(response.parsed_body["direct_playable"]).to eq(true)
+      expect(response.parsed_body["remux_direct_playable"]).to eq(true)
+    end
+
+    it "keeps HEVC MKV on the remux path" do
+      tracks = {
+        audio: [ { index: 1, codec: "aac", default: true, language: "ENG" } ],
+        subtitles: []
+      }
+      video = { codec_name: "hevc", width: 1920, height: 816, pix_fmt: "yuv420p10le" }
+      allow(TranscodeService).to receive(:probe_media_tracks).and_return(tracks)
+      allow(TranscodeService).to receive(:probe_video_stream).and_return(video)
+      allow(ExternalSubtitleService).to receive(:search).and_return([])
+
+      get transcode_tracks_path, params: {
+        url: "https://download.real-debrid.com/d/file123/movie.mkv",
+        filename: "movie.mkv"
+      }
+
+      expect(response).to have_http_status(:ok)
+      expect(response.parsed_body["direct_playable"]).to eq(false)
+      expect(response.parsed_body["remux_direct_playable"]).to eq(true)
+    end
+
+    it "does not direct-play when the default audio track is not AAC" do
+      tracks = {
+        audio: [
+          { index: 1, codec: "ac3", default: true, language: "ENG" },
+          { index: 2, codec: "aac", default: false, language: "FRENCH" }
+        ],
+        subtitles: []
+      }
+      video = { codec_name: "hevc", width: 1920, height: 816, pix_fmt: "yuv420p10le" }
+      allow(TranscodeService).to receive(:probe_media_tracks).and_return(tracks)
+      allow(TranscodeService).to receive(:probe_video_stream).and_return(video)
+      allow(ExternalSubtitleService).to receive(:search).and_return([])
+
+      get transcode_tracks_path, params: {
+        url: "https://download.real-debrid.com/d/file123/movie.mp4",
+        filename: "movie.mp4"
+      }
+
+      expect(response).to have_http_status(:ok)
+      expect(response.parsed_body["direct_playable"]).to eq(false)
+    end
+
     it "adds external subtitle tracks using content metadata" do
       tracks = { audio: [], subtitles: [] }
       external_subtitles = [
@@ -159,6 +221,37 @@ RSpec.describe "Transcode", type: :request do
       get transcode_tracks_path, params: { url: "http://localhost/video.mkv" }
 
       expect(response).to have_http_status(:bad_request)
+    end
+  end
+
+  describe "GET /transcode/seek" do
+    it "returns a keyframe-aligned copy plan" do
+      allow(TranscodeService).to receive(:probe_remux_seek)
+        .and_return(anchor_seconds: 120.0, skip_seconds: 3.5)
+
+      get transcode_seek_path, params: {
+        url: "https://download.real-debrid.com/d/file123/Inception.mkv",
+        start_seconds: 123.5
+      }
+
+      expect(response).to have_http_status(:ok)
+      expect(response.parsed_body).to include(
+        "copy_safe" => true,
+        "anchor_seconds" => 120.0,
+        "skip_seconds" => 3.5
+      )
+    end
+
+    it "fails closed when no trustworthy keyframe can be probed" do
+      allow(TranscodeService).to receive(:probe_remux_seek).and_return(nil)
+
+      get transcode_seek_path, params: {
+        url: "https://download.real-debrid.com/d/file123/Inception.mkv",
+        start_seconds: 123.5
+      }
+
+      expect(response).to have_http_status(:ok)
+      expect(response.parsed_body).to eq("copy_safe" => false)
     end
   end
 

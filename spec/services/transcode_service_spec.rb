@@ -105,6 +105,32 @@ RSpec.describe TranscodeService do
     end
   end
 
+  describe ".probe_remux_seek" do
+    it "returns the preceding keyframe and exact local pre-roll" do
+      output = { "frames" => [ { "best_effort_timestamp_time" => "10.0" } ] }.to_json
+      allow(described_class).to receive(:capture_command).and_return(capture_result(output))
+
+      plan = described_class.probe_remux_seek(
+        "https://example.test/video.mkv",
+        target_seconds: 15
+      )
+
+      expect(plan).to eq(anchor_seconds: 10.0, skip_seconds: 5.0)
+    end
+
+    it "fails closed when the preceding keyframe is too far behind" do
+      output = { "frames" => [ { "best_effort_timestamp_time" => "0.0" } ] }.to_json
+      allow(described_class).to receive(:capture_command).and_return(capture_result(output))
+
+      plan = described_class.probe_remux_seek(
+        "https://example.test/video.mkv",
+        target_seconds: 180
+      )
+
+      expect(plan).to be_nil
+    end
+  end
+
   describe ".cache_store" do
     it "evicts oldest entries when cache exceeds the size limit" do
       described_class.instance_variable_set(:@probe_cache, {})
@@ -137,29 +163,32 @@ RSpec.describe TranscodeService do
       expect(command).not_to include("libx264")
     end
 
-    it "transcodes browser-safe video after a seek on standard and requested-remux paths" do
+    it "transcodes standard MSE seeks but preserves copy for keyframe-aligned remux seeks" do
       output = {
         "streams" => [
           { "codec_name" => "h264", "width" => 1920, "height" => 1080, "pix_fmt" => "yuv420p" }
         ]
       }.to_json
-
       allow(described_class).to receive(:capture_command).and_return(capture_result(output))
 
-      commands = [ false, true ].map do |remux|
-        described_class.send(:build_ffmpeg_command,
-          "https://example.test/video-h264-1080p.mkv",
-          headers: {},
-          start_seconds: 42.5,
-          remux: remux
-        )
-      end
+      standard = described_class.send(:build_ffmpeg_command,
+        "https://example.test/video-h264-1080p.mkv",
+        headers: {},
+        start_seconds: 42.5,
+        remux: false
+      )
+      remux = described_class.send(:build_ffmpeg_command,
+        "https://example.test/video-h264-1080p.mkv",
+        headers: {},
+        start_seconds: 42.5,
+        remux: true
+      )
 
-      commands.each do |command|
-        expect(argument_pairs(command)).to include([ "-ss", "42.5" ])
-        expect(argument_pairs(command)).to include([ "-c:v", "libx264" ])
-        expect(argument_pairs(command)).not_to include([ "-c:v", "copy" ])
-      end
+      expect(argument_pairs(standard)).to include([ "-c:v", "libx264" ])
+      expect(argument_pairs(standard)).not_to include([ "-c:v", "copy" ])
+      expect(argument_pairs(remux)).to include([ "-c:v", "copy" ])
+      expect(remux).to include("-noaccurate_seek")
+      expect(argument_pairs(remux)).to include([ "-ss", "42.5" ])
     end
 
     it "transcodes HEVC/UHD video to browser-safe H.264" do
@@ -183,6 +212,7 @@ RSpec.describe TranscodeService do
       expect(command[command.index("-vf") + 1]).to include("min(1920,iw)")
       expect(command[command.index("-vf") + 1]).to include("min(1080,ih)")
       expect(argument_pairs(command)).not_to include([ "-c:v", "copy" ])
+      expect(argument_pairs(command)).to include([ "-force_key_frames", "expr:gte(t,n_forced*2)" ])
     end
 
     it "transcodes when video probing fails closed" do
@@ -350,6 +380,8 @@ RSpec.describe TranscodeService do
       expect(argument_pairs(command)).to include([ "-hls_segment_type", "mpegts" ])
       expect(argument_pairs(command)).to include([ "-hls_flags", "temp_file" ])
       expect(argument_pairs(command)).to include([ "-hls_segment_filename", "/tmp/hls/session1/%d.ts" ])
+      expect(argument_pairs(command)).to include([ "-readrate", "1.0" ])
+      expect(argument_pairs(command)).to include([ "-readrate_initial_burst", "30" ])
       expect(command).to include("/tmp/hls/session1/playlist.m3u8")
       # fMP4 output must NOT appear on the HLS path
       expect(command).not_to include("pipe:1")
@@ -820,7 +852,70 @@ RSpec.describe TranscodeService do
         end
       end
     end
+
+    it "reaps an already-exited child when its process group is gone" do
+      allow(described_class).to receive(:signal_group).with(123, "CONT").and_return(false)
+      allow(described_class).to receive(:signal_group).with(123, "TERM").and_return(false)
+      expect(described_class).to receive(:waitpid_safely).with(123)
+
+      described_class.send(:kill_process_group, 123)
+    end
   end
+
+    it "waits for a gated HLS stderr drain before closing the reader" do
+      stderr_reader, stderr_writer = IO.pipe
+      stderr_buffer = +""
+      stderr_mutex = Mutex.new
+      stderr_thread = Thread.new do
+        sleep 0.05
+        loop do
+          chunk = stderr_reader.readpartial(4096)
+          stderr_mutex.synchronize { stderr_buffer << chunk }
+        end
+      rescue EOFError, IOError, Errno::EBADF
+      end
+      process = described_class::HlsProcess.new(
+        pid: 123,
+        stderr_io: stderr_reader,
+        stderr_thread: stderr_thread,
+        stderr_buffer: stderr_buffer,
+        stderr_mutex: stderr_mutex
+      )
+      stderr_writer.write("complete diagnostic sentinel")
+      stderr_writer.close
+
+      process.close_diagnostics
+
+      expect(process.diagnostic).to eq("complete diagnostic sentinel")
+      expect(stderr_reader).to be_closed
+    ensure
+      stderr_writer&.close unless stderr_writer&.closed?
+      stderr_reader&.close unless stderr_reader&.closed?
+      stderr_thread&.join(1)
+    end
+
+    it "keeps HLS stderr draining after non-blocking startup" do
+      script = <<~RUBY
+        $stderr.sync = true
+        sleep 0.1
+        warn "late diagnostic"
+      RUBY
+      allow(described_class).to receive(:build_ffmpeg_command)
+        .and_return([ RbConfig.ruby, "-e", script ])
+
+      Dir.mktmpdir do |dir|
+        process = described_class.transcode_to_hls(
+          "https://example.test/video.mkv",
+          segment_dir: dir,
+          wait_for_first_segment: false
+        )
+        _, status = Process.waitpid2(process.pid)
+        process.close_diagnostics
+
+        expect(status).to be_success
+        expect(process.diagnostic).to include("late diagnostic")
+      end
+    end
 
   describe ".transcode_to_fmp4 stall detection" do
     it "raises TranscodeError when ffmpeg produces no data before the first-data timeout" do
@@ -857,6 +952,21 @@ RSpec.describe TranscodeService do
       described_class.send(:transcode_to_fmp4_internal, command) { |chunk| chunks << chunk }
 
       expect(chunks.join).to eq("a" * 1024 + "b" * 1024)
+    end
+
+    it "delivers every byte through a one-chunk bounded queue" do
+      stub_const("TranscodeService::STREAM_QUEUE_MAX_CHUNKS", 1)
+      payload = "x" * (TranscodeService::STREAM_CHUNK_BYTES * 4)
+      script = "$stdout.binmode; 4.times { $stdout.write('x' * #{TranscodeService::STREAM_CHUNK_BYTES}) }"
+      command = [ RbConfig.ruby, "-e", script ]
+
+      received = +""
+      described_class.send(:transcode_to_fmp4_internal, command) do |chunk|
+        received << chunk
+        sleep 0.01
+      end
+
+      expect(received).to eq(payload)
     end
   end
 

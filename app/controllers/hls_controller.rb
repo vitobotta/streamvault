@@ -38,6 +38,8 @@ class HlsController < ApplicationController
       default_language: current_user.default_stream_language,
       preferred_languages: current_user.preferred_stream_languages
     )
+    playback_id = params[:playback_id].to_s.gsub(/[^a-zA-Z0-9_-]/, "").first(80).presence || "unknown"
+    Rails.logger.info("[HLS] playback_id=#{playback_id} session_id=#{session.id} started")
 
     render json: { session_id: session.id, playlist_url: "/hls/#{session.id}/playlist.m3u8" }
   rescue TranscodeService::TranscodeError => e
@@ -102,6 +104,12 @@ class HlsController < ApplicationController
       return
     end
 
+    error = HlsSession.error(params[:id])
+    if error
+      render json: { error: error }, status: :failed_dependency
+      return
+    end
+
     segment_index = params[:segment].to_i
     path = session.segment_path(segment_index)
 
@@ -122,6 +130,12 @@ class HlsController < ApplicationController
         break if File.exist?(path)
         # If ffmpeg died while waiting, stop waiting.
         break if ffmpeg_finished?(session)
+        break if HlsSession.error(params[:id])
+      end
+
+      if (error = HlsSession.error(params[:id]))
+        render json: { error: error }, status: :failed_dependency
+        return
       end
 
       unless File.exist?(path)
@@ -131,6 +145,7 @@ class HlsController < ApplicationController
       end
     end
 
+    session.prune_consumed_segments(segment_index)
     response.headers["Cache-Control"] = "no-cache"
     response.headers["Referrer-Policy"] = "no-referrer"
     send_file path, type: "video/mp2t", disposition: :inline
