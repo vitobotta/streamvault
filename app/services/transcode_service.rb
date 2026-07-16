@@ -44,6 +44,10 @@ class TranscodeService
   KEYFRAME_INTERVAL_SECONDS = 2
   HLS_READ_RATE = "1.0"
   HLS_INITIAL_BURST_SECONDS = 30
+  FMP4_READ_RATE = "1.25"
+  FMP4_INITIAL_BURST_SECONDS = 30
+  REMUX_READ_RATE = "1.05"
+  REMUX_INITIAL_BURST_SECONDS = 5
   REMUX_KEYFRAME_PROBE_TIMEOUT_SECONDS = 10
   MAX_REMUX_PREROLL_SECONDS = 120
   # No mid-stream idle timeout: ffmpeg produces data in bursts, and
@@ -71,11 +75,11 @@ class TranscodeService
   # while first_pts=0 pads or trims the beginning onto the same zero-based
   # timeline as video.
   AUDIO_SYNC_FILTER = "aresample=async=1000:first_pts=0"
+  H264_OUTPUT_COMPATIBILITY_ARGS = [ "-profile:v", "high", "-level:v", "4.0" ].freeze
   VIDEO_TRANSCODE_ARGS = [
     "-c:v", "libx264",
     "-preset", "ultrafast",
     "-crf", "23",
-    "-profile:v", "high",
     "-pix_fmt", "yuv420p",
     # Use all available CPU cores for encoding — critical on production
     # servers without hardware acceleration.  Without this, libx264
@@ -354,11 +358,20 @@ class TranscodeService
         raise TranscodeError, "FFmpeg output reader failed: #{reader_error.message}. #{stderr_summary(diagnostic)}"
       end
 
+      _, process_status = Process.waitpid2(pid)
+      pid = nil
+      stderr_thread.join(1)
+      diagnostic = stderr_mutex.synchronize { stderr_buf.dup }
+      unless process_status.success?
+        status_label = process_status.exitstatus || "signal #{process_status.termsig}"
+        raise TranscodeError, "FFmpeg exited with status #{status_label}. #{stderr_summary(diagnostic)}"
+      end
+
       elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - start_time
       rate_kbps = elapsed.positive? ? (total_bytes * 8 / 1000.0 / elapsed).round : 0
       if defined?(Rails)
         id = sanitize_telemetry_id(telemetry_id)
-        Rails.logger.info("[Transcode] playback_id=#{id} ffmpeg_finished bytes=#{total_bytes} elapsed=#{elapsed.round(1)}s rate_kbps=#{rate_kbps}")
+        Rails.logger.info("[Transcode] playback_id=#{id} ffmpeg_finished exit_status=0 bytes=#{total_bytes} elapsed=#{elapsed.round(1)}s rate_kbps=#{rate_kbps}")
       end
     ensure
       chunks.close
@@ -661,16 +674,16 @@ class TranscodeService
     # Subtitle burn requires re-encoding video, so remux is ignored if a
     # burn subtitle track is selected — falls through to normal transcode.
     #
-    # Remux mode copies video for both initial playback and keyframe-aligned
-    # seeks.  The browser asks the seek-plan endpoint for the preceding
-    # keyframe, sends that anchor as start_seconds, then skips the short
-    # pre-roll locally.  Standard MSE seeks still transcode for exactness.
+    # Remux seeks send the exact target to FFmpeg so Matroska lands on the
+    # intended preceding cue. The seek plan separately gives the browser the
+    # copied keyframe's presentation anchor and local pre-roll. Standard MSE
+    # seeks still transcode for exactness.
     effective_remux = remux && !selected_burn_subtitle_track
     video_args = if selected_burn_subtitle_track
       transcode_args
     elsif effective_remux
       [ "-c:v", "copy" ]
-    elsif browser_safe_video?(video_stream) && seek_start_seconds.zero?
+    elsif output_spec == :hls && browser_safe_video?(video_stream) && seek_start_seconds.zero?
       [ "-c:v", "copy" ]
     else
       [ "-vf", SAFE_VIDEO_FILTER, *transcode_args ]
@@ -689,11 +702,20 @@ class TranscodeService
     cmd = [ FFMPEG_PATH, "-loglevel", "error" ]
     # fMP4/remux reads as fast as the bounded producer/consumer queues
     # allow. HLS applies its own realtime pacing plus initial burst below.
-    # Reconnect on HTTP connection drops — RealDebrid CDN / Cloudflare
-    # may close the connection after a period.  Without reconnect,
-    # ffmpeg exits when the upstream dies.  With reconnect, ffmpeg
-    # retries up to -reconnect_delay_max seconds.
-    cmd += [ "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5" ]
+    # Reconnect on transport failures and clean early EOFs. RealDebrid CDN
+    # responses can end cleanly after a partial streamed range, which made
+    # ffmpeg exit successfully and truncated Rails' chunked response. Retries
+    # are bounded so an unavailable origin cannot hold a worker forever.
+    cmd += [
+      "-reconnect", "1",
+      "-reconnect_at_eof", "1",
+      "-reconnect_on_network_error", "1",
+      "-reconnect_on_http_error", "429,5xx",
+      "-reconnect_streamed", "1",
+      "-reconnect_delay_max", "5",
+      "-reconnect_max_retries", "10",
+      "-reconnect_delay_total_max", "30"
+    ]
     # Read timeout on the input socket: if no bytes arrive for this long,
     # ffmpeg exits with an error instead of blocking forever on a stalled
     # RealDebrid CDN connection.  -reconnect only fires on connection-level
@@ -725,6 +747,19 @@ class TranscodeService
       # This prevents a max-speed producer from racing so far ahead that
       # consumer-aware segment cleanup removes media before Safari requests it.
       cmd += [ "-readrate", HLS_READ_RATE, "-readrate_initial_burst", HLS_INITIAL_BURST_SECONDS.to_s ]
+    elsif effective_remux
+      # Native remux also traverses the bounded queue, while browsers often
+      # read only a few seconds ahead. A small burst plus a slight catch-up
+      # margin avoids both the old 1× underrun problem and prolonged producer
+      # blockage that makes the CDN close an idle response.
+      cmd += [ "-readrate", REMUX_READ_RATE, "-readrate_initial_burst", REMUX_INITIAL_BURST_SECONDS.to_s ]
+    else
+      # MSE stops reading at its forward-buffer high-water mark. Unpaced
+      # encoding then fills the HTTP socket and 32 MiB queue, blocks ffmpeg
+      # stdout, and eventually stops consuming the CDN response. Pace modestly
+      # above realtime: enough to rebuild buffer, but bounded enough that the
+      # queue absorbs a complete 45s→30s browser backpressure interval.
+      cmd += [ "-readrate", FMP4_READ_RATE, "-readrate_initial_burst", FMP4_INITIAL_BURST_SECONDS.to_s ]
     end
     cmd << "-noaccurate_seek" if effective_remux && seek_start_seconds.positive?
     # Input seeking (before -i): fast, uses the container's seek table.
@@ -743,7 +778,13 @@ class TranscodeService
     end
     cmd += [ "-sn", "-dn" ]
     cmd += video_args
+    if effective_remux && output_spec == :fmp4 && video_stream[:codec_name] == "hevc"
+      # Safari accepts HEVC in MP4 only with the hvc1 sample entry. FFmpeg's
+      # stream-copy default can be hev1 even though the bitstream is compatible.
+      cmd += [ "-tag:v", "hvc1" ]
+    end
     if video_args != [ "-c:v", "copy" ]
+      cmd += H264_OUTPUT_COMPATIBILITY_ARGS
       cmd += [ "-force_key_frames", "expr:gte(t,n_forced*#{KEYFRAME_INTERVAL_SECONDS})" ]
     end
     # with the source timestamps.  Copying AAC bypassed synchronization for
@@ -792,7 +833,12 @@ class TranscodeService
   #   FFMPEG_ENCODER="h264_nvenc -preset p7 -b:v 5000k -rc vbr"
   def self.transcode_args
     env = ENV["FFMPEG_ENCODER"].to_s.strip
-    return Shellwords.split(env) if env.present?
+    if env.present?
+      args = Shellwords.split(env)
+      return args if args.include?("-c:v")
+
+      return [ "-c:v", *args ]
+    end
 
     return VIDEOTOOLBOX_TRANSCODE_ARGS if videotoolbox_available?
 
@@ -1138,7 +1184,7 @@ class TranscodeService
     cmd += [ "-headers", header_str + "\r\n" ] if header_str.present?
     cmd += [
       "-select_streams", "v:0",
-      "-show_entries", "stream=codec_name,width,height,pix_fmt,has_b_frames",
+      "-show_entries", "stream=codec_name,codec_tag_string,width,height,pix_fmt,has_b_frames",
       "-of", "json",
       input_url
     ]
@@ -1152,14 +1198,13 @@ class TranscodeService
   end
   public_class_method :probe_video_stream
 
-  # Find the keyframe immediately preceding a remux seek target.  Stream
-  # copy cannot start on an arbitrary inter-frame packet, so the browser
-  # starts this short pre-roll and advances locally to the exact target.
-  # Returns nil when the source cannot provide a trustworthy seek anchor;
-  # callers must fall back to accurate transcoding in that case.
+  # Find the presentation timestamp of the keyframe immediately preceding a
+  # remux seek target. FFmpeg receives the exact target because asking Matroska
+  # to seek to that keyframe can land on an earlier cue. The browser applies
+  # the returned short pre-roll only after the native media range is playable.
   def self.probe_remux_seek(input_url, target_seconds:, headers: {})
     target = normalized_start_seconds(target_seconds)
-    return { anchor_seconds: 0.0, skip_seconds: 0.0 } if target.zero?
+    return { anchor_seconds: 0.0, input_seek_seconds: 0.0, skip_seconds: 0.0 } if target.zero?
 
     header_str = ffmpeg_headers(headers)
     cmd = [ FFPROBE_PATH, "-v", "error" ]
@@ -1186,7 +1231,7 @@ class TranscodeService
     skip = target - anchor
     return nil if skip.negative? || skip > MAX_REMUX_PREROLL_SECONDS
 
-    { anchor_seconds: anchor, skip_seconds: skip }
+    { anchor_seconds: anchor, input_seek_seconds: target, skip_seconds: skip }
   rescue JSON::ParserError, StandardError
     nil
   end
@@ -1197,6 +1242,7 @@ class TranscodeService
     stream = Array(data["streams"]).first || {}
     {
       codec_name: stream["codec_name"].to_s.downcase,
+      codec_tag: stream["codec_tag_string"].to_s.downcase,
       width: positive_integer(stream["width"]),
       height: positive_integer(stream["height"]),
       pix_fmt: stream["pix_fmt"].to_s.downcase,

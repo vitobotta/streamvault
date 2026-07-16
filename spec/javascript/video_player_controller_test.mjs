@@ -151,6 +151,54 @@ test("iOS loads track metadata before starting HLS playback", async () => {
   assert.deepEqual(calls, ["tracks", "hls"])
 })
 
+test("MSE fallback creates a High Profile Level 4.0 AVC SourceBuffer", () => {
+  const player = new VideoPlayerController()
+  let mediaSource
+  let sourceBufferMime
+  let fetchedUrl
+  const sourceBuffer = {
+    mode: null,
+    addEventListener: () => {}
+  }
+  const OriginalMediaSource = context.MediaSource
+  const originalCreateObjectUrl = context.URL.createObjectURL
+  context.MediaSource = class {
+    constructor() {
+      mediaSource = this
+      this.readyState = "closed"
+    }
+
+    addEventListener(name, callback) {
+      this[name] = callback
+    }
+
+    addSourceBuffer(mime) {
+      sourceBufferMime = mime
+      return sourceBuffer
+    }
+  }
+  context.URL.createObjectURL = () => "blob:streamvault-mse"
+
+  try {
+    player.fetchController = null
+    player.videoTarget = { src: "" }
+    player.mseSupported = true
+    player.clearSystemRebufferGate = () => {}
+    player.clearStallWatchdog = () => {}
+    player.startStreamingFetch = (url) => { fetchedUrl = url }
+
+    player.setupMseSource("/transcode?start_seconds=125")
+    mediaSource.sourceopen()
+
+    assert.equal(sourceBufferMime, 'video/mp4; codecs="avc1.640028,mp4a.40.2"')
+    assert.equal(sourceBuffer.mode, "segments")
+    assert.equal(fetchedUrl, "/transcode?start_seconds=125")
+  } finally {
+    context.MediaSource = OriginalMediaSource
+    context.URL.createObjectURL = originalCreateObjectUrl
+  }
+})
+
 test("HEVC MP4 direct play is selected only when the browser supports HEVC", () => {
   const player = new VideoPlayerController()
   player.directStreamUrlValue = "/direct_stream?url=movie.mp4"
@@ -163,6 +211,22 @@ test("HEVC MP4 direct play is selected only when the browser supports HEVC", () 
   assert.equal(player.directPlayEligible(), false)
 
   player.browserCanPlayCodec = () => true
+  assert.equal(player.directPlayEligible(), true)
+})
+
+test("Safari direct-plays HEVC only when the MP4 sample entry is hvc1", () => {
+  const player = new VideoPlayerController()
+  player.directStreamUrlValue = "/direct_stream?url=movie.mp4"
+  player.streamRecoveryAttempts = 0
+  player.selectedAudioStream = null
+  player.burnedSubtitleSelected = () => false
+  player.browserCanPlayCodec = () => true
+  player.isSafari = () => true
+  player.tracksData = { direct_playable: true, video_codec: "hevc", video_codec_tag: "hev1" }
+
+  assert.equal(player.directPlayEligible(), false)
+
+  player.tracksData.video_codec_tag = "hvc1"
   assert.equal(player.directPlayEligible(), true)
 })
 
@@ -230,7 +294,7 @@ test("native HEVC decode and unsupported-source errors bypass copy remux", () =>
   }
 })
 
-test("remux seek uses the preceding keyframe and skips pre-roll locally", async () => {
+test("remux seeks FFmpeg to the target while skipping from the keyframe timeline", async () => {
   const player = new VideoPlayerController()
   player.remuxLoadToken = 0
   player.playbackId = "playback-1"
@@ -240,17 +304,19 @@ test("remux seek uses the preceding keyframe and skips pre-roll locally", async 
   player.selectedSubtitleStream = null
   player.subtitleTracks = []
   player.element = { dataset: {} }
-  player.loadRemuxSeekPlan = async () => ({ copy_safe: true, anchor_seconds: 120, skip_seconds: 5 })
+  player.loadRemuxSeekPlan = async () => ({ copy_safe: true, anchor_seconds: 120, input_seek_seconds: 125, skip_seconds: 5 })
   let loadArgs
   player.loadRemuxSource = (...args) => { loadArgs = args }
 
   await player.loadRemuxAt(125)
 
   assert.equal(player.startSecondsValue, 120)
-  assert.match(loadArgs[0], /start_seconds=120/)
+  assert.match(loadArgs[0], /start_seconds=125/)
   assert.match(loadArgs[0], /remux=1/)
+  assert.match(loadArgs[0], /load_id=1/)
   assert.equal(loadArgs[1], 5)
   assert.equal(loadArgs[2], 125)
+  assert.equal(loadArgs[3], 1)
 })
 
 test("failed remux seek planning falls back to an exact MSE transcode", async () => {
@@ -322,6 +388,7 @@ test("remux source starts with a playable native buffer instead of waiting for a
   const listeners = {}
   let ranges = [[0, 0.4]]
   let playCount = 0
+  let loadCount = 0
   const buffered = {
     get length() { return ranges.length },
     start: (index) => ranges[index][0],
@@ -332,21 +399,228 @@ test("remux source starts with a playable native buffer instead of waiting for a
   player.videoTarget = {
     buffered,
     currentTime: 0,
+    autoplay: true,
     addEventListener: (name, callback) => { listeners[name] = callback },
     removeEventListener: (name, callback) => {
       if (listeners[name] === callback) delete listeners[name]
     },
-    load: () => {},
+    load: () => { loadCount += 1 },
     play: () => { playCount += 1; return Promise.resolve() }
   }
 
   player.loadRemuxSource("/transcode?remux=1", 0, 0, 1)
+  assert.equal(player.videoTarget.autoplay, false)
+  assert.equal(loadCount, 0)
   listeners.loadeddata()
   assert.equal(playCount, 0)
 
   ranges = [[0, 0.6]]
   listeners.progress()
   assert.equal(playCount, 1)
+})
+
+test("Chromium remux startup measures B-frame presentation offset before seeking", () => {
+  const player = new VideoPlayerController()
+  const listeners = {}
+  const seeks = []
+  let currentTime = 0
+  let frameCallback
+  let playCount = 0
+  const buffered = timeRanges([[0, 6]])
+  player.remuxLoadToken = 1
+  player.remuxLoadCleanup = null
+  player.startSecondsValue = 120
+  player.element = { dataset: {} }
+  player.isChromium = () => true
+  player.videoTarget = {
+    buffered,
+    readyState: 2,
+    autoplay: true,
+    get currentTime() { return currentTime },
+    set currentTime(value) { currentTime = value; seeks.push(value) },
+    addEventListener: (name, callback) => { listeners[name] = callback },
+    removeEventListener: (name, callback) => {
+      if (listeners[name] === callback) delete listeners[name]
+    },
+    requestVideoFrameCallback: (callback) => {
+      frameCallback = callback
+      return 17
+    },
+    cancelVideoFrameCallback: () => {},
+    play: () => { playCount += 1; return Promise.resolve() }
+  }
+
+  player.loadRemuxSource("/transcode?remux=1", 5, 125, 1)
+  listeners.loadeddata()
+  assert.deepEqual(seeks, [0.001])
+
+  frameCallback(0, { mediaTime: 0.083 })
+
+  assert.equal(seeks.length, 2)
+  assert.ok(Math.abs(seeks[1] - 5.083) < 0.000001)
+  assert.ok(Math.abs(player.startSecondsValue - 119.917) < 0.000001)
+  assert.equal(player.element.dataset.videoPlayerStartSecondsValue, "119.917")
+  assert.equal(playCount, 0)
+
+  listeners.seeked()
+  assert.equal(playCount, 1)
+})
+
+test("Safari remux startup never waits for a paused video-frame callback", () => {
+  const player = new VideoPlayerController()
+  const listeners = {}
+  const seeks = []
+  let currentTime = 0
+  let frameRequests = 0
+  let playCount = 0
+  player.remuxLoadToken = 1
+  player.remuxLoadCleanup = null
+  player.isChromium = () => false
+  player.isSafari = () => true
+  player.videoTarget = {
+    buffered: timeRanges([[0, 6]]),
+    readyState: 2,
+    autoplay: true,
+    get currentTime() { return currentTime },
+    set currentTime(value) { currentTime = value; seeks.push(value) },
+    addEventListener: (name, callback) => { listeners[name] = callback },
+    removeEventListener: (name, callback) => {
+      if (listeners[name] === callback) delete listeners[name]
+    },
+    requestVideoFrameCallback: () => { frameRequests += 1; return 17 },
+    play: () => { playCount += 1; return Promise.resolve() }
+  }
+
+  player.loadRemuxSource("/transcode?remux=1", 5, 125, 1)
+  listeners.loadeddata()
+
+  assert.equal(frameRequests, 0)
+  assert.deepEqual(seeks, [5])
+  listeners.seeked()
+  assert.equal(playCount, 1)
+})
+
+test("a missing Chromium frame callback cannot hold remux startup open", async () => {
+  const player = new VideoPlayerController()
+  const listeners = {}
+  const seeks = []
+  let currentTime = 0
+  let cancelledCallbacks = 0
+  let playCount = 0
+  player.remuxLoadToken = 1
+  player.remuxLoadCleanup = null
+  player.isChromium = () => true
+  player.videoTarget = {
+    buffered: timeRanges([[0, 6]]),
+    readyState: 2,
+    autoplay: true,
+    get currentTime() { return currentTime },
+    set currentTime(value) { currentTime = value; seeks.push(value) },
+    addEventListener: (name, callback) => { listeners[name] = callback },
+    removeEventListener: (name, callback) => {
+      if (listeners[name] === callback) delete listeners[name]
+    },
+    requestVideoFrameCallback: () => 17,
+    cancelVideoFrameCallback: () => { cancelledCallbacks += 1 },
+    play: () => { playCount += 1; return Promise.resolve() }
+  }
+
+  player.loadRemuxSource("/transcode?remux=1", 5, 125, 1)
+  listeners.loadeddata()
+  assert.deepEqual(seeks, [0.001])
+
+  await new Promise((resolve) => setTimeout(resolve, 550))
+
+  assert.deepEqual(seeks, [0.001, 5])
+  assert.equal(cancelledCallbacks, 1)
+  listeners.seeked()
+  assert.equal(playCount, 1)
+})
+
+test("Safari remux falls back when assigning the local seek throws", () => {
+  const player = new VideoPlayerController()
+  const listeners = {}
+  let fallbackTarget
+  player.remuxLoadToken = 1
+  player.remuxLoadCleanup = null
+  player.isChromium = () => false
+  player.videoTarget = {
+    buffered: timeRanges([[0, 6]]),
+    readyState: 2,
+    autoplay: true,
+    currentTime: 0,
+    set currentTime(_value) { throw new Error("not seekable") },
+    addEventListener: (name, callback) => { listeners[name] = callback },
+    removeEventListener: (name, callback) => {
+      if (listeners[name] === callback) delete listeners[name]
+    },
+    play: () => Promise.resolve()
+  }
+  player.fallbackRemuxToMse = (target) => { fallbackTarget = target }
+
+  player.loadRemuxSource("/transcode?remux=1", 5, 125, 1)
+  listeners.loadeddata()
+
+  assert.equal(fallbackTarget, 125)
+})
+
+test("Safari remux falls back when a buffered local seek never completes", async () => {
+  const player = new VideoPlayerController()
+  const listeners = {}
+  let currentTime = 0
+  let fallbackTarget
+  player.remuxLoadToken = 1
+  player.remuxLoadCleanup = null
+  player.isChromium = () => false
+  player.videoTarget = {
+    buffered: timeRanges([[0, 6]]),
+    readyState: 2,
+    autoplay: true,
+    get currentTime() { return currentTime },
+    set currentTime(value) { currentTime = value },
+    addEventListener: (name, callback) => { listeners[name] = callback },
+    removeEventListener: (name, callback) => {
+      if (listeners[name] === callback) delete listeners[name]
+    },
+    play: () => Promise.resolve()
+  }
+  player.fallbackRemuxToMse = (target) => { fallbackTarget = target }
+
+  player.loadRemuxSource("/transcode?remux=1", 5, 125, 1)
+  listeners.loadeddata()
+  await new Promise((resolve) => setTimeout(resolve, 550))
+
+  assert.equal(fallbackTarget, 125)
+})
+
+test("remux startup falls back when native playback clamps the local seek", () => {
+  const player = new VideoPlayerController()
+  const listeners = {}
+  let currentTime = 0
+  let fallbackTarget
+  let playCount = 0
+  player.remuxLoadToken = 1
+  player.remuxLoadCleanup = null
+  player.videoTarget = {
+    buffered: timeRanges([[0, 6]]),
+    readyState: 2,
+    autoplay: true,
+    get currentTime() { return currentTime },
+    set currentTime(_value) { currentTime = 0.083 },
+    addEventListener: (name, callback) => { listeners[name] = callback },
+    removeEventListener: (name, callback) => {
+      if (listeners[name] === callback) delete listeners[name]
+    },
+    play: () => { playCount += 1; return Promise.resolve() }
+  }
+  player.fallbackRemuxToMse = (target) => { fallbackTarget = target }
+
+  player.loadRemuxSource("/transcode?remux=1", 5, 125, 1)
+  listeners.loadeddata()
+  listeners.seeked()
+
+  assert.equal(fallbackTarget, 125)
+  assert.equal(playCount, 0)
 })
 
 test("confirmed MSE waiting explicitly pauses for the rebuffer gate", () => {
@@ -432,6 +706,7 @@ test("a dry MSE wait can resolve after reaching the full rebuffer high-water mar
   player.isDirectPlay = () => false
   player.hasBufferedAhead = () => bufferedAhead
   player.bufferedAheadOfCurrent = () => bufferedAhead ? 10 : 0
+
   player.beginSystemRebuffer = () => { rebufferCount += 1 }
   player.startStallWatchdog = () => {}
 
@@ -441,6 +716,39 @@ test("a dry MSE wait can resolve after reaching the full rebuffer high-water mar
   await new Promise((resolve) => setTimeout(resolve, 250))
 
   assert.equal(rebufferCount, 0)
+})
+
+test("premature MSE end retains a substantial cushion before recovery", () => {
+  const player = new VideoPlayerController()
+  let immediateRecoveries = 0
+  let scheduledRecoveries = 0
+  player.knownDuration = 1000
+  player.currentPlaybackPosition = () => 100
+  player.playbackStarted = true
+  player.sourceBuffer = { buffered: { length: 1 } }
+  player.bufferedAheadOfCurrent = () => 29.9
+  player.handleStreamStall = () => { immediateRecoveries += 1 }
+  player.schedulePrematureEndRecovery = () => { scheduledRecoveries += 1 }
+
+  player.handlePrematureStreamEnd()
+
+  assert.equal(immediateRecoveries, 0)
+  assert.equal(scheduledRecoveries, 1)
+})
+
+test("premature MSE end reconnects immediately only when its cushion is nearly dry", () => {
+  const player = new VideoPlayerController()
+  let recoveryEvent
+  player.knownDuration = 1000
+  player.currentPlaybackPosition = () => 100
+  player.playbackStarted = true
+  player.sourceBuffer = { buffered: { length: 1 } }
+  player.bufferedAheadOfCurrent = () => 4.9
+  player.handleStreamStall = (event) => { recoveryEvent = event }
+
+  player.handlePrematureStreamEnd()
+
+  assert.equal(recoveryEvent, "premature_end")
 })
 
 test("an advancing remux wait remains browser-managed instead of forcing a system pause", async () => {

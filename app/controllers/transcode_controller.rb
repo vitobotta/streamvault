@@ -35,6 +35,10 @@ class TranscodeController < ApplicationController
     response.headers["X-Accel-Buffering"] = "no"
 
     playback_id = normalized_playback_id(params[:playback_id])
+    load_id = normalized_load_id(params[:load_id])
+    started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    written_bytes = 0
+    outcome = "complete"
 
     begin
       TranscodeService.transcode_to_fmp4(
@@ -49,8 +53,10 @@ class TranscodeController < ApplicationController
         telemetry_id: playback_id
       ) do |chunk|
         response.stream.write(chunk)
+        written_bytes += chunk.bytesize
       end
     rescue TranscodeService::TranscodeError => e
+      outcome = "ffmpeg_error"
       Rails.logger.error("[Transcode] playback_id=#{playback_id} #{e.message}")
       if response.stream.closed? || response.committed?
         # Data was already sent (mid-stream stall).  Headers are committed;
@@ -66,9 +72,16 @@ class TranscodeController < ApplicationController
         response.status = :bad_gateway
         response.stream.write("Unable to start stream: #{e.message}")
       end
-    rescue ActionController::Live::ClientDisconnected, IOError
-      # Client disconnected — ffmpeg cleanup handled by TranscodeService ensure
+    rescue ActionController::Live::ClientDisconnected, IOError => e
+      outcome = "client_disconnected"
+      Rails.logger.info("[TranscodeStream] playback_id=#{playback_id} load_id=#{load_id} client_disconnect=#{e.class}")
     ensure
+      elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at
+      Rails.logger.info(
+        "[TranscodeStream] playback_id=#{playback_id} load_id=#{load_id} " \
+        "remux=#{params[:remux] == '1'} start_seconds=#{start_seconds.round(2)} " \
+        "outcome=#{outcome} written_bytes=#{written_bytes} elapsed=#{elapsed.round(2)}s"
+      )
       response.stream.close
     end
   end
@@ -78,6 +91,10 @@ class TranscodeController < ApplicationController
   def normalized_playback_id(value)
     sanitized = value.to_s.gsub(/[^a-zA-Z0-9_-]/, "").first(80)
     sanitized.presence || "unknown"
+  end
+
+  def normalized_load_id(value)
+    value.to_i.clamp(0, 1_000_000)
   end
 
   def normalized_start_seconds(value)

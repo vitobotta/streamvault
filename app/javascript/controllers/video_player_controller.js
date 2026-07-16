@@ -42,6 +42,13 @@ const MSE_CAPACITY_POLL_MS = 250
 const MSE_QUOTA_RETRY_MS = 250
 const MSE_BACK_BUFFER_SECONDS = 30
 const MSE_QUOTA_BACK_BUFFER_SECONDS = 2
+const PREMATURE_END_RECOVERY_BUFFER_SECONDS = 5
+const MSE_MIME_TYPE = 'video/mp4; codecs="avc1.640028,mp4a.40.2"'
+const REMUX_PRESENTATION_PROBE_SECONDS = 0.001
+const REMUX_PRESENTATION_PROBE_TIMEOUT_MS = 500
+const MAX_REMUX_PRESENTATION_OFFSET_SECONDS = 1
+const REMUX_SEEK_TOLERANCE_SECONDS = 0.25
+const REMUX_SEEK_TIMEOUT_MS = 500
 const INTERACTIVE_SELECTOR = "button, a, input, textarea, select, [contenteditable='true']"
 
 export default class extends Controller {
@@ -119,6 +126,7 @@ export default class extends Controller {
     this.systemRebufferPaused = false
     this.rebufferDeadlineTimer = null
     this.bufferAheadDeadlineTimer = null
+    this.prematureEndRecoveryTimer = null
     this.lastProgressTime = 0
     this.lastProgressPosition = 0
     this.lastBufferEnd = 0
@@ -137,7 +145,7 @@ export default class extends Controller {
     this.navigatingAway = false
     this.bufferAheadDeadline = null
     this.rebufferDeadline = null
-    this.mseSupported = window.MediaSource && MediaSource.isTypeSupported('video/mp4; codecs="avc1.42E01E,mp4a.40.2"')
+    this.mseSupported = window.MediaSource && MediaSource.isTypeSupported(MSE_MIME_TYPE)
     this.hlsSessionId = null
     this.playbackId = globalThis.crypto?.randomUUID?.() ||
       `${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -204,6 +212,7 @@ export default class extends Controller {
     clearTimeout(this.quotaRetryTimer)
     clearTimeout(this.rebufferDeadlineTimer)
     clearTimeout(this.bufferAheadDeadlineTimer)
+    clearTimeout(this.prematureEndRecoveryTimer)
     this.stopProgressWatchdog()
     this.playbackStarted = false
     this.bufferAheadDeadline = null
@@ -326,6 +335,8 @@ export default class extends Controller {
     this.clearSystemRebufferGate()
     clearTimeout(this.bufferAheadDeadlineTimer)
     this.bufferAheadDeadlineTimer = null
+    clearTimeout(this.prematureEndRecoveryTimer)
+    this.prematureEndRecoveryTimer = null
     this.playbackStarted = false
     this.isStalled = false
     this.userPaused = false
@@ -345,7 +356,7 @@ export default class extends Controller {
     }
     if (this.videoTarget.src.startsWith("blob:")) URL.revokeObjectURL(this.videoTarget.src)
 
-    const mimeType = 'video/mp4; codecs="avc1.42E01E,mp4a.40.2"'
+    const mimeType = MSE_MIME_TYPE
     if (!this.mseSupported) {
       this.videoTarget.src = streamUrl
       this.videoTarget.load()
@@ -369,6 +380,16 @@ export default class extends Controller {
   isIOS() {
     const ua = navigator.userAgent
     return /iPhone|iPod/.test(ua) && !/iPad/.test(ua)
+  }
+
+  isSafari() {
+    const ua = globalThis.navigator?.userAgent || ""
+    return /Safari/.test(ua) && !/(Chrome|Chromium|CriOS|FxiOS|Edg|OPR|Android)/.test(ua)
+  }
+
+  isChromium() {
+    const ua = globalThis.navigator?.userAgent || ""
+    return /(Chrome|Chromium|CriOS|Edg|OPR)/.test(ua)
   }
 
   // True when using native HLS playback (iOS).  All MSE-specific
@@ -418,6 +439,8 @@ export default class extends Controller {
 
     const codec = this.tracksData?.video_codec
     if (!codec) return false
+    const isHevc = codec === "hevc" || codec === "h265"
+    if (isHevc && this.isSafari() && this.tracksData?.video_codec_tag !== "hvc1") return false
     return codec === "h264" || this.browserCanPlayCodec(codec)
   }
 
@@ -516,6 +539,7 @@ export default class extends Controller {
     }
     if (this.fetchController) { this.fetchController.abort(); this.fetchController = null }
 
+    this.videoTarget.autoplay = true
     this.videoTarget.src = this.urlWithPlaybackId(this.directStreamUrlValue)
     this.videoTarget.load()
 
@@ -531,11 +555,12 @@ export default class extends Controller {
     // onVideoReady() sets them when "playing" fires.
   }
 
-  // Start remux direct play.  Non-zero positions first resolve to the
-  // preceding source keyframe; ffmpeg copies from that anchor and the
-  // native video element skips the short pre-roll locally.  This keeps
-  // resume, seek, and recovery on -c:v copy instead of silently turning
-  // them into full video transcodes.
+  // Start remux direct play. Non-zero positions resolve to the preceding
+  // source keyframe, but ffmpeg receives the exact target so Matroska seeking
+  // does not jump back by a second cue. The native element skips the copied
+  // pre-roll when its fMP4 timeline is seekable; otherwise the verified seek
+  // falls back to the exact MSE/transcode path rather than playing misaligned
+  // video and audio.
   async startRemuxDirectPlay() {
     this.directPlayActive = true
     this.remuxDirectPlay = true
@@ -568,8 +593,9 @@ export default class extends Controller {
     }
 
     const anchorSeconds = Number(plan.anchor_seconds)
+    const inputSeekSeconds = Number(plan.input_seek_seconds ?? targetSeconds)
     const skipSeconds = Number(plan.skip_seconds)
-    if (!Number.isFinite(anchorSeconds) || !Number.isFinite(skipSeconds)) {
+    if (!Number.isFinite(anchorSeconds) || !Number.isFinite(inputSeekSeconds) || !Number.isFinite(skipSeconds)) {
       this.fallbackRemuxToMse(targetSeconds)
       return
     }
@@ -577,7 +603,7 @@ export default class extends Controller {
     this.startSecondsValue = anchorSeconds
     this.element.dataset.videoPlayerStartSecondsValue = anchorSeconds.toString()
     this.loadRemuxSource(
-      this.buildRemuxDirectUrl(anchorSeconds),
+      this.buildRemuxDirectUrl(inputSeekSeconds, token),
       skipSeconds,
       targetSeconds,
       token
@@ -622,12 +648,35 @@ export default class extends Controller {
     const video = this.videoTarget
     let completed = false
     let timeoutId = null
+    const shouldMeasurePresentationOffset = skipSeconds > 0 && this.isChromium()
+    let presentationOffsetSeconds = shouldMeasurePresentationOffset ? null : 0
+    let presentationFrameCallbackId = null
+    let presentationProbeTimeoutId = null
+    let measuringPresentationOffset = false
+    let seekTimeoutId = null
+    let seekedHandler = null
+    let seekPending = false
 
+    const clearPresentationFrameCallback = () => {
+      if (presentationFrameCallbackId === null) return
+      if (typeof video.cancelVideoFrameCallback === "function") {
+        video.cancelVideoFrameCallback(presentationFrameCallbackId)
+      }
+      presentationFrameCallbackId = null
+    }
     const cleanup = () => {
       video.removeEventListener("loadeddata", maybeStart)
       video.removeEventListener("canplay", maybeStart)
       video.removeEventListener("progress", maybeStart)
+      if (seekedHandler) video.removeEventListener("seeked", seekedHandler)
+      seekedHandler = null
+      seekPending = false
+      clearPresentationFrameCallback()
+      clearTimeout(presentationProbeTimeoutId)
+      presentationProbeTimeoutId = null
       clearTimeout(timeoutId)
+      clearTimeout(seekTimeoutId)
+      seekTimeoutId = null
       if (this.remuxLoadCleanup === cleanup) this.remuxLoadCleanup = null
     }
     const play = () => {
@@ -635,20 +684,101 @@ export default class extends Controller {
       const playPromise = video.play()
       if (playPromise?.catch) playPromise.catch(() => {})
     }
+    const playAfterSeek = (expectedTime) => {
+      if (token !== this.remuxLoadToken) return
+      if (Math.abs(video.currentTime - expectedTime) > REMUX_SEEK_TOLERANCE_SECONDS) {
+        this.fallbackRemuxToMse(targetSeconds)
+        return
+      }
+      play()
+    }
     const maybeStart = () => {
       if (completed) return
       if (token !== this.remuxLoadToken) {
         cleanup()
         return
       }
-      if (!this.mediaRangeContains(skipSeconds, 0.5)) return
+
+      // Chromium exposes copied B-frame composition delay through the first
+      // presented frame. Safari may never fire this callback while paused, so
+      // it proceeds with the source pre-roll instead of blocking startup.
+      if (presentationOffsetSeconds === null) {
+        if (measuringPresentationOffset || video.readyState < 2) return
+        if (typeof video.requestVideoFrameCallback !== "function") {
+          presentationOffsetSeconds = 0
+        } else {
+          measuringPresentationOffset = true
+          try {
+            presentationFrameCallbackId = video.requestVideoFrameCallback((_now, metadata) => {
+              presentationFrameCallbackId = null
+              clearTimeout(presentationProbeTimeoutId)
+              presentationProbeTimeoutId = null
+              measuringPresentationOffset = false
+              if (completed || token !== this.remuxLoadToken) return
+
+              const mediaTime = Number(metadata.mediaTime)
+              presentationOffsetSeconds =
+                Number.isFinite(mediaTime) && mediaTime >= 0 && mediaTime <= MAX_REMUX_PRESENTATION_OFFSET_SECONDS
+                  ? mediaTime
+                  : 0
+              if (presentationOffsetSeconds > 0) {
+                this.startSecondsValue = Math.max(0, this.startSecondsValue - presentationOffsetSeconds)
+                this.element.dataset.videoPlayerStartSecondsValue = this.startSecondsValue.toString()
+              }
+              maybeStart()
+            })
+            presentationProbeTimeoutId = setTimeout(() => {
+              presentationProbeTimeoutId = null
+              if (completed || token !== this.remuxLoadToken) return
+              clearPresentationFrameCallback()
+              measuringPresentationOffset = false
+              presentationOffsetSeconds = 0
+              maybeStart()
+            }, REMUX_PRESENTATION_PROBE_TIMEOUT_MS)
+            video.currentTime = REMUX_PRESENTATION_PROBE_SECONDS
+            return
+          } catch {
+            clearPresentationFrameCallback()
+            clearTimeout(presentationProbeTimeoutId)
+            presentationProbeTimeoutId = null
+            measuringPresentationOffset = false
+            presentationOffsetSeconds = 0
+          }
+        }
+      }
+
+      const playbackStartSeconds = skipSeconds + presentationOffsetSeconds
+      if (!this.mediaRangeContains(playbackStartSeconds, 0.5)) return
 
       completed = true
-      cleanup()
-      if (skipSeconds > 0) {
-        video.addEventListener("seeked", play, { once: true })
-        video.currentTime = skipSeconds
+      clearTimeout(timeoutId)
+      timeoutId = null
+      if (playbackStartSeconds > 0) {
+        seekPending = true
+        seekedHandler = () => {
+          if (!seekPending) return
+          seekPending = false
+          clearTimeout(seekTimeoutId)
+          seekTimeoutId = null
+          cleanup()
+          playAfterSeek(playbackStartSeconds)
+        }
+        video.addEventListener("seeked", seekedHandler, { once: true })
+        seekTimeoutId = setTimeout(() => {
+          if (!seekPending || token !== this.remuxLoadToken) return
+          seekPending = false
+          cleanup()
+          this.fallbackRemuxToMse(targetSeconds)
+        }, REMUX_SEEK_TIMEOUT_MS)
+        try {
+          video.currentTime = playbackStartSeconds
+        } catch {
+          seekPending = false
+          cleanup()
+          this.fallbackRemuxToMse(targetSeconds)
+        }
       } else {
+        cleanup()
         play()
       }
     }
@@ -664,14 +794,16 @@ export default class extends Controller {
       this.fallbackRemuxToMse(targetSeconds)
     }, STREAM_STALL_TIMEOUT_MS)
 
+    video.autoplay = false
     video.src = remuxUrl
-    video.load()
+    // Assigning src starts resource selection; calling load() as well can
+    // cancel and duplicate the same long-lived FFmpeg request.
   }
 
-  mediaRangeContains(position, minAhead = 0) {
+  mediaRangeContains(position, minAheadSeconds) {
     const ranges = this.videoTarget.buffered
-    for (let index = 0; index < ranges.length; index++) {
-      if (ranges.start(index) <= position && ranges.end(index) >= position + minAhead) return true
+    for (let i = 0; i < ranges.length; i++) {
+      if (ranges.start(i) <= position + 0.25 && ranges.end(i) >= position + minAheadSeconds) return true
     }
     return false
   }
@@ -694,14 +826,20 @@ export default class extends Controller {
     this.setupMseSource(nextSrc)
   }
 
-  // Build the remux URL from the resolved keyframe anchor.
-  buildRemuxDirectUrl(startSeconds = this.startSecondsValue) {
+  // Build the remux URL from the exact input seek target. A unique load ID
+  // distinguishes controller reloads from duplicate browser requests.
+  buildRemuxDirectUrl(startSeconds = this.startSecondsValue, loadToken = null) {
     const base = this.tracksData?.remux_direct_url
     if (!base) return this.streamingUrlValue
     const url = new URL(base, window.location.origin)
-    if (startSeconds > 0) url.searchParams.set("start_seconds", startSeconds)
+    if (startSeconds > 0) {
+      url.searchParams.set("start_seconds", startSeconds)
+    } else {
+      url.searchParams.delete("start_seconds")
+    }
     if (this.selectedAudioStream) url.searchParams.set("audio_stream", this.selectedAudioStream)
     if (this.burnedSubtitleSelected()) url.searchParams.set("subtitle_stream", this.selectedSubtitleStream)
+    if (loadToken !== null) url.searchParams.set("load_id", loadToken)
     url.searchParams.set("playback_id", this.playbackId)
     return url.pathname + url.search
   }
@@ -759,6 +897,7 @@ export default class extends Controller {
       }
 
       // Native HLS playback — iOS Safari handles the playlist natively.
+      this.videoTarget.autoplay = true
       this.videoTarget.src = data.playlist_url
       this.videoTarget.load()
       const p = this.videoTarget.play()
@@ -1016,6 +1155,9 @@ export default class extends Controller {
       if (e.name === "AbortError") return
       console.warn("Stream fetch failed:", e)
       this.handlePrematureStreamEnd()
+    }
+    finally {
+      if (this.fetchController === fetchController) this.fetchController = null
     }
   }
 
@@ -1456,49 +1598,53 @@ export default class extends Controller {
     this.restartHlsSession(targetSeconds)
   }
 
-  // Called when the server closes the stream response early (done=true)
-  // while the video still has content to play.
-  //
-  // For a slow remote source, ffmpeg transcodes a burst, the upstream
-  // stalls, and ffmpeg exits — this is normal.  The MSE buffer may
-  // still have plenty of data to keep the video playing for a while.
-  // Reconnecting immediately would discard that buffer and restart from
-  // the current position, creating a stuttering cycle.
-  //
-  // Instead, we do nothing here.  The video keeps playing from the
-  // buffer.  If the buffer eventually runs dry, the stall watchdog
-  // (60s of no data) handles reconnection from the current position.
-  // If the video reaches the end naturally, onVideoEnded handles it.
+  // The server should now reconnect upstream EOFs internally. If a bounded
+  // retry budget is nevertheless exhausted, retain the existing MSE cushion
+  // instead of discarding it immediately. Recover when it is nearly dry.
   handlePrematureStreamEnd() {
-    // Genuine end-of-stream: the fetch ended and we're near the
-    // known duration.  Let the video finish naturally.
     if (this.knownDuration > 0) {
       const currentPos = this.currentPlaybackPosition()
       if (currentPos >= this.knownDuration - 5) return
     }
 
-    // No buffer to play through — recover immediately.
     if (!this.playbackStarted || !this.sourceBuffer || this.sourceBuffer.buffered.length === 0) {
       console.warn("Stream fetch ended early with no buffer — recovering.")
       this.handleStreamStall("premature_end")
       return
     }
 
-    // The fetch ended but we have buffered data.  Check how much
-    // buffer is ahead of the current playback position.  If the
-    // remaining buffer is small (< 30s), reconnect immediately —
-    // waiting for the stall watchdog (30s) means the user stares at
-    // "Buffering" for 30s after the buffer runs dry, when we could
-    // have started the reconnect now while the video is still playing.
-    // If the buffer is large, let the video play through it and let
-    // the stall watchdog handle reconnection when it runs dry.
     const bufferedAhead = this.bufferedAheadOfCurrent()
-    if (bufferedAhead < 30) {
+    if (bufferedAhead <= PREMATURE_END_RECOVERY_BUFFER_SECONDS) {
       console.warn(`Stream fetch ended early with ${bufferedAhead.toFixed(1)}s buffer — reconnecting.`)
       this.handleStreamStall("premature_end")
       return
     }
-    console.warn(`Stream fetch ended early with ${bufferedAhead.toFixed(1)}s buffer — continuing from buffer.`)
+
+    console.warn(`Stream fetch ended early with ${bufferedAhead.toFixed(1)}s buffer — retaining cushion.`)
+    this.schedulePrematureEndRecovery()
+  }
+
+  schedulePrematureEndRecovery() {
+    clearTimeout(this.prematureEndRecoveryTimer)
+    const check = () => {
+      this.prematureEndRecoveryTimer = null
+      if (this.videoTarget.ended || this.isSeeking) return
+      if (this.userPaused) {
+        this.prematureEndRecoveryTimer = setTimeout(check, 1000)
+        return
+      }
+
+      const bufferedAhead = this.bufferedAheadOfCurrent()
+      if (bufferedAhead > PREMATURE_END_RECOVERY_BUFFER_SECONDS) {
+        const delay = Math.min(1000, Math.max(250,
+          (bufferedAhead - PREMATURE_END_RECOVERY_BUFFER_SECONDS) * 1000))
+        this.prematureEndRecoveryTimer = setTimeout(check, delay)
+        return
+      }
+
+      this.handleStreamStall("premature_end")
+    }
+    this.prematureEndRecoveryTimer = setTimeout(check, 250)
   }
 
   // How many seconds of buffer are ahead of the current playback position.

@@ -20,6 +20,12 @@ class DirectStreamController < ApplicationController
     end
 
     range = request.headers["HTTP_RANGE"]
+    playback_id = normalized_playback_id(params[:playback_id])
+    started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    written_bytes = 0
+    expected_bytes = nil
+    upstream_status = nil
+    outcome = "complete"
 
     response.headers["Cache-Control"] = "no-cache"
     response.headers["Accept-Ranges"] = "bytes"
@@ -39,21 +45,56 @@ class DirectStreamController < ApplicationController
 
     begin
       http.request_get(uri.request_uri, request_headers) do |upstream|
-        response.status = upstream.code.to_i
+        upstream_status = upstream.code.to_i
+        expected_bytes = Integer(upstream["Content-Length"], exception: false)
+        response.status = upstream_status
         pass_through_header(upstream, "Content-Type")
         pass_through_header(upstream, "Content-Length")
         pass_through_header(upstream, "Content-Range")
 
-        upstream.read_body { |chunk| response.stream.write(chunk) }
+        upstream.read_body do |chunk|
+          response.stream.write(chunk)
+          written_bytes += chunk.bytesize
+        end
       end
-    rescue Net::ReadTimeout, Net::OpenTimeout, Errno::ECONNRESET, Errno::EPIPE, IOError
-    rescue ActionController::Live::ClientDisconnected
+      if expected_bytes && written_bytes != expected_bytes
+        outcome = "truncated"
+        Rails.logger.warn(
+          "[DirectStream] playback_id=#{playback_id} truncated expected_bytes=#{expected_bytes} " \
+          "written_bytes=#{written_bytes}"
+        )
+      end
+    rescue ActionController::Live::ClientDisconnected => e
+      outcome = "client_disconnected"
+      Rails.logger.info("[DirectStream] playback_id=#{playback_id} client_disconnect=#{e.class}")
+    rescue Net::ReadTimeout, Net::OpenTimeout, Net::HTTPBadResponse, OpenSSL::SSL::SSLError,
+      SocketError, EOFError, Errno::ECONNRESET, Errno::EPIPE, IOError => e
+      outcome = "upstream_error"
+      Rails.logger.warn("[DirectStream] playback_id=#{playback_id} upstream_error=#{e.class}")
+      response.status = :bad_gateway unless response.committed?
     ensure
-      response.stream.close rescue nil
+      response.stream.close
+      elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at
+      Rails.logger.info(
+        "[DirectStream] playback_id=#{playback_id} range=#{normalized_range(range)} " \
+        "upstream_status=#{upstream_status || 'none'} expected_bytes=#{expected_bytes || 'unknown'} " \
+        "written_bytes=#{written_bytes} outcome=#{outcome} elapsed=#{elapsed.round(2)}s"
+      )
     end
   end
 
   private
+
+  def normalized_playback_id(value)
+    sanitized = value.to_s.gsub(/[^a-zA-Z0-9_-]/, "").first(80)
+    sanitized.presence || "unknown"
+  end
+
+  def normalized_range(value)
+    range = value.to_s
+    range.match?(/\Abytes=\d*-\d*\z/) ? range : "none"
+  end
+
 
   def pass_through_header(upstream, name)
     value = upstream[name]

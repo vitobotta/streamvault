@@ -55,5 +55,49 @@ RSpec.describe "DirectStream", type: :request do
       expect(WebMock).to have_requested(:get, "https://torrentio.strem.fun/stream/movie/tt123.json")
         .with { |req| req.headers["Authorization"].present? }
     end
+
+    it "forwards byte ranges and logs complete byte accounting" do
+      allow(Rails.logger).to receive(:info)
+      stub_request(:get, "https://download.real-debrid.com/d/video.mp4")
+        .with(headers: { "Range" => "bytes=10-13" })
+        .to_return(
+          status: 206,
+          body: "data",
+          headers: {
+            "Content-Type" => "video/mp4",
+            "Content-Length" => "4",
+            "Content-Range" => "bytes 10-13/100"
+          }
+        )
+
+      get direct_stream_path,
+        params: {
+          url: "https://download.real-debrid.com/d/video.mp4",
+          playback_id: "playback-1"
+        },
+        headers: { "Range" => "bytes=10-13" }
+
+      expect(response).to have_http_status(:partial_content)
+      expect(response.body).to eq("data")
+      expect(response.headers["Content-Range"]).to eq("bytes 10-13/100")
+      expect(Rails.logger).to have_received(:info).with(
+        /\[DirectStream\].*playback_id=playback-1.*range=bytes=10-13.*expected_bytes=4.*written_bytes=4.*outcome=complete/
+      )
+    end
+
+    it "logs upstream timeouts instead of silently truncating the response" do
+      allow(Rails.logger).to receive(:warn)
+      stub_request(:get, "https://download.real-debrid.com/d/video.mp4").to_timeout
+
+      get direct_stream_path, params: {
+        url: "https://download.real-debrid.com/d/video.mp4",
+        playback_id: "playback-2"
+      }
+
+      expect(response).to have_http_status(:bad_gateway)
+      expect(Rails.logger).to have_received(:warn).with(
+        /\[DirectStream\].*playback_id=playback-2.*upstream_error=Net::OpenTimeout/
+      )
+    end
   end
 end

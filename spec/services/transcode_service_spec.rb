@@ -106,7 +106,7 @@ RSpec.describe TranscodeService do
   end
 
   describe ".probe_remux_seek" do
-    it "returns the preceding keyframe and exact local pre-roll" do
+    it "keeps the keyframe timeline while seeking FFmpeg to the exact target" do
       output = { "frames" => [ { "best_effort_timestamp_time" => "10.0" } ] }.to_json
       allow(described_class).to receive(:capture_command).and_return(capture_result(output))
 
@@ -115,7 +115,18 @@ RSpec.describe TranscodeService do
         target_seconds: 15
       )
 
-      expect(plan).to eq(anchor_seconds: 10.0, skip_seconds: 5.0)
+      expect(plan).to eq(anchor_seconds: 10.0, input_seek_seconds: 15.0, skip_seconds: 5.0)
+    end
+
+    it "uses a zero input seek without probing at the beginning" do
+      expect(described_class).not_to receive(:capture_command)
+
+      plan = described_class.probe_remux_seek(
+        "https://example.test/video.mkv",
+        target_seconds: 0
+      )
+
+      expect(plan).to eq(anchor_seconds: 0.0, input_seek_seconds: 0.0, skip_seconds: 0.0)
     end
 
     it "fails closed when the preceding keyframe is too far behind" do
@@ -142,7 +153,7 @@ RSpec.describe TranscodeService do
   end
 
   describe "ffmpeg command selection" do
-    it "copies browser-safe H.264 video" do
+    it "encodes MSE output with the declared High Profile Level 4.0 contract" do
       output = {
         "streams" => [
           { "codec_name" => "h264", "width" => 1920, "height" => 1080, "pix_fmt" => "yuv420p" }
@@ -157,10 +168,21 @@ RSpec.describe TranscodeService do
         start_seconds: 0
       )
 
-      expect(argument_pairs(command)).to include([ "-c:v", "copy" ])
+      expect(argument_pairs(command)).to include(
+        [ "-c:v", "libx264" ],
+        [ "-profile:v", "high" ],
+        [ "-level:v", "4.0" ]
+      )
+      expect(argument_pairs(command)).not_to include([ "-c:v", "copy" ])
       expect(command).not_to include("-ss")
       expect(argument_pairs(command)).to include([ "-headers", "Authorization: Bearer token\r\n" ])
-      expect(command).not_to include("libx264")
+      expect(argument_pairs(command)).to include(
+        [ "-reconnect_at_eof", "1" ],
+        [ "-reconnect_on_network_error", "1" ],
+        [ "-reconnect_on_http_error", "429,5xx" ],
+        [ "-reconnect_max_retries", "10" ],
+        [ "-reconnect_delay_total_max", "30" ]
+      )
     end
 
     it "transcodes standard MSE seeks but preserves copy for keyframe-aligned remux seeks" do
@@ -183,12 +205,42 @@ RSpec.describe TranscodeService do
         start_seconds: 42.5,
         remux: true
       )
+      expect(argument_pairs(standard)).to include(
+        [ "-readrate", "1.25" ],
+        [ "-readrate_initial_burst", "30" ]
+      )
+      expect(argument_pairs(remux)).to include(
+        [ "-readrate", "1.05" ],
+        [ "-readrate_initial_burst", "5" ]
+      )
 
       expect(argument_pairs(standard)).to include([ "-c:v", "libx264" ])
       expect(argument_pairs(standard)).not_to include([ "-c:v", "copy" ])
       expect(argument_pairs(remux)).to include([ "-c:v", "copy" ])
       expect(remux).to include("-noaccurate_seek")
       expect(argument_pairs(remux)).to include([ "-ss", "42.5" ])
+      expect(argument_pairs(remux)).not_to include([ "-tag:v", "hvc1" ])
+    end
+
+    it "marks copied HEVC as hvc1 for Safari-compatible fragmented MP4" do
+      output = {
+        "streams" => [
+          { "codec_name" => "hevc", "width" => 1920, "height" => 1080, "pix_fmt" => "yuv420p10le" }
+        ]
+      }.to_json
+      allow(described_class).to receive(:capture_command).and_return(capture_result(output))
+
+      command = described_class.send(:build_ffmpeg_command,
+        "https://example.test/video-hevc.mkv",
+        headers: {},
+        start_seconds: 42.5,
+        remux: true
+      )
+
+      expect(argument_pairs(command)).to include(
+        [ "-c:v", "copy" ],
+        [ "-tag:v", "hvc1" ]
+      )
     end
 
     it "transcodes HEVC/UHD video to browser-safe H.264" do
@@ -350,9 +402,36 @@ RSpec.describe TranscodeService do
         start_seconds: 0
       )
 
-      expect(argument_pairs(command)).to include([ "-c:v", "h264_videotoolbox" ])
-      expect(argument_pairs(command)).to include([ "-b:v", "4000k" ])
+      expect(argument_pairs(command)).to include(
+        [ "-c:v", "h264_videotoolbox" ],
+        [ "-b:v", "4000k" ],
+        [ "-profile:v", "high" ],
+        [ "-level:v", "4.0" ]
+      )
       expect(argument_pairs(command)).not_to include([ "-c:v", "libx264" ])
+    end
+
+    it "enforces the AVC compatibility contract on custom hardware encoders" do
+      output = {
+        "streams" => [
+          { "codec_name" => "hevc", "width" => 1920, "height" => 1080, "pix_fmt" => "yuv420p10le" }
+        ]
+      }.to_json
+      allow(described_class).to receive(:capture_command).and_return(capture_result(output))
+      allow(ENV).to receive(:[]).and_call_original
+      allow(ENV).to receive(:[]).with("FFMPEG_ENCODER").and_return("h264_nvenc -preset p7")
+
+      command = described_class.send(:build_ffmpeg_command,
+        "https://example.test/video-hevc.mkv",
+        headers: {},
+        start_seconds: 0
+      )
+
+      expect(argument_pairs(command)).to include(
+        [ "-c:v", "h264_nvenc" ],
+        [ "-profile:v", "high" ],
+        [ "-level:v", "4.0" ]
+      )
     end
   end
 
@@ -932,6 +1011,25 @@ RSpec.describe TranscodeService do
         TranscodeService::TranscodeError,
         /timed out.*waiting for first data/
       )
+    end
+
+    it "raises after streamed output when ffmpeg exits unsuccessfully" do
+      script = <<~RUBY
+        $stdout.sync = true
+        $stdout.write("fragment")
+        warn "upstream terminated"
+        exit 7
+      RUBY
+      command = [ RbConfig.ruby, "-e", script ]
+      received = +""
+
+      expect {
+        described_class.send(:transcode_to_fmp4_internal, command) { |chunk| received << chunk }
+      }.to raise_error(
+        TranscodeService::TranscodeError,
+        /status 7.*upstream terminated/
+      )
+      expect(received).to eq("fragment")
     end
 
     it "does not time out once ffmpeg has produced data (bursts are normal)" do

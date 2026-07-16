@@ -119,7 +119,7 @@ RSpec.describe "Transcode", type: :request do
         audio: [ { index: 1, codec: "aac", default: true, language: "ENG" } ],
         subtitles: []
       }
-      video = { codec_name: "hevc", width: 1920, height: 816, pix_fmt: "yuv420p10le" }
+      video = { codec_name: "hevc", codec_tag: "hev1", width: 1920, height: 816, pix_fmt: "yuv420p10le" }
       allow(TranscodeService).to receive(:probe_media_tracks).and_return(tracks)
       allow(TranscodeService).to receive(:probe_video_stream).and_return(video)
       allow(ExternalSubtitleService).to receive(:search).and_return([])
@@ -132,6 +132,7 @@ RSpec.describe "Transcode", type: :request do
       expect(response).to have_http_status(:ok)
       expect(response.parsed_body["direct_playable"]).to eq(true)
       expect(response.parsed_body["remux_direct_playable"]).to eq(true)
+      expect(response.parsed_body["video_codec_tag"]).to eq("hev1")
     end
 
     it "keeps HEVC MKV on the remux path" do
@@ -227,7 +228,7 @@ RSpec.describe "Transcode", type: :request do
   describe "GET /transcode/seek" do
     it "returns a keyframe-aligned copy plan" do
       allow(TranscodeService).to receive(:probe_remux_seek)
-        .and_return(anchor_seconds: 120.0, skip_seconds: 3.5)
+        .and_return(anchor_seconds: 120.0, input_seek_seconds: 123.5, skip_seconds: 3.5)
 
       get transcode_seek_path, params: {
         url: "https://download.real-debrid.com/d/file123/Inception.mkv",
@@ -238,6 +239,7 @@ RSpec.describe "Transcode", type: :request do
       expect(response.parsed_body).to include(
         "copy_safe" => true,
         "anchor_seconds" => 120.0,
+        "input_seek_seconds" => 123.5,
         "skip_seconds" => 3.5
       )
     end

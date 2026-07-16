@@ -33,6 +33,7 @@ class TranscodeTracksController < ApplicationController
     render json: tracks.merge(
       subtitles: subtitles,
       video_codec: video_stream[:codec_name].to_s.downcase,
+      video_codec_tag: video_stream[:codec_tag].to_s.downcase,
       video_width: video_stream[:width],
       video_height: video_stream[:height],
       video_pix_fmt: video_stream[:pix_fmt],
