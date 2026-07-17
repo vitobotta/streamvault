@@ -66,6 +66,7 @@ export default class extends Controller {
   static get values() {
     return {
       streamingUrl: String, directUrl: String, directStreamUrl: String, filename: String, imdbId: String, type: String,
+      directPlayHint: Boolean,
       season: String, episode: String, resumeAt: String, startSeconds: Number,
       title: String, duration: Number, posterUrl: String,
       defaultLanguage: String, preferredLanguages: String,
@@ -106,6 +107,7 @@ export default class extends Controller {
     this.tracksData = null
     this.mediaTracksLoaded = false
     this.directPlayActive = false
+    this.primedDirectPlayUrl = null
     this.startupOverlayHideTimer = null
     this.dragMoveHandler = null
     this.suppressNextSeekClick = false
@@ -312,20 +314,40 @@ export default class extends Controller {
       this.videoTarget.src = this.streamingUrlValue
       return
     }
-    // Wait for media tracks to determine direct play eligibility.
-    // The probe is cached server-side, so repeated calls after the first
-    // fetch (e.g. reconnects) resolve instantly from the in-memory cache.
-    await this.loadMediaTracks()
+    // A provider-ranked H.264/AAC MP4 can begin loading its header and MP4
+    // index while FFprobe validates the exact streams. This keeps the probe as
+    // the authority for codec and preferred-audio decisions without putting
+    // its network latency in front of the browser's own metadata fetch.
+    const tracksPromise = this.loadMediaTracks()
+    if (this.directPlayHintValue) this.primeDirectPlay()
+    await tracksPromise
     if (this.directPlayEligible()) {
       console.log("[Player] Path: direct play (native <video>, no ffmpeg)")
       this.startDirectPlay()
     } else if (this.remuxDirectEligible()) {
+      this.primedDirectPlayUrl = null
       console.log("[Player] Path: remux direct play (-c:v copy, no re-encode)")
       this.startRemuxDirectPlay()
     } else {
+      this.primedDirectPlayUrl = null
       console.log("[Player] Path: MSE/transcode (hardware decode + encode)")
       this.setupMseSource(this.streamingUrlValue)
     }
+  }
+
+  primeDirectPlay() {
+    if (!this.directStreamUrlValue) return
+    // An explicit track selection needs FFprobe before we know whether native
+    // playback can honor it, so only prime the ordinary default-track case.
+    if (this.selectedAudioStream || this.selectedSubtitleStream) return
+
+    const directUrl = this.urlWithPlaybackId(this.directStreamUrlValue)
+    this.primedDirectPlayUrl = directUrl
+    this.videoTarget.autoplay = false
+    this.videoTarget.preload = "auto"
+    this.videoTarget.src = directUrl
+    // Assigning src starts resource selection. Calling load() as well can
+    // cancel and duplicate the same Range request in Chromium.
   }
   setupMseSource(streamUrl) {
     // Abort current fetch and clear queue
@@ -553,18 +575,41 @@ export default class extends Controller {
     }
     if (this.fetchController) { this.fetchController.abort(); this.fetchController = null }
 
-    this.videoTarget.autoplay = true
-    this.videoTarget.src = this.urlWithPlaybackId(this.directStreamUrlValue)
-    this.videoTarget.load()
+    const directUrl = this.urlWithPlaybackId(this.directStreamUrlValue)
+    const play = () => {
+      const promise = this.videoTarget.play()
+      if (promise?.catch) promise.catch(() => {})
+    }
+    const seekAndPlay = () => {
+      if (this.startSecondsValue <= 0) {
+        play()
+        return
+      }
 
-    if (this.startSecondsValue > 0) {
-      this.videoTarget.addEventListener("loadedmetadata", () => {
-        this.videoTarget.currentTime = this.startSecondsValue
-      }, { once: true })
+      const targetSeconds = this.startSecondsValue
+      const onSeeked = () => play()
+      this.videoTarget.addEventListener("seeked", onSeeked, { once: true })
+      try {
+        this.videoTarget.currentTime = targetSeconds
+      } catch {
+        this.videoTarget.removeEventListener("seeked", onSeeked)
+        play()
+      }
     }
 
-    const p = this.videoTarget.play()
-    if (p?.catch) p.catch(() => {})
+    // Keep an already-primed source alive. Reassigning it would discard the
+    // MP4 index Chromium downloaded in parallel with the track probe.
+    this.videoTarget.autoplay = false
+    if (this.primedDirectPlayUrl === directUrl && this.videoTarget.readyState >= 1) {
+      seekAndPlay()
+    } else {
+      if (this.startSecondsValue > 0) {
+        this.videoTarget.addEventListener("loadedmetadata", seekAndPlay, { once: true })
+      }
+      if (this.primedDirectPlayUrl !== directUrl) this.videoTarget.src = directUrl
+      if (this.startSecondsValue <= 0) play()
+    }
+    this.primedDirectPlayUrl = null
     // Don't set playbackStarted=true or start progress watchdog here —
     // onVideoReady() sets them when "playing" fires.
   }

@@ -40,14 +40,15 @@ class ContentStreamingService
   # bitrate that the upstream cannot sustain; in that case, prefer a smaller
   # compatible source and fall back to the original when none is available.
   def resolve_single(resolve_url, filename:, imdb_id:, type:, season: nil, episode: nil,
-    duration: nil, raw_size: nil, video_codec: nil)
+    duration: nil, raw_size: nil, video_codec: nil, compatibility_score: nil)
     return ServiceResult.failure("RealDebrid API key not configured") unless @user.has_realdebrid_key?
 
     selected_stream = {
       resolve_url: resolve_url,
       filename: filename,
       raw_size: positive_number(raw_size),
-      video_codec: video_codec.to_s.downcase
+      video_codec: video_codec.to_s.downcase,
+      compatibility_score: Integer(compatibility_score, exception: false).to_i
     }
 
     used_playback_safe_alternative = false
@@ -216,6 +217,8 @@ class ContentStreamingService
       streaming_url: result[:streaming_url],
       filename: torrent_filename,
       stream: result[:stream].merge(filename: torrent_filename),
+      direct_play_hint: result[:stream][:compatibility_score].to_i ==
+        StreamCompatibility::COMPATIBILITY_SCORES[:direct_play],
       imdb_id: imdb_id,
       type: type,
       season: season,

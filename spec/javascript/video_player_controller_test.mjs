@@ -165,6 +165,77 @@ test("iOS loads track metadata before starting HLS playback", async () => {
   assert.deepEqual(calls, ["tracks", "hls"])
 })
 
+test("direct-play hint primes the native MP4 while track validation is pending", async () => {
+  const player = new VideoPlayerController()
+  const calls = []
+  let finishTracks
+  player.streamingUrlValue = "/transcode?url=https%3A%2F%2Fexample.test%2Fmovie.mp4"
+  player.directPlayHintValue = true
+  player.mseSupported = true
+  player.isIOS = () => false
+  player.loadMediaTracks = () => {
+    calls.push("tracks")
+    return new Promise((resolve) => { finishTracks = resolve })
+  }
+  player.primeDirectPlay = () => { calls.push("prime") }
+  player.directPlayEligible = () => true
+  player.startDirectPlay = () => { calls.push("direct") }
+
+  const sourcePromise = player.ensureVideoSource()
+  assert.deepEqual(calls, ["tracks", "prime"])
+
+  finishTracks()
+  await sourcePromise
+  assert.deepEqual(calls, ["tracks", "prime", "direct"])
+})
+
+test("native direct-play priming starts resource selection without forcing load", () => {
+  const player = new VideoPlayerController()
+  let loadCount = 0
+  player.playbackId = "playback-1"
+  player.directStreamUrlValue = "/direct_stream?url=https%3A%2F%2Fexample.test%2Fmovie.mp4"
+  player.selectedAudioStream = null
+  player.selectedSubtitleStream = null
+  player.videoTarget = {
+    autoplay: true,
+    preload: "none",
+    src: "",
+    load: () => { loadCount += 1 }
+  }
+
+  player.primeDirectPlay()
+
+  assert.equal(player.videoTarget.autoplay, false)
+  assert.equal(player.videoTarget.preload, "auto")
+  assert.match(player.videoTarget.src, /playback_id=playback-1/)
+  assert.equal(loadCount, 0)
+})
+
+test("native direct play assigns its source without restarting it with load", () => {
+  const player = new VideoPlayerController()
+  let loadCount = 0
+  let playCount = 0
+  player.playbackId = "playback-1"
+  player.directStreamUrlValue = "/direct_stream?url=https%3A%2F%2Fexample.test%2Fmovie.mp4"
+  player.startSecondsValue = 0
+  player.mediaSource = null
+  player.fetchController = null
+  player.videoTarget = {
+    autoplay: true,
+    readyState: 0,
+    src: "",
+    addEventListener: () => {},
+    load: () => { loadCount += 1 },
+    play: () => { playCount += 1; return Promise.resolve() }
+  }
+
+  player.startDirectPlay()
+
+  assert.match(player.videoTarget.src, /playback_id=playback-1/)
+  assert.equal(loadCount, 0)
+  assert.equal(playCount, 1)
+})
+
 test("MSE fallback creates a High Profile Level 4.0 AVC SourceBuffer", () => {
   const player = new VideoPlayerController()
   let mediaSource

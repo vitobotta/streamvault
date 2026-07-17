@@ -36,7 +36,8 @@ class StreamingController < ApplicationController
         episode: params[:episode]&.to_i,
         duration: params[:duration],
         raw_size: params[:raw_size],
-        video_codec: params[:video_codec]
+        video_codec: params[:video_codec],
+        compatibility_score: params[:compatibility_score]
       )
     else
       result = service.start_stream(
@@ -52,8 +53,7 @@ class StreamingController < ApplicationController
       resume_at = progress_entry&.progress_seconds
       duration = find_duration_seconds(progress_entry, imdb_id, type, params[:season], params[:episode])
 
-      redirect_to streaming_path(
-        "play",
+      playback_params = {
         streaming_url: result.data[:streaming_url],
         filename: result.data[:filename],
         imdb_id: imdb_id,
@@ -64,7 +64,9 @@ class StreamingController < ApplicationController
         poster_url: params[:poster_url],
         resume_at: resume_at,
         duration: duration
-      )
+      }
+      playback_params[:direct_play_hint] = true if result.data[:direct_play_hint]
+      redirect_to streaming_path("play", playback_params)
     else
       redirect_back fallback_location: root_path, alert: result.error_message
     end
@@ -82,6 +84,7 @@ class StreamingController < ApplicationController
     @duration = normalized_duration_seconds(params[:duration])
     @default_language = current_user.default_stream_language
     @preferred_languages = current_user.preferred_stream_languages
+    @direct_play_hint = ActiveModel::Type::Boolean.new.cast(params[:direct_play_hint]) == true
 
     if @duration.zero?
       progress_entry = find_progress_entry(@imdb_id, @type, @season, @episode)
@@ -138,8 +141,7 @@ class StreamingController < ApplicationController
       # Metadata (title, poster_url, duration) comes from the DB
       # progress row loaded by resume_target — no Cinemeta round-trip
       # needed. This eliminates a 1-10s HTTP call on every resume.
-      redirect_to streaming_path(
-        "play",
+      playback_params = {
         streaming_url: result.data[:streaming_url],
         filename: result.data[:filename],
         imdb_id: imdb_id,
@@ -150,7 +152,9 @@ class StreamingController < ApplicationController
         poster_url: target[:poster_url],
         resume_at: resume_at,
         duration: target[:duration_seconds].to_i
-      )
+      }
+      playback_params[:direct_play_hint] = true if result.data[:direct_play_hint]
+      redirect_to streaming_path("play", playback_params)
     else
       redirect_back fallback_location: root_path, alert: result.error_message
     end
@@ -253,17 +257,17 @@ class StreamingController < ApplicationController
   end
 
   # Resolve which episode/movie to play, where to start, and metadata
- # (title, poster_url, duration) from the existing DB progress row.
- # Returns { season:, episode:, resume_at:, title:, poster_url:, duration_seconds: }.
- #
- # For shows resuming an in-progress episode, the episode_progresses row
- # holds show_title and duration_seconds. For movies, the watch_history_entries
- # row holds title, poster_url, and duration_seconds.
- #
- # When advancing to a next episode (progress >= 95%), no DB row exists
- # for the next episode yet — duration falls back to 0 and the player's
- # probeDuration fills it in. When no progress row exists at all (first
- # play), metadata is empty and the player page handles the fallback.
+  # (title, poster_url, duration) from the existing DB progress row.
+  # Returns { season:, episode:, resume_at:, title:, poster_url:, duration_seconds: }.
+  #
+  # For shows resuming an in-progress episode, the episode_progresses row
+  # holds show_title and duration_seconds. For movies, the watch_history_entries
+  # row holds title, poster_url, and duration_seconds.
+  #
+  # When advancing to a next episode (progress >= 95%), no DB row exists
+  # for the next episode yet — duration falls back to 0 and the player's
+  # probeDuration fills it in. When no progress row exists at all (first
+  # play), metadata is empty and the player page handles the fallback.
   def resume_target(imdb_id, type)
     if type == "movie"
       last = current_user.watch_history_entries.where(imdb_id: imdb_id).order(watched_at: :desc).first

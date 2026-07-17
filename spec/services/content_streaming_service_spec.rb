@@ -240,6 +240,7 @@ RSpec.describe ContentStreamingService do
 
       expect(result).to be_success
       expect(result.data[:filename]).to eq("Inception1080.mp4")
+      expect(result.data[:direct_play_hint]).to be(true)
       expect(WebMock).not_to have_requested(:get, selected_url)
     end
 

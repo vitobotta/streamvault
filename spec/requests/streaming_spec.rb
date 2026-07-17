@@ -134,7 +134,8 @@ RSpec.describe "Streaming", type: :request do
           imdb_id: "tt1375666",
           type: "movie",
           title: "Inception",
-          duration: 8880
+          duration: 8880,
+          direct_play_hint: true
         ))
         expect(WebMock).not_to have_requested(:get, selected_url)
       end
@@ -395,6 +396,7 @@ RSpec.describe "Streaming", type: :request do
       expect(response.body).to include(%(data-video-player-target="startupOverlay"))
       expect(response.body).to include("Starting playback")
       expect(response.body).to include(%(data-video-player-default-language-value="ENG"))
+      expect(response.body).to include(%(data-video-player-direct-play-hint-value="false"))
       expect(response.body).to include(%(data-video-player-tracks-url-value="/transcode/tracks"))
       expect(response.body).to include(%(data-video-player-seek-url-value="/transcode/seek"))
       expect(response.body).to include(%(data-video-player-subtitles-url-value="/transcode/subtitles"))
@@ -404,6 +406,19 @@ RSpec.describe "Streaming", type: :request do
       expect(response.body).to include(%(click-&gt;video-player#navigateBack))
       expect(response.body).to include("toggleAudioMenu")
       expect(response.body).to include("toggleSubtitleMenu")
+    end
+
+    it "renders the direct-play preload hint" do
+      get streaming_path("play",
+        streaming_url: "https://download.real-debrid.com/d/file123/Inception.mp4",
+        filename: "Inception.mp4",
+        imdb_id: "tt1375666",
+        type: "movie",
+        direct_play_hint: true
+      )
+
+      expect(response).to have_http_status(:ok)
+      expect(response.body).to include(%(data-video-player-direct-play-hint-value="true"))
     end
 
     it "uses transcode proxy for MKV files" do
