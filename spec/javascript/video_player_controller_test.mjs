@@ -815,6 +815,37 @@ test("quota failure retries the exact fragment instead of dropping it", () => {
   assert.equal(player.pendingAppendBuffer, null)
 })
 
+test("normal MSE back-buffer eviction is batched instead of running after every append", () => {
+  const player = new VideoPlayerController()
+  let ranges = [[0, 100]]
+  const removals = []
+  const buffered = {
+    get length() { return ranges.length },
+    start: (index) => ranges[index][0],
+    end: (index) => ranges[index][1]
+  }
+  player.videoTarget = { currentTime: 61 }
+  player.sourceBuffer = {
+    updating: false,
+    buffered,
+    remove: (start, end) => { removals.push([start, end]) }
+  }
+
+  player.evictOldBuffer()
+  assert.deepEqual(removals, [[0, 31]])
+
+  ranges = [[31, 101]]
+  player.videoTarget.currentTime = 62
+  player.evictOldBuffer()
+  player.videoTarget.currentTime = 90.9
+  player.evictOldBuffer()
+  assert.deepEqual(removals, [[0, 31]])
+
+  player.videoTarget.currentTime = 91
+  player.evictOldBuffer()
+  assert.deepEqual(removals, [[0, 31], [31, 61]])
+})
+
 test("full native buffer suppresses false download-stall recovery", () => {
   const player = new VideoPlayerController()
   const now = Date.now()

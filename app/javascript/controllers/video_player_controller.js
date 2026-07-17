@@ -41,6 +41,7 @@ const MSE_PENDING_BUFFER_LOW_BYTES = 8 * 1024 * 1024
 const MSE_CAPACITY_POLL_MS = 250
 const MSE_QUOTA_RETRY_MS = 250
 const MSE_BACK_BUFFER_SECONDS = 30
+const MSE_BACK_BUFFER_EVICT_BATCH_SECONDS = 30
 const MSE_QUOTA_BACK_BUFFER_SECONDS = 2
 const PREMATURE_END_RECOVERY_BUFFER_SECONDS = 5
 const MSE_MIME_TYPE = 'video/mp4; codecs="avc1.640028,mp4a.40.2"'
@@ -2048,14 +2049,25 @@ export default class extends Controller {
 
   evictOldBuffer() {
     if (!this.sourceBuffer || this.sourceBuffer.updating) return
-    const evictBefore = this.videoTarget.currentTime - MSE_BACK_BUFFER_SECONDS
-    if (evictBefore <= MSE_BACK_BUFFER_SECONDS) return
+    const currentTime = this.videoTarget.currentTime
+    const evictBefore = currentTime - MSE_BACK_BUFFER_SECONDS
+    if (evictBefore <= 0) return
 
     for (let index = 0; index < this.sourceBuffer.buffered.length; index++) {
       const start = this.sourceBuffer.buffered.start(index)
       const end = this.sourceBuffer.buffered.end(index)
       if (start >= evictBefore) continue
-      try { this.sourceBuffer.remove(start, Math.min(end, evictBefore)) } catch {}
+      const removeEnd = Math.min(end, evictBefore)
+
+      // Range removal resets coded-frame state and may discard dependencies
+      // through the next keyframe. Calling remove() after every append made
+      // hardware decoders repeatedly reinitialise, showing a black frame even
+      // though plenty of forward media was buffered. Keep the same 30-second
+      // back buffer, but reclaim the active range only in coarse batches.
+      const containsPlayhead = start <= currentTime && currentTime < end
+      if (containsPlayhead && removeEnd - start < MSE_BACK_BUFFER_EVICT_BATCH_SECONDS) continue
+
+      try { this.sourceBuffer.remove(start, removeEnd) } catch {}
       return
     }
   }
