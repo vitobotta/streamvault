@@ -210,6 +210,91 @@ RSpec.describe ContentStreamingService do
   end
 
   describe "#resolve_single" do
+    it "uses a playback-safe alternative for an oversized heavy-transcode source" do
+      selected_url = "https://torrentio.strem.fun/resolve/realdebrid/test_key/huge/null/0/Inception4K.mkv"
+      fallback_url = "https://torrentio.strem.fun/resolve/realdebrid/test_key/small/null/0/Inception1080.mp4"
+
+      stub_request(:get, %r{torrentio\.strem\.fun/([^/]+/)?stream/movie/tt1375666\.json})
+        .to_return(
+          status: 200,
+          body: {
+            "streams" => [
+              { "title" => "Inception 2160p HEVC 💾 92.9 GB", "url" => selected_url, "behaviorHints" => { "filename" => "Inception4K.mkv" } },
+              { "title" => "Inception 1080p H264 AAC 💾 12.0 GB", "url" => fallback_url, "behaviorHints" => { "filename" => "Inception1080.mp4" } }
+            ]
+          }.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+      stub_request(:get, fallback_url)
+        .to_return(status: 302, headers: { "Location" => "https://download.real-debrid.com/d/small/Inception1080.mp4" })
+
+      result = service.resolve_single(
+        selected_url,
+        filename: "Inception4K.mkv",
+        imdb_id: "tt1375666",
+        type: "movie",
+        duration: 8_888,
+        raw_size: 92_898_311_496,
+        video_codec: "hevc"
+      )
+
+      expect(result).to be_success
+      expect(result.data[:filename]).to eq("Inception1080.mp4")
+      expect(WebMock).not_to have_requested(:get, selected_url)
+    end
+
+    it "keeps the selected source when no playback-safe alternative exists" do
+      selected_url = "https://torrentio.strem.fun/resolve/realdebrid/test_key/huge/null/0/Inception4K.mkv"
+
+      stub_request(:get, %r{torrentio\.strem\.fun/([^/]+/)?stream/movie/tt1375666\.json})
+        .to_return(
+          status: 200,
+          body: {
+            "streams" => [
+              { "title" => "Inception 2160p HEVC 💾 92.9 GB", "url" => selected_url, "behaviorHints" => { "filename" => "Inception4K.mkv" } },
+              { "title" => "Inception 2160p HEVC 💾 60.0 GB", "url" => "https://torrentio.strem.fun/resolve/realdebrid/test_key/other/null/0/InceptionOther4K.mkv", "behaviorHints" => { "filename" => "InceptionOther4K.mkv" } }
+            ]
+          }.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+      stub_request(:get, selected_url)
+        .to_return(status: 302, headers: { "Location" => "https://download.real-debrid.com/d/huge/Inception4K.mkv" })
+
+      result = service.resolve_single(
+        selected_url,
+        filename: "Inception4K.mkv",
+        imdb_id: "tt1375666",
+        type: "movie",
+        duration: 8_888,
+        raw_size: 92_898_311_496,
+        video_codec: "hevc"
+      )
+
+      expect(result).to be_success
+      expect(result.data[:filename]).to eq("Inception4K.mkv")
+      expect(WebMock).to have_requested(:get, selected_url).once
+    end
+
+    it "does not fetch alternatives for a sustainable selected source" do
+      selected_url = "https://torrentio.strem.fun/resolve/realdebrid/test_key/small/null/0/Inception1080.mkv"
+      stub_request(:get, selected_url)
+        .to_return(status: 302, headers: { "Location" => "https://download.real-debrid.com/d/small/Inception1080.mkv" })
+
+      result = service.resolve_single(
+        selected_url,
+        filename: "Inception1080.mkv",
+        imdb_id: "tt1375666",
+        type: "movie",
+        duration: 8_888,
+        raw_size: 10.gigabytes,
+        video_codec: "hevc"
+      )
+
+      expect(result).to be_success
+      expect(result.data[:filename]).to eq("Inception1080.mkv")
+      expect(WebMock).not_to have_requested(:get, %r{/stream/movie/tt1375666\.json})
+    end
+
     it "resolves the selected stream when it is available" do
       stub_request(:get, "https://torrentio.strem.fun/resolve/realdebrid/test_key/abc123/null/0/Inception.mp4")
         .to_return(status: 302, headers: { "Location" => "https://download.real-debrid.com/d/file123/Inception.mp4" })

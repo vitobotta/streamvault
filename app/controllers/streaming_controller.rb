@@ -33,7 +33,10 @@ class StreamingController < ApplicationController
         imdb_id: imdb_id,
         type: type,
         season: params[:season]&.to_i,
-        episode: params[:episode]&.to_i
+        episode: params[:episode]&.to_i,
+        duration: params[:duration],
+        raw_size: params[:raw_size],
+        video_codec: params[:video_codec]
       )
     else
       result = service.start_stream(

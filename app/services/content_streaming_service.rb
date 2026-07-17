@@ -4,6 +4,12 @@ class ContentStreamingService
   MAX_STREAM_ATTEMPTS = 50
   RESOLVE_BATCH_SIZE = 10
   RESOLVE_RETRIES = 1
+  # Transcoding must read the source faster than real time. Leave enough
+  # headroom for CDN variance instead of selecting a file whose average
+  # bitrate already consumes the whole upstream connection.
+  MAX_TRANSCODE_SOURCE_BITRATE_BPS = 16_000_000
+  HEAVY_VIDEO_CODECS = %w[hevc h265 av1 vp9].freeze
+  QUALITY_ORDER = { "4K" => 0, "1080p" => 1, "720p" => 2, "480p" => 3, "Unknown" => 4 }.freeze
 
   def initialize(user)
     @user = user
@@ -29,18 +35,49 @@ class ContentStreamingService
     end
   end
 
-  # Resolve a specific stream chosen by the user (via resolve_url).
-  # The chosen stream is tried first so a Direct Play MP4 still wins over
-  # a fallback MKV, but stale/blocked links are common enough that we
-  # retry the current candidate list before failing the request.
-  def resolve_single(resolve_url, filename:, imdb_id:, type:, season: nil, episode: nil)
+  # Resolve a specific stream chosen by the user (via resolve_url). Exact
+  # choices are preserved unless a heavy-transcode source has a known average
+  # bitrate that the upstream cannot sustain; in that case, prefer a smaller
+  # compatible source and fall back to the original when none is available.
+  def resolve_single(resolve_url, filename:, imdb_id:, type:, season: nil, episode: nil,
+    duration: nil, raw_size: nil, video_codec: nil)
     return ServiceResult.failure("RealDebrid API key not configured") unless @user.has_realdebrid_key?
 
-    selected_stream = { resolve_url: resolve_url, filename: filename }
-    result = resolve_stream(selected_stream)
+    selected_stream = {
+      resolve_url: resolve_url,
+      filename: filename,
+      raw_size: positive_number(raw_size),
+      video_codec: video_codec.to_s.downcase
+    }
+
+    used_playback_safe_alternative = false
+    result = if oversized_transcode_source?(selected_stream, duration)
+      Rails.logger.warn(
+        "[ContentStreamingService] Selected transcode source exceeds sustainable bitrate " \
+        "for imdb_id=#{imdb_id}; resolving a playback-safe alternative"
+      )
+      alternative = resolve_playback_safe_alternative(
+        resolve_url,
+        imdb_id,
+        type,
+        duration: duration,
+        season: season,
+        episode: episode
+      )
+      used_playback_safe_alternative = alternative.present?
+      alternative
+    end
+
+    if used_playback_safe_alternative
+      Rails.logger.info("[ContentStreamingService] Playback-safe alternative resolved for imdb_id=#{imdb_id} filename=#{result[:filename]}")
+    else
+      result = resolve_stream(selected_stream)
+    end
 
     if result
-      Rails.logger.info("[ContentStreamingService] User-selected stream resolved for imdb_id=#{imdb_id} filename=#{result[:filename]}")
+      unless used_playback_safe_alternative
+        Rails.logger.info("[ContentStreamingService] User-selected stream resolved for imdb_id=#{imdb_id} filename=#{result[:filename]}")
+      end
     else
       Rails.logger.warn("[ContentStreamingService] User-selected stream failed to resolve, falling back for imdb_id=#{imdb_id}")
       result = resolve_fallback_streams(resolve_url, imdb_id, type, season: season, episode: episode)
@@ -102,6 +139,57 @@ class ContentStreamingService
 
   def stream_candidates(streams)
     streams.first(MAX_STREAM_ATTEMPTS).select { |s| s[:resolve_url].present? }
+  end
+
+  def resolve_playback_safe_alternative(selected_resolve_url, imdb_id, type, duration:, season:, episode:)
+    streams_result = fetch_streams(imdb_id, type, season: season, episode: episode)
+    return if streams_result.failure?
+
+    candidates = streams_result.data
+      .reject { |stream| stream[:resolve_url] == selected_resolve_url }
+      .select { |stream| playback_safe_candidate?(stream, duration) }
+      .sort_by { |stream| playback_candidate_sort_key(stream) }
+      .first(MAX_STREAM_ATTEMPTS)
+
+    resolve_first_valid(candidates)
+  end
+
+  def oversized_transcode_source?(stream, duration)
+    return false unless HEAVY_VIDEO_CODECS.include?(stream[:video_codec])
+
+    bitrate = estimated_bitrate(stream[:raw_size], duration)
+    bitrate && bitrate > MAX_TRANSCODE_SOURCE_BITRATE_BPS
+  end
+
+  def playback_safe_candidate?(stream, duration)
+    bitrate = estimated_bitrate(stream[:raw_size], duration)
+    return bitrate <= MAX_TRANSCODE_SOURCE_BITRATE_BPS if bitrate
+
+    # Unknown sizes cannot be proven sustainable, but a direct-play or
+    # stream-copy candidate removes the expensive video encode bottleneck.
+    stream[:compatibility_score].to_i >= 2
+  end
+
+  def playback_candidate_sort_key(stream)
+    [
+      stream[:language_score].to_i,
+      -stream[:compatibility_score].to_i,
+      QUALITY_ORDER.fetch(stream[:quality].to_s, QUALITY_ORDER["Unknown"]),
+      -positive_number(stream[:raw_size]).to_i
+    ]
+  end
+
+  def estimated_bitrate(raw_size, duration)
+    bytes = positive_number(raw_size)
+    seconds = positive_number(duration)
+    return unless bytes && seconds && seconds >= 60 && seconds <= 24.hours.to_i
+
+    bytes * 8 / seconds
+  end
+
+  def positive_number(value)
+    number = Float(value, exception: false)
+    number if number&.positive?
   end
 
   def resolve_stream(stream)

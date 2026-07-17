@@ -230,6 +230,26 @@ test("Safari direct-plays HEVC only when the MP4 sample entry is hvc1", () => {
   assert.equal(player.directPlayEligible(), true)
 })
 
+test("UHD HEVC skips native remux while 1080p HEVC keeps the fast path", () => {
+  const player = new VideoPlayerController()
+  player.streamRecoveryAttempts = 0
+  player.burnedSubtitleSelected = () => false
+  player.browserCanPlayCodec = () => true
+  player.tracksData = {
+    remux_direct_playable: true,
+    video_codec: "hevc",
+    video_width: 3840,
+    video_height: 2160,
+    video_pix_fmt: "yuv420p10le"
+  }
+
+  assert.equal(player.remuxDirectEligible(), false)
+
+  player.tracksData.video_width = 1920
+  player.tracksData.video_height = 1080
+  assert.equal(player.remuxDirectEligible(), true)
+})
+
 test("native direct network failure falls back to remux before video transcoding", () => {
   const player = new VideoPlayerController()
   let remuxStarts = 0

@@ -471,6 +471,14 @@ export default class extends Controller {
     // VideoToolbox (macOS Chrome/Edge/Safari). Firefox and Linux
     // Chrome don't support HEVC — skip remux for HEVC there.
     const codec = this.tracksData?.video_codec
+    const isHevc = codec === "hevc" || codec === "h265"
+    const width = Number(this.tracksData?.video_width) || 0
+    const height = Number(this.tracksData?.video_height) || 0
+    // A generic hvc1 result does not prove that the native element accepts an
+    // UHD Main10/HDR configuration. When it rejects the remux, Chromium wastes
+    // a complete seek/probe cycle and starts the H.264 fallback from scratch.
+    // Fail closed for UHD HEVC and start the sustainable MSE path immediately.
+    if (isHevc && (width > 1920 || height > 1080)) return false
     if (codec && codec !== "h264" && !this.browserCanPlayCodec(codec)) return false
     return true
   }

@@ -93,6 +93,52 @@ RSpec.describe "Streaming", type: :request do
         ))
       end
 
+      it "redirects oversized heavy-transcode selections to a playback-safe source" do
+        selected_url = "https://torrentio.strem.fun/resolve/realdebrid/test_key/huge/null/0/Inception4K.mkv"
+        fallback_url = "https://torrentio.strem.fun/resolve/realdebrid/test_key/small/null/0/Inception1080.mp4"
+
+        stub_request(:get, "https://v3-cinemeta.strem.io/meta/movie/tt1375666.json")
+          .to_return(
+            status: 200,
+            body: { "meta" => { "id" => "tt1375666", "name" => "Inception", "runtime" => "148 min" } }.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+        stub_request(:get, %r{torrentio\.strem\.fun/([^/]+/)?stream/movie/tt1375666\.json})
+          .to_return(
+            status: 200,
+            body: {
+              "streams" => [
+                { "title" => "Inception 2160p HEVC 💾 92.9 GB", "url" => selected_url, "behaviorHints" => { "filename" => "Inception4K.mkv" } },
+                { "title" => "Inception 1080p H264 AAC 💾 12.0 GB", "url" => fallback_url, "behaviorHints" => { "filename" => "Inception1080.mp4" } }
+              ]
+            }.to_json,
+            headers: { "Content-Type" => "application/json" }
+          )
+        stub_request(:get, fallback_url)
+          .to_return(status: 302, headers: { "Location" => "https://download.real-debrid.com/d/small/Inception1080.mp4" })
+
+        post streaming_index_path, params: {
+          imdb_id: "tt1375666",
+          type: "movie",
+          title: "Inception",
+          duration: 8_880,
+          resolve_url: selected_url,
+          filename: "Inception4K.mkv",
+          raw_size: 92_898_311_496,
+          video_codec: "hevc"
+        }
+
+        expect(response).to redirect_to(streaming_path("play",
+          streaming_url: "https://download.real-debrid.com/d/small/Inception1080.mp4",
+          filename: "Inception1080.mp4",
+          imdb_id: "tt1375666",
+          type: "movie",
+          title: "Inception",
+          duration: 8880
+        ))
+        expect(WebMock).not_to have_requested(:get, selected_url)
+      end
+
       it "prefers saved progress duration over metadata runtime" do
         create(:watch_history_entry, user: user, imdb_id: "tt1375666", progress_seconds: 3600, duration_seconds: 7200)
 

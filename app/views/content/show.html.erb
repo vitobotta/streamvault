@@ -138,7 +138,7 @@
                 </div>
               </div>
               <div class="flex items-center gap-3 shrink-0">
-                <%= button_to "Watch", streaming_index_path, params: { imdb_id: @imdb_id, type: @type, title: @metadata[:title], poster_url: @metadata[:poster_url], duration: @metadata[:runtime_seconds], resolve_url: stream[:resolve_url], filename: stream[:filename] }, class: "btn-primary text-sm", data: { turbo: false } %>
+                <%= button_to "Watch", streaming_index_path, params: { imdb_id: @imdb_id, type: @type, title: @metadata[:title], poster_url: @metadata[:poster_url], duration: @metadata[:runtime_seconds], resolve_url: stream[:resolve_url], filename: stream[:filename], raw_size: stream[:raw_size], video_codec: stream[:video_codec] }, class: "btn-primary text-sm", data: { turbo: false } %>
               </div>
             </div>
           <% end %>
