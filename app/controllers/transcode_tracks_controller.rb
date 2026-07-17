@@ -16,8 +16,8 @@ class TranscodeTracksController < ApplicationController
       return
     end
 
-    tracks = TranscodeService.probe_media_tracks(input_url, headers: transcode_headers)
-    external_subtitles = ExternalSubtitleService.search(
+    headers = transcode_headers
+    subtitle_search_args = {
       imdb_id: params[:imdb_id],
       type: params[:type],
       season: params[:season],
@@ -26,10 +26,21 @@ class TranscodeTracksController < ApplicationController
       filename: params[:filename],
       preferred_languages: current_user.preferred_stream_languages,
       default_language: current_user.default_stream_language
-    )
+    }
 
+    # The media probe and external-subtitle lookup are independent network
+    # operations. Run them together so a cold subtitle provider cannot add its
+    # full latency after FFprobe has already completed.
+    started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    media_info_thread = Thread.new { TranscodeService.probe_media_info(input_url, headers: headers) }
+    external_subtitles_thread = Thread.new { ExternalSubtitleService.search(**subtitle_search_args) }
+    media_info, external_subtitles = [ media_info_thread, external_subtitles_thread ].map(&:value)
+    elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at
+    Rails.logger.info("[TranscodeTracks] parallel metadata ready in #{elapsed.round(2)}s")
+
+    tracks = media_info[:media_tracks]
     subtitles = TranscodeService.selectable_subtitle_tracks(tracks[:subtitles] + external_subtitles)
-    video_stream = probe_video_stream(input_url)
+    video_stream = media_info[:video_stream]
     render json: tracks.merge(
       subtitles: subtitles,
       video_codec: video_stream[:codec_name].to_s.downcase,

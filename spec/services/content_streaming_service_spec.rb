@@ -411,4 +411,28 @@ RSpec.describe ContentStreamingService do
       expect(WebMock).not_to have_requested(:get, "https://example.com/internal")
     end
   end
+
+  describe "candidate resolution" do
+    it "returns the first completed winner without waiting for an earlier slow candidate" do
+      slow = { resolve_url: "https://torrentio.strem.fun/slow" }
+      fast = { resolve_url: "https://torrentio.strem.fun/fast" }
+      winner = { streaming_url: "https://download.real-debrid.com/d/fast/movie.mp4", stream: fast }
+      allow(service).to receive(:resolve_stream) do |stream|
+        if stream == slow
+          sleep 0.3
+          nil
+        else
+          sleep 0.01
+          winner
+        end
+      end
+
+      started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      result = service.send(:resolve_first_valid_batch, [ slow, fast ])
+      elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at
+
+      expect(result).to eq(winner)
+      expect(elapsed).to be < 0.15
+    end
+  end
 end

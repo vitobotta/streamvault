@@ -413,6 +413,44 @@ class TranscodeService
     0
   end
 
+  # Probe track and video compatibility metadata in one FFprobe process. The
+  # player needs both before choosing direct play, remux, or transcode; opening
+  # the same remote file twice serially adds several seconds to every cold
+  # start. Store the result in the existing per-URL probe cache so later audio,
+  # subtitle, and transcode decisions reuse it.
+  def self.probe_media_info(input_url, headers: {})
+    cached = cache_get(input_url)
+    if cached&.key?(:media_tracks) && cached.key?(:video_stream)
+      return { media_tracks: cached[:media_tracks], video_stream: cached[:video_stream] }
+    end
+
+    header_str = ffmpeg_headers(headers)
+    cmd = [ FFPROBE_PATH, "-v", "error" ]
+    cmd += [ "-headers", header_str + "\r\n" ] if header_str.present?
+    cmd += [
+      "-show_entries",
+      "stream=index,codec_type,codec_name,codec_tag_string,width,height,pix_fmt,has_b_frames,channels:" \
+        "stream_tags=language,title:stream_disposition=default,forced,hearing_impaired,comment,lyrics,karaoke",
+      "-of",
+      "json",
+      input_url
+    ]
+
+    result = capture_command(cmd, timeout_seconds: 10)
+    if result.status&.success?
+      media_tracks = extract_media_tracks(result.stdout)
+      video_stream = extract_video_stream(result.stdout)
+    else
+      media_tracks = empty_media_tracks
+      video_stream = {}
+    end
+
+    cache_store(input_url, media_tracks: media_tracks, video_stream: video_stream)
+    { media_tracks: media_tracks, video_stream: video_stream }
+  rescue StandardError
+    { media_tracks: empty_media_tracks, video_stream: {} }
+  end
+
   def self.probe_media_tracks(input_url, headers: {})
     cached = cache_get(input_url)
     return cached[:media_tracks] if cached && cached[:media_tracks]
@@ -1239,7 +1277,8 @@ class TranscodeService
 
   def self.extract_video_stream(output)
     data = JSON.parse(output)
-    stream = Array(data["streams"]).first || {}
+    streams = Array(data["streams"])
+    stream = streams.find { |candidate| candidate["codec_type"] == "video" } || streams.first || {}
     {
       codec_name: stream["codec_name"].to_s.downcase,
       codec_tag: stream["codec_tag_string"].to_s.downcase,

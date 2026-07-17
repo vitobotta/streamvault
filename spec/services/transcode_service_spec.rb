@@ -105,6 +105,26 @@ RSpec.describe TranscodeService do
     end
   end
 
+  describe ".probe_media_info" do
+    it "loads track and video compatibility metadata with one remote probe" do
+      output = {
+        "streams" => [
+          { "index" => 0, "codec_type" => "video", "codec_name" => "h264", "codec_tag_string" => "avc1", "width" => 1920, "height" => 1080, "pix_fmt" => "yuv420p", "has_b_frames" => 2 },
+          { "index" => 1, "codec_type" => "audio", "codec_name" => "aac", "channels" => 6, "tags" => { "language" => "eng" }, "disposition" => { "default" => 1 } }
+        ]
+      }.to_json
+      allow(described_class).to receive(:capture_command).and_return(capture_result(output))
+
+      info = described_class.probe_media_info("https://example.test/fast-start.mp4")
+
+      expect(info[:media_tracks][:audio].first).to include(codec: "aac", language: "ENG", default: true)
+      expect(info[:video_stream]).to include(codec_name: "h264", codec_tag: "avc1", width: 1920, height: 1080)
+      expect(described_class.probe_media_tracks("https://example.test/fast-start.mp4")).to eq(info[:media_tracks])
+      expect(described_class.probe_video_stream("https://example.test/fast-start.mp4")).to eq(info[:video_stream])
+      expect(described_class).to have_received(:capture_command).once
+    end
+  end
+
   describe ".probe_remux_seek" do
     it "keeps the keyframe timeline while seeking FFmpeg to the exact target" do
       output = { "frames" => [ { "best_effort_timestamp_time" => "10.0" } ] }.to_json

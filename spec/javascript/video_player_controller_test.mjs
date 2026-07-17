@@ -73,6 +73,20 @@ test("direct-play errors preserve the absolute playhead when falling back", () =
   assert.equal(player.directPlayActive, false)
 })
 
+test("known page duration skips the redundant remote duration probe", async () => {
+  const player = new VideoPlayerController()
+  let fetchCount = 0
+  fetchHandler = async () => {
+    fetchCount += 1
+    return { json: async () => ({ duration: 8_888 }) }
+  }
+  player.knownDuration = 8_888
+
+  await player.probeDuration()
+
+  assert.equal(fetchCount, 0)
+})
+
 test("bitmap subtitle selection leaves native direct play for the transcode path", () => {
   const player = new VideoPlayerController()
   player.hlsSessionId = null

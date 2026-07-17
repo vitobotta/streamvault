@@ -252,6 +252,11 @@ export default class extends Controller {
   }
 
   async probeDuration() {
+    // The streaming page normally already carries Cinemeta/watch-history
+    // duration. Avoid opening the remote media with a redundant FFprobe while
+    // the compatibility probe is trying to produce the first playable frame.
+    if (this.validDuration(this.knownDuration)) return
+
     try {
       const rawUrl = this.extractRawUrl()
       if (!rawUrl) return

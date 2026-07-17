@@ -96,6 +96,35 @@ RSpec.describe "Transcode", type: :request do
   end
 
   describe "GET /transcode/tracks" do
+    it "loads media metadata and external subtitles concurrently" do
+      mutex = Mutex.new
+      condition = ConditionVariable.new
+      started = 0
+      barrier = lambda do |result|
+        mutex.synchronize do
+          started += 1
+          condition.broadcast
+          deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 1
+          while started < 2
+            remaining = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
+            raise "metadata operations ran serially" unless remaining.positive?
+
+            condition.wait(mutex, remaining)
+          end
+        end
+        result
+      end
+      allow(TranscodeService).to receive(:probe_media_info) do
+        barrier.call(media_tracks: { audio: [], subtitles: [] }, video_stream: {})
+      end
+      allow(ExternalSubtitleService).to receive(:search) { barrier.call([]) }
+
+      get transcode_tracks_path, params: { url: "https://download.real-debrid.com/d/file123/Inception.mkv" }
+
+      expect(response).to have_http_status(:ok)
+      expect(started).to eq(2)
+    end
+
     it "returns probed media tracks" do
       tracks = {
         audio: [ { index: 1, language: "ENG", language_label: "English", label: "English", default: true } ],
@@ -104,7 +133,7 @@ RSpec.describe "Transcode", type: :request do
           { index: 3, language: "FRENCH", language_label: "French", label: "French · Forced", text_supported: true, partial: true, quality_score: 100 }
         ]
       }
-      allow(TranscodeService).to receive(:probe_media_tracks).and_return(tracks)
+      allow(TranscodeService).to receive(:probe_media_info).and_return(media_tracks: tracks, video_stream: {})
       allow(ExternalSubtitleService).to receive(:search).and_return([])
 
       get transcode_tracks_path, params: { url: "https://download.real-debrid.com/d/file123/Inception.mkv" }
@@ -120,8 +149,7 @@ RSpec.describe "Transcode", type: :request do
         subtitles: []
       }
       video = { codec_name: "hevc", codec_tag: "hev1", width: 1920, height: 816, pix_fmt: "yuv420p10le" }
-      allow(TranscodeService).to receive(:probe_media_tracks).and_return(tracks)
-      allow(TranscodeService).to receive(:probe_video_stream).and_return(video)
+      allow(TranscodeService).to receive(:probe_media_info).and_return(media_tracks: tracks, video_stream: video)
       allow(ExternalSubtitleService).to receive(:search).and_return([])
 
       get transcode_tracks_path, params: {
@@ -141,8 +169,7 @@ RSpec.describe "Transcode", type: :request do
         subtitles: []
       }
       video = { codec_name: "hevc", width: 1920, height: 816, pix_fmt: "yuv420p10le" }
-      allow(TranscodeService).to receive(:probe_media_tracks).and_return(tracks)
-      allow(TranscodeService).to receive(:probe_video_stream).and_return(video)
+      allow(TranscodeService).to receive(:probe_media_info).and_return(media_tracks: tracks, video_stream: video)
       allow(ExternalSubtitleService).to receive(:search).and_return([])
 
       get transcode_tracks_path, params: {
@@ -164,8 +191,7 @@ RSpec.describe "Transcode", type: :request do
         subtitles: []
       }
       video = { codec_name: "hevc", width: 1920, height: 816, pix_fmt: "yuv420p10le" }
-      allow(TranscodeService).to receive(:probe_media_tracks).and_return(tracks)
-      allow(TranscodeService).to receive(:probe_video_stream).and_return(video)
+      allow(TranscodeService).to receive(:probe_media_info).and_return(media_tracks: tracks, video_stream: video)
       allow(ExternalSubtitleService).to receive(:search).and_return([])
 
       get transcode_tracks_path, params: {
@@ -190,7 +216,7 @@ RSpec.describe "Transcode", type: :request do
           source: "subdl"
         }
       ]
-      allow(TranscodeService).to receive(:probe_media_tracks).and_return(tracks)
+      allow(TranscodeService).to receive(:probe_media_info).and_return(media_tracks: tracks, video_stream: {})
       allow(ExternalSubtitleService).to receive(:search).and_return(external_subtitles)
 
       get transcode_tracks_path, params: {
@@ -216,7 +242,7 @@ RSpec.describe "Transcode", type: :request do
     end
 
     it "rejects private media URLs" do
-      expect(TranscodeService).not_to receive(:probe_media_tracks)
+      expect(TranscodeService).not_to receive(:probe_media_info)
       expect(ExternalSubtitleService).not_to receive(:search)
 
       get transcode_tracks_path, params: { url: "http://localhost/video.mkv" }
