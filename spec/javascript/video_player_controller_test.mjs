@@ -827,10 +827,12 @@ test("premature MSE end retains a substantial cushion before recovery", () => {
   const player = new VideoPlayerController()
   let immediateRecoveries = 0
   let scheduledRecoveries = 0
+  const buffered = timeRanges([[0, 129.9]])
   player.knownDuration = 1000
-  player.currentPlaybackPosition = () => 100
+  player.startSecondsValue = 0
+  player.videoTarget = { currentTime: 100, duration: 1000, buffered }
+  player.sourceBuffer = { updating: false, buffered }
   player.playbackStarted = true
-  player.sourceBuffer = { buffered: { length: 1 } }
   player.bufferedAheadOfCurrent = () => 29.9
   player.handleStreamStall = () => { immediateRecoveries += 1 }
   player.schedulePrematureEndRecovery = () => { scheduledRecoveries += 1 }
@@ -844,16 +846,82 @@ test("premature MSE end retains a substantial cushion before recovery", () => {
 test("premature MSE end reconnects immediately only when its cushion is nearly dry", () => {
   const player = new VideoPlayerController()
   let recoveryEvent
+  const buffered = timeRanges([[0, 104.9]])
   player.knownDuration = 1000
-  player.currentPlaybackPosition = () => 100
+  player.startSecondsValue = 0
+  player.videoTarget = { currentTime: 100, duration: 1000, buffered }
+  player.sourceBuffer = { updating: false, buffered }
   player.playbackStarted = true
-  player.sourceBuffer = { buffered: { length: 1 } }
   player.bufferedAheadOfCurrent = () => 4.9
   player.handleStreamStall = (event) => { recoveryEvent = event }
 
   player.handlePrematureStreamEnd()
 
   assert.equal(recoveryEvent, "premature_end")
+})
+
+test("completed MSE response finalizes the media source", () => {
+  const player = new VideoPlayerController()
+  let finalized = false
+  const buffered = timeRanges([[0, 99]])
+  player.knownDuration = 100
+  player.startSecondsValue = 0
+  player.videoTarget = { currentTime: 90, duration: 100, buffered }
+  player.sourceBuffer = { updating: false, buffered }
+  player.mediaSource = {
+    readyState: "open",
+    endOfStream() {
+      finalized = true
+      this.readyState = "ended"
+    }
+  }
+  player.playbackStarted = true
+  player.clearStallWatchdog = () => {}
+
+  player.handlePrematureStreamEnd()
+
+  assert.equal(finalized, true)
+  assert.equal(player.mseFetchEnded, false)
+})
+
+test("ended shows save completion before navigating to autoplay resume", async () => {
+  const player = new VideoPlayerController()
+  let completedSave
+  context.window.location.href = ""
+  player.typeValue = "show"
+  player.imdbIdValue = "tt0903747"
+  player.resumeUrlValue = "/streaming/resume"
+  player.saveProgress = async (completed) => { completedSave = completed }
+
+  await player.onVideoEnded()
+
+  assert.equal(completedSave, true)
+  assert.match(context.window.location.href, /show_imdb_id=tt0903747/)
+  assert.match(context.window.location.href, /autoplay=1/)
+})
+
+test("completed progress persists the full known duration", async () => {
+  const player = new VideoPlayerController()
+  let payload
+  fetchHandler = async (_url, options) => {
+    payload = JSON.parse(options.body)
+    return { ok: true }
+  }
+  player.videoTarget = { currentTime: 97, duration: 100 }
+  player.knownDuration = 100
+  player.startSecondsValue = 0
+  player.directPlayActive = false
+  player.remuxDirectPlay = false
+  player.progressAbortController = null
+  player.imdbIdValue = "tt0903747"
+  player.typeValue = "show"
+  player.seasonValue = "1"
+  player.episodeValue = "1"
+
+  await player.saveProgress(true)
+
+  assert.equal(payload.progress_seconds, 100)
+  assert.equal(payload.duration_seconds, 100)
 })
 
 test("an advancing remux wait remains browser-managed instead of forcing a system pause", async () => {

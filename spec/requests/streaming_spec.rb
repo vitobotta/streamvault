@@ -312,10 +312,10 @@ RSpec.describe "Streaming", type: :request do
 
     before { cinemeta_stub }
 
-    it "resumes a partially-watched episode at the saved position" do
+    it "resumes the current episode at 97.5% despite rounded display progress" do
       progress = create(:episode_progress, user: user, show_imdb_id: "tt0903747",
              season_number: 1, episode_number: 1,
-             progress_seconds: 600, duration_seconds: 3480)
+             progress_seconds: 3393, duration_seconds: 3480)
 
       stub_request(:get, %r{torrentio\.strem\.fun/([^/]+/)?stream/series/tt0903747:1:1\.json})
         .to_return(
@@ -340,15 +340,15 @@ RSpec.describe "Streaming", type: :request do
         episode: 1,
         title: progress.show_title,
         poster_url: nil,
-        resume_at: 600,
+        resume_at: 3393,
         duration: 3480
       ))
     end
 
-    it "advances to the next episode when the last-watched is >= 95%" do
+    it "advances to the next episode when the last-watched is >= 98%" do
       progress = create(:episode_progress, user: user, show_imdb_id: "tt0903747",
              season_number: 1, episode_number: 1,
-             progress_seconds: 3400, duration_seconds: 3480) # ~98%
+             progress_seconds: 3411, duration_seconds: 3480) # > 98%
 
       stub_request(:get, %r{torrentio\.strem\.fun/([^/]+/)?stream/series/tt0903747:1:2\.json})
         .to_return(
@@ -375,6 +375,20 @@ RSpec.describe "Streaming", type: :request do
         resume_at: 0,
         duration: 0
       ))
+    end
+
+    it "leaves the ended player in place when autoplay reaches the series finale" do
+      create(:episode_progress, user: user, show_imdb_id: "tt0903747",
+        season_number: 1, episode_number: 2,
+        progress_seconds: 2880, duration_seconds: 2880)
+
+      get resume_streaming_index_path(
+        show_imdb_id: "tt0903747",
+        type: "show",
+        autoplay: "1"
+      )
+
+      expect(response).to have_http_status(:no_content)
     end
   end
 

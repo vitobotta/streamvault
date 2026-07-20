@@ -65,6 +65,17 @@ RSpec.describe "Home", type: :request do
         get root_path
         expect(response.body).not_to include("OTHER_USER_REC_TITLE")
       end
+
+      it "does not show stored recommendations after the user watches them" do
+        create(:watch_history_entry, :movie, user: user, imdb_id: "tt0468569")
+        create(:recommendation, user: user, imdb_id: "tt0468569", title: "ALREADY_WATCHED_REC")
+        create(:recommendation, user: user, imdb_id: "tt0000123", title: "UNSEEN_REC")
+
+        get root_path
+
+        expect(response.body).not_to include("ALREADY_WATCHED_REC")
+        expect(response.body).to include("UNSEEN_REC")
+      end
     end
   end
 end

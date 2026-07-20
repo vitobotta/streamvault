@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 class EpisodeProgress < ApplicationRecord
+  COMPLETION_RATIO = 0.98
+
   # Associations
   belongs_to :user
 
@@ -29,6 +31,7 @@ class EpisodeProgress < ApplicationRecord
   end
 
   def finished?
-    progress_percentage >= 95
+    duration_seconds.positive? &&
+      progress_seconds.fdiv(duration_seconds) >= COMPLETION_RATIO
   end
 end

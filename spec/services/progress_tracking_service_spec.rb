@@ -144,18 +144,78 @@ RSpec.describe ProgressTrackingService do
     it "returns failure at the series finale" do
       result = described_class.next_episode(user, "tt1", 2, 1)
       expect(result).not_to be_success
+      expect(result.error_code).to eq(:series_complete)
     end
   end
 
   describe ".continue_watching" do
-    it "returns partially watched content" do
-      create(:watch_history_entry, user: user, imdb_id: "tt1375666", progress_percentage: 50, watched_at: 1.hour.ago)
-      create(:watch_history_entry, user: user, imdb_id: "tt0903747", progress_percentage: 95, watched_at: 2.hours.ago)
+    before do
+      allow_any_instance_of(TorrentioService).to receive(:metadata).and_return(
+        ServiceResult.success(
+          episodes: [
+            { season: 1, episode: 1 },
+            { season: 1, episode: 2 },
+            { season: 2, episode: 1 }
+          ]
+        )
+      )
+    end
 
-      result = described_class.continue_watching(user)
-      expect(result).to be_success
-      expect(result.data.length).to eq(1)
-      expect(result.data.first[:imdb_id]).to eq("tt1375666")
+    it "keeps a show on the current episode at 97.5% despite rounded display progress" do
+      create(:watch_history_entry, :episode, user: user, imdb_id: "tt0903747",
+        show_imdb_id: "tt0903747", season_number: 1, episode_number: 1,
+        progress_seconds: 2340, duration_seconds: 2400, progress_percentage: 98)
+
+      item = described_class.continue_watching(user).data.first
+
+      expect(item.slice(:season, :episode, :progress_seconds, :progress_percentage))
+        .to eq(season: 1, episode: 1, progress_seconds: 2340, progress_percentage: 98)
+    end
+
+    it "keeps a completed show and points it at the next episode" do
+      create(:watch_history_entry, :episode, user: user, imdb_id: "tt0903747",
+        show_imdb_id: "tt0903747", season_number: 1, episode_number: 1,
+        progress_seconds: 2352, duration_seconds: 2400, progress_percentage: 98)
+
+      item = described_class.continue_watching(user).data.first
+
+      expect(item.slice(:season, :episode, :progress_seconds, :progress_percentage))
+        .to eq(season: 1, episode: 2, progress_seconds: 0, progress_percentage: 0)
+    end
+
+    it "crosses a season boundary for a completed episode" do
+      create(:watch_history_entry, :episode, user: user, imdb_id: "tt0903747",
+        show_imdb_id: "tt0903747", season_number: 1, episode_number: 2,
+        progress_seconds: 2400, duration_seconds: 2400, progress_percentage: 100)
+
+      item = described_class.continue_watching(user).data.first
+
+      expect(item.slice(:season, :episode)).to eq(season: 2, episode: 1)
+    end
+
+    it "removes a show only after the series finale is complete" do
+      create(:watch_history_entry, :episode, user: user, imdb_id: "tt0903747",
+        show_imdb_id: "tt0903747", season_number: 2, episode_number: 1,
+        progress_seconds: 2400, duration_seconds: 2400, progress_percentage: 100)
+
+      expect(described_class.continue_watching(user).data).to be_empty
+    end
+
+    it "keeps a completed show when episode metadata is temporarily unavailable" do
+      allow_any_instance_of(TorrentioService).to receive(:metadata)
+        .and_return(ServiceResult.failure("Metadata unavailable"))
+      create(:watch_history_entry, :episode, user: user, imdb_id: "tt0903747",
+        show_imdb_id: "tt0903747", season_number: 1, episode_number: 1,
+        progress_seconds: 2400, duration_seconds: 2400, progress_percentage: 100)
+
+      expect(described_class.continue_watching(user).data.first[:imdb_id]).to eq("tt0903747")
+    end
+
+    it "still removes completed movies at the existing 95% threshold" do
+      create(:watch_history_entry, :movie, user: user, imdb_id: "tt1375666",
+        progress_percentage: 95)
+
+      expect(described_class.continue_watching(user).data).to be_empty
     end
   end
 end

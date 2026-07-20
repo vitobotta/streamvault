@@ -79,5 +79,29 @@ RSpec.describe TmdbService, type: :service do
       expect(result).to be_success
       expect(result.data).to be_empty
     end
+
+    it 'resolves only the requested number of recommendation candidates' do
+      stub_request(:get, %r{api\.themoviedb\.org/3/find/tt1375666})
+        .to_return(status: 200, body: {
+          "movie_results" => [ { "id" => 27205, "title" => "Inception" } ],
+          "tv_results" => []
+        }.to_json, headers: { 'Content-Type' => 'application/json' })
+      stub_request(:get, %r{api\.themoviedb\.org/3/movie/27205/recommendations})
+        .to_return(status: 200, body: {
+          "results" => [
+            { "id" => 497, "title" => "The Dark Knight" },
+            { "id" => 498, "title" => "Should Not Resolve" }
+          ]
+        }.to_json, headers: { 'Content-Type' => 'application/json' })
+      stub_request(:get, %r{api\.themoviedb\.org/3/movie/497/external_ids})
+        .to_return(status: 200, body: { "imdb_id" => "tt0468569" }.to_json,
+          headers: { 'Content-Type' => 'application/json' })
+
+      result = service.recommendations_for_imdb_id('tt1375666', limit: 1)
+
+      expect(result.data.map { |item| item[:tmdb_id] }).to eq([ 497 ])
+      expect(a_request(:get, %r{api\.themoviedb\.org/3/movie/498/external_ids}))
+        .not_to have_been_made
+    end
   end
 end

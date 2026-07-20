@@ -125,6 +125,11 @@ class StreamingController < ApplicationController
     end
 
     target = resume_target(imdb_id, type)
+    if target[:series_complete] && ActiveModel::Type::Boolean.new.cast(params[:autoplay])
+      head :no_content
+      return
+    end
+
     target_season = target[:season]
     target_episode = target[:episode]
     resume_at = target[:resume_at]
@@ -264,7 +269,7 @@ class StreamingController < ApplicationController
   # holds show_title and duration_seconds. For movies, the watch_history_entries
   # row holds title, poster_url, and duration_seconds.
   #
-  # When advancing to a next episode (progress >= 95%), no DB row exists
+  # When advancing to a next episode (progress >= 98%), no DB row exists
   # for the next episode yet — duration falls back to 0 and the player's
   # probeDuration fills it in. When no progress row exists at all (first
   # play), metadata is empty and the player page handles the fallback.
@@ -279,13 +284,14 @@ class StreamingController < ApplicationController
     last = current_user.episode_progresses.for_show(imdb_id).recently_watched.first
     return { season: 1, episode: 1, resume_at: 0, title: nil, poster_url: nil, duration_seconds: 0 } if last.nil?
 
-    if last.progress_percentage >= 95
+    if last.finished?
       next_ep = ProgressTrackingService.next_episode(current_user, imdb_id, last.season_number, last.episode_number)
       if next_ep.success?
         { season: next_ep.data[:season], episode: next_ep.data[:episode], resume_at: 0, title: last.show_title, poster_url: nil, duration_seconds: 0 }
       else
-        # Series finale: replay the finished episode from the start
-        { season: last.season_number, episode: last.episode_number, resume_at: 0, title: last.show_title, poster_url: nil, duration_seconds: last.duration_seconds }
+        # Manual resume can replay a completed finale. Auto-advance receives
+        # series_complete and leaves the ended player in place instead.
+        { season: last.season_number, episode: last.episode_number, resume_at: 0, title: last.show_title, poster_url: nil, duration_seconds: last.duration_seconds, series_complete: next_ep.error_code == :series_complete }
       end
     else
       { season: last.season_number, episode: last.episode_number, resume_at: last.progress_seconds, title: last.show_title, poster_url: nil, duration_seconds: last.duration_seconds }

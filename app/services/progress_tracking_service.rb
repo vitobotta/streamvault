@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 class ProgressTrackingService
+  MOVIE_COMPLETION_PERCENTAGE = 95
+
   # Save watch progress for content
   def self.save_progress(user, imdb_id, progress_seconds, duration_seconds, type:, season: nil, episode: nil, poster_url: nil, title: nil)
     progress_seconds = progress_seconds.to_i
@@ -116,52 +118,90 @@ class ProgressTrackingService
     if next_ep
       ServiceResult.success({ season: next_ep[:season].to_i, episode: next_ep[:episode].to_i })
     else
-      ServiceResult.failure("No more episodes")
+      ServiceResult.failure("No more episodes", :series_complete)
     end
   rescue StandardError => e
     Rails.logger.error("ProgressTrackingService#next_episode error: #{e.message}")
     ServiceResult.failure("Could not determine next episode")
   end
 
-  # Get continue watching list — one item per content, deduplicated.
-  # save_progress now upserts (one row per movie/episode), so dedup is
-  # normally a no-op — kept as a safety net for any pre-migration rows.
+  # Get Continue Watching — one item per movie or show. Movies disappear
+  # at the existing completion threshold. Shows remain after a completed
+  # episode when another episode exists, and point at that next episode.
   def self.continue_watching(user)
-    recent = user.watch_history_entries
-      .where("progress_percentage < ?", 95)
-      .order(watched_at: :desc)
-      .limit(200) # safety cap before Ruby dedup — the upsert design means
-                  # dedup is mostly a no-op, so 200 is far more than needed
+    movies = user.watch_history_entries
+      .movies_only
+      .where("progress_percentage < ?", MOVIE_COMPLETION_PERCENTAGE)
+      .recently_watched
+      .limit(20)
+      .to_a
 
-    seen = {}
-    items = recent.filter_map do |e|
-      # Dedup by show (not per-episode) so watching S01E03 removes
-      # S01E02 from Continue Watching — only the most recent episode
-      # per show should appear. Movies dedup by imdb_id.
-      key = if e.episode?
-              e.show_imdb_id
-            else
-              e.imdb_id
-            end
-      next if seen.key?(key)
-      seen[key] = true
+    # Select only the latest watched episode per show in SQL. This avoids
+    # letting a long binge of one show crowd every other show out of the
+    # candidate set before we deduplicate.
+    ranked_episodes = user.watch_history_entries
+      .episodes_only
+      .select(
+        "watch_history_entries.*, " \
+        "ROW_NUMBER() OVER (" \
+        "PARTITION BY show_imdb_id " \
+        "ORDER BY watched_at DESC, id DESC" \
+        ") AS show_watch_rank"
+      )
+    latest_episodes = WatchHistoryEntry
+      .from("(#{ranked_episodes.to_sql}) watch_history_entries")
+      .where("show_watch_rank = 1")
+      .to_a
 
-      {
-        imdb_id: e.show_imdb_id.presence || e.imdb_id,
-        title: e.show_title.presence || e.title,
-        poster_url: e.poster_url,
-        content_type: e.content_type,
-        season: e.season_number,
-        episode: e.episode_number,
-        progress_seconds: e.progress_seconds,
-        duration_seconds: e.duration_seconds,
-        progress_percentage: e.progress_percentage,
-        last_watched: e.watched_at,
-        history_id: e.id
-      }
-    end
+    items = (movies + latest_episodes)
+      .sort_by { |entry| [ entry.watched_at, entry.id ] }
+      .reverse
+      .filter_map { |entry| continue_watching_item(user, entry) }
 
     ServiceResult.success(items.first(20))
+  end
+
+  def self.continue_watching_item(user, entry)
+    season = entry.season_number
+    episode = entry.episode_number
+    progress_seconds = entry.progress_seconds
+    duration_seconds = entry.duration_seconds
+    progress_percentage = entry.progress_percentage
+    episode_finished = entry.episode? &&
+      entry.duration_seconds.positive? &&
+      entry.progress_seconds.fdiv(entry.duration_seconds) >= EpisodeProgress::COMPLETION_RATIO
+
+    if episode_finished
+      next_episode = self.next_episode(
+        user,
+        entry.show_imdb_id,
+        entry.season_number,
+        entry.episode_number
+      )
+      return if next_episode.error_code == :series_complete
+
+      if next_episode.success?
+        season = next_episode.data[:season]
+        episode = next_episode.data[:episode]
+        progress_seconds = 0
+        duration_seconds = 0
+        progress_percentage = 0
+      end
+    end
+
+    {
+      imdb_id: entry.show_imdb_id.presence || entry.imdb_id,
+      title: entry.show_title.presence || entry.title,
+      poster_url: entry.poster_url,
+      content_type: entry.content_type,
+      season: season,
+      episode: episode,
+      progress_seconds: progress_seconds,
+      duration_seconds: duration_seconds,
+      progress_percentage: progress_percentage,
+      last_watched: entry.watched_at,
+      history_id: entry.id
+    }
   end
 
   private

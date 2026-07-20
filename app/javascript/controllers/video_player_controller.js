@@ -44,6 +44,7 @@ const MSE_BACK_BUFFER_SECONDS = 30
 const MSE_BACK_BUFFER_EVICT_BATCH_SECONDS = 30
 const MSE_QUOTA_BACK_BUFFER_SECONDS = 2
 const PREMATURE_END_RECOVERY_BUFFER_SECONDS = 5
+const COMPLETION_RATIO = 0.98
 const MSE_MIME_TYPE = 'video/mp4; codecs="avc1.640028,mp4a.40.2"'
 const REMUX_PRESENTATION_PROBE_SECONDS = 0.001
 const REMUX_PRESENTATION_PROBE_TIMEOUT_MS = 500
@@ -115,6 +116,7 @@ export default class extends Controller {
     this.mediaSource = null
     this.sourceBuffer = null
     this.fetchController = null
+    this.mseFetchEnded = false
     this.pendingSeekSeconds = null
     this.remuxLoadToken = 0
     this.remuxSeekController = null
@@ -356,6 +358,7 @@ export default class extends Controller {
     this.fmp4Buffer = null
     this.fmp4BufferSize = 0
     this.pendingAppendBuffer = null
+    this.mseFetchEnded = false
     this.quotaBlockedAtTime = null
     this.mseReadPaused = false
     clearTimeout(this.quotaRetryTimer)
@@ -1657,15 +1660,41 @@ export default class extends Controller {
     this.restartHlsSession(targetSeconds)
   }
 
-  // The server should now reconnect upstream EOFs internally. If a bounded
-  // retry budget is nevertheless exhausted, retain the existing MSE cushion
-  // instead of discarding it immediately. Recover when it is nearly dry.
+  // The server reconnects upstream EOFs internally. Once its HTTP response
+  // ends, wait for every queued fMP4 box to reach SourceBuffer, then decide
+  // whether the buffered timeline is complete or needs recovery.
   handlePrematureStreamEnd() {
-    if (this.knownDuration > 0) {
-      const currentPos = this.currentPlaybackPosition()
-      if (currentPos >= this.knownDuration - 5) return
+    this.mseFetchEnded = true
+    this.finishOrRecoverMseEnd()
+  }
+
+  finishOrRecoverMseEnd() {
+    if (!this.mseFetchEnded) return
+    if (this.bufferAppending || this.sourceBuffer?.updating || this.pendingAppendBuffer) return
+
+    this.flushBufferQueue()
+    if (this.bufferAppending || this.sourceBuffer?.updating || this.pendingAppendBuffer) return
+
+    const duration = this.effectiveDuration()
+    const bufferedEnd = this.currentBufferEnd() + this.playbackTimelineOffset()
+    if (duration > 0 && bufferedEnd >= duration * COMPLETION_RATIO) {
+      try {
+        if (this.mediaSource?.readyState === "open") this.mediaSource.endOfStream()
+        if (this.mediaSource?.readyState === "ended") {
+          this.mseFetchEnded = false
+          this.fmp4Buffer = null
+          this.fmp4BufferSize = 0
+          clearTimeout(this.prematureEndRecoveryTimer)
+          this.prematureEndRecoveryTimer = null
+          this.clearStallWatchdog()
+          return
+        }
+      } catch (error) {
+        console.warn("Could not finalize completed MSE stream:", error)
+      }
     }
 
+    this.mseFetchEnded = false
     if (!this.playbackStarted || !this.sourceBuffer || this.sourceBuffer.buffered.length === 0) {
       console.warn("Stream fetch ended early with no buffer — recovering.")
       this.handleStreamStall("premature_end")
@@ -2030,6 +2059,7 @@ export default class extends Controller {
     this.maybeStartPlayback()
     this.maybeHideBufferingOverlay()
     this.flushBufferQueue()
+    this.finishOrRecoverMseEnd()
   }
 
   // Start (or resume) playback once the buffer holds at least
@@ -2205,12 +2235,16 @@ export default class extends Controller {
   async onVideoEnded() {
     if (this.typeValue !== "show") return
 
-    // Flush final progress so the finished episode crosses 95%.
-    await this.saveProgress()
+    // Persist the known duration as the final position so an actual media
+    // end always crosses the 98% episode-completion threshold.
+    await this.saveProgress(true)
 
     if (this.resumeUrlValue) {
-      const url = `${this.resumeUrlValue}?type=show&show_imdb_id=${encodeURIComponent(this.imdbIdValue)}`
-      window.location.href = url
+      const url = new URL(this.resumeUrlValue, window.location.origin)
+      url.searchParams.set("type", "show")
+      url.searchParams.set("show_imdb_id", this.imdbIdValue)
+      url.searchParams.set("autoplay", "1")
+      window.location.href = url.toString()
     }
   }
 
@@ -3470,11 +3504,13 @@ export default class extends Controller {
     }
   }
 
-  async saveProgress() {
+  async saveProgress(completed = false) {
     const video = this.videoTarget
     if (!video) return
-    const progressSeconds = Math.floor(this.currentPlaybackPosition())
     const durationSeconds = this.saveableDurationSeconds()
+    const progressSeconds = completed && durationSeconds > 0
+      ? durationSeconds
+      : Math.floor(this.currentPlaybackPosition())
     if (progressSeconds <= 0) return
 
     // Abort any previous in-flight progress request.  Without this,

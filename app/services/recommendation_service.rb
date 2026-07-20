@@ -4,7 +4,7 @@ require "set"
 
 class RecommendationService
   MAX_RECOMMENDATIONS = 20
-  MAX_HISTORY_FOR_RECS = 8
+  MAX_HISTORY_FOR_RECS = 20
   MAX_RECS_PER_SOURCE = 5
 
   # Returns recommended content based on the user's watch history
@@ -26,24 +26,34 @@ class RecommendationService
     return ServiceResult.success([]) if watched_ids.empty?
 
     tmdb = TmdbService.new
-    exclude_ids = exclude_set(user)
+    exclude_ids = excluded_imdb_ids(user).to_set
     results = []
     seen = Set.new
 
-    watched_ids.each do |imdb_id|
-      break if results.length >= MAX_RECOMMENDATIONS
-      tmdb_recs = tmdb.recommendations_for_imdb_id(imdb_id)
-      next if tmdb_recs.failure?
+    # Fetch every recent, distinct seed before selecting results. Interleaving
+    # the sources below prevents the first few watched titles from filling the
+    # entire recommendation row and gives movies and shows equal opportunity.
+    sources = watched_ids.filter_map do |imdb_id|
+      tmdb_recs = tmdb.recommendations_for_imdb_id(
+        imdb_id,
+        limit: MAX_RECS_PER_SOURCE
+      )
+      tmdb_recs.data if tmdb_recs.success?
+    end
 
-      tmdb_recs.data.first(MAX_RECS_PER_SOURCE).each do |item|
-        break if results.length >= MAX_RECOMMENDATIONS
-        tmdb_id = item[:tmdb_id]
-        next if seen.include?(tmdb_id)
-        next if exclude_ids.include?(item[:imdb_id])
+    MAX_RECS_PER_SOURCE.times do |source_index|
+      sources.each do |items|
+        item = items[source_index]
+        next if item.nil?
         next if item[:imdb_id].blank?
-        seen.add(tmdb_id)
+        next if seen.include?(item[:tmdb_id])
+        next if exclude_ids.include?(item[:imdb_id])
+
+        seen.add(item[:tmdb_id])
         results << item
+        break if results.length >= MAX_RECOMMENDATIONS
       end
+      break if results.length >= MAX_RECOMMENDATIONS
     end
 
     ServiceResult.success(results)
@@ -55,21 +65,21 @@ class RecommendationService
   private_class_method
 
   def self.watched_imdb_ids(user)
+    content_id = Arel.sql("COALESCE(show_imdb_id, imdb_id)")
     user.watch_history_entries
-      .order(watched_at: :desc)
+      .group(content_id)
+      .order(Arel.sql("MAX(watched_at) DESC"))
       .limit(MAX_HISTORY_FOR_RECS)
-      .map { |e| e.show_imdb_id.presence || e.imdb_id }
-      .uniq
+      .pluck(content_id)
   end
 
-  def self.exclude_set(user)
-    # Cap the history pluck — 500 rows is far more than any realistic
-    # exclude set needs, and avoids loading the entire table for users
-    # with thousands of history rows.  library/wishlist are naturally
-    # small and uncapped.
-    watched = user.watch_history_entries.limit(500).pluck(:imdb_id, :show_imdb_id).flatten.compact
+  # Current exclusions are also applied when rendering stored recommendations,
+  # so a debounced refresh can never leave newly watched content visible.
+  def self.excluded_imdb_ids(user)
+    content_id = Arel.sql("COALESCE(show_imdb_id, imdb_id)")
+    watched = user.watch_history_entries.distinct.pluck(content_id)
     library = user.library_entries.pluck(:imdb_id)
     wishlist = user.wishlist_entries.pluck(:imdb_id)
-    (watched + library + wishlist).to_set
+    (watched + library + wishlist).uniq
   end
 end

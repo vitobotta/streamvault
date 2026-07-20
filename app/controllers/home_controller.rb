@@ -5,8 +5,13 @@ class HomeController < ApplicationController
 
   def index
     torrentio = TorrentioService.new(rd_api_key: current_user.realdebrid_api_key)
+    excluded_recommendation_ids = RecommendationService.excluded_imdb_ids(current_user)
+    visible_recommendations = policy_scope(Recommendation)
+      .where.not(imdb_id: excluded_recommendation_ids)
+      .ordered
+      .limit(20)
     @recommendations = ServiceResult.success(
-      policy_scope(Recommendation).ordered.limit(20).map { |r|
+      visible_recommendations.map { |r|
         { tmdb_id: r.tmdb_id, imdb_id: r.imdb_id, title: r.title, poster_url: r.poster_url, type: r.content_type, year: r.year }
       }
     )

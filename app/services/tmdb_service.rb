@@ -38,7 +38,7 @@ class TmdbService
   #
   # Returns ServiceResult<Array<Hash>> where each hash has:
   #   tmdb_id, imdb_id, title, poster_url, type, year
-  def recommendations_for_imdb_id(imdb_id)
+  def recommendations_for_imdb_id(imdb_id, limit: 20)
     return ServiceResult.failure("IMDb ID required") if imdb_id.blank?
 
     tmdb_info = find_by_imdb_id(imdb_id)
@@ -47,10 +47,10 @@ class TmdbService
     tmdb_id = tmdb_info[:tmdb_id]
     media_type = tmdb_info[:type]
 
-    recs = fetch_recommendations(tmdb_id, media_type)
+    recs = fetch_recommendations(tmdb_id, media_type).first(limit.to_i.clamp(1, 20))
     return ServiceResult.success([]) if recs.empty?
 
-    # Resolve IMDb IDs for all recommendations in one batch
+    # Resolve IMDb IDs only for candidates the caller can consume.
     imdb_ids = recs.map { |r| fetch_imdb_id(r[:tmdb_id], media_type) }
 
     results = recs.zip(imdb_ids).map do |rec, imdb_id|
