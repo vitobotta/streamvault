@@ -110,6 +110,7 @@ export default class extends Controller {
     this.directPlayActive = false
     this.primedDirectPlayUrl = null
     this.startupOverlayHideTimer = null
+    this.hlsPlayPromptCleanup = null
     this.dragMoveHandler = null
     this.suppressNextSeekClick = false
     this.suppressSeekClickTimer = null
@@ -211,6 +212,7 @@ export default class extends Controller {
     if (!this.navigatingAway) this.saveProgressSync()
     this.clearUiHideTimer()
     this.clearStartupOverlayTimer()
+    this.clearHlsPlayPrompt()
     this.clearSuppressSeekClickTimer()
     this.clearStallWatchdog()
     clearTimeout(this.bufferingOverlayTimer)
@@ -312,10 +314,13 @@ export default class extends Controller {
       this.startHlsPlayback()
       return
     }
-    if (!this.mseSupported) {
+
+    const safari = this.isSafari()
+    if (!this.mseSupported && !safari) {
       this.videoTarget.src = this.streamingUrlValue
       return
     }
+
     // A provider-ranked H.264/AAC MP4 can begin loading its header and MP4
     // index while FFprobe validates the exact streams. This keeps the probe as
     // the authority for codec and preferred-audio decisions without putting
@@ -326,6 +331,14 @@ export default class extends Controller {
     if (this.directPlayEligible()) {
       console.log("[Player] Path: direct play (native <video>, no ffmpeg)")
       this.startDirectPlay()
+    } else if (safari) {
+      // Safari expects seekable native MP4 resources; the remux endpoint is a
+      // non-seekable chunked response and can fail before metadata with
+      // MEDIA_ERR_SRC_NOT_SUPPORTED. Native HLS is Safari's reliable streaming
+      // transport and avoids poisoning the element before a fallback starts.
+      this.primedDirectPlayUrl = null
+      console.log("[Player] Path: native HLS (Safari)")
+      this.startHlsPlayback()
     } else if (this.remuxDirectEligible()) {
       this.primedDirectPlayUrl = null
       console.log("[Player] Path: remux direct play (-c:v copy, no re-encode)")
@@ -494,6 +507,7 @@ export default class extends Controller {
   // copying the video stream verbatim.  Burned subtitles require
   // video re-encode, so remux is skipped when a burn subtitle is active.
   remuxDirectEligible() {
+    if (this.isSafari()) return false
     if (this.streamRecoveryAttempts > 0) return false
     if (this.burnedSubtitleSelected()) return false
     if (!this.tracksData?.remux_direct_playable) return false
@@ -912,6 +926,12 @@ export default class extends Controller {
   }
 
   async startHlsPlayback() {
+    this.cancelRemuxLoad()
+    this.clearHlsPlayPrompt()
+    this.directPlayActive = false
+    this.remuxDirectPlay = false
+    this.primedDirectPlayUrl = null
+
     const directUrl = this.directUrlValue || this.extractRawUrl()
     if (!directUrl) {
       console.warn('HLS: no direct URL available')
@@ -963,49 +983,80 @@ export default class extends Controller {
       this.videoTarget.src = data.playlist_url
       this.videoTarget.load()
       const p = this.videoTarget.play()
-      if (p?.catch) p.catch((err) => {
-        // iOS autoplay policy may block play() when not in a user
-        // gesture context (the async fetch broke the gesture chain).
-        // Show a tap-to-play overlay — the user's tap provides the
-        // gesture needed to start playback.  Keep the spinner visible
-        // so the user sees something is loading, and show the spinner
-        // again after the tap while play() resolves.
-        console.warn('HLS: autoplay blocked, showing tap-to-play', err)
-        if (this.hasStartupOverlayTarget) {
-          this.startupOverlayTarget.classList.remove("hidden", "opacity-0", "pointer-events-none")
-          this.startupOverlayTarget.setAttribute("aria-hidden", "false")
-          const spinner = this.startupOverlayTarget.querySelector(".animate-spin")
-          const label = this.startupOverlayTarget.querySelector("span.text-white")
-          const sub = this.startupOverlayTarget.querySelector("span.text-sv-text-muted")
-          if (label) label.textContent = "Tap to play"
-          if (sub) sub.textContent = "Tap anywhere to start"
-          const onTap = (e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            // Show a loading spinner immediately so the user sees
-            // feedback — play() may take a moment to resolve.
-            if (spinner) spinner.style.display = ""
-            if (label) label.textContent = "Starting playback"
-            if (sub) sub.textContent = "Loading stream..."
-            this.videoTarget.play().then(() => {
-              // Don't hide the overlay here — onVideoReady will hide
-              // it once the video is actually playing.  This covers
-              // the gap between play() resolving and the first frame.
-              this.startupOverlayTarget.removeEventListener("click", onTap)
-            }).catch((playErr) => {
-              console.warn('HLS: play() failed after tap, will retry', playErr)
-              if (spinner) spinner.style.display = "none"
-              if (label) label.textContent = "Tap to retry"
-              if (sub) sub.textContent = "Tap anywhere to try again"
-              // Keep the listener — user can tap again
-            })
-          }
-          this.startupOverlayTarget.addEventListener("click", onTap)
+      if (p?.catch) p.catch((error) => {
+        // Starting the HLS session and waiting for its playlist crosses an
+        // asynchronous boundary, so Safari may no longer associate play()
+        // with the navigation click. Its audible-autoplay policy then requires
+        // one fresh user gesture. Present that as an explicit play control
+        // instead of treating the policy rejection as a stream failure.
+        if (error?.name === "NotAllowedError") {
+          console.info("HLS: Safari requires a tap to start audible playback")
+        } else {
+          console.warn("HLS: autoplay failed, showing play prompt", error)
         }
+        this.showHlsPlayPrompt()
       })
     } catch (e) {
       console.warn('HLS: start error', e)
     }
+  }
+
+  showHlsPlayPrompt() {
+    if (!this.hasStartupOverlayTarget) return
+
+    this.clearHlsPlayPrompt()
+    const overlay = this.startupOverlayTarget
+    const spinner = overlay.querySelector(".animate-spin")
+    const label = overlay.querySelector("span.text-white")
+    const sub = overlay.querySelector("span.text-sv-text-muted")
+
+    overlay.classList.remove("hidden", "opacity-0", "pointer-events-none")
+    overlay.classList.add("cursor-pointer")
+    overlay.setAttribute("aria-hidden", "false")
+    overlay.setAttribute("role", "button")
+    overlay.setAttribute("tabindex", "0")
+    overlay.setAttribute("aria-label", "Play video")
+    if (spinner) spinner.style.display = "none"
+    if (label) label.textContent = "Play"
+    if (sub) sub.textContent = "Tap or press Enter to start"
+
+    const attemptPlay = (event) => {
+      if (event.type === "keydown" && event.key !== "Enter" && event.key !== " ") return
+      event.preventDefault()
+      event.stopPropagation()
+      if (spinner) spinner.style.display = ""
+      if (label) label.textContent = "Starting playback"
+      if (sub) sub.textContent = "Loading stream..."
+
+      Promise.resolve(this.videoTarget.play()).then(() => {
+        // The "playing" event owns hiding the overlay after the first frame.
+        this.clearHlsPlayPrompt()
+      }).catch((playError) => {
+        console.warn("HLS: playback failed after user gesture", playError)
+        if (spinner) spinner.style.display = "none"
+        if (label) label.textContent = "Try again"
+        if (sub) sub.textContent = "Tap or press Enter to retry"
+      })
+    }
+
+    overlay.addEventListener("click", attemptPlay)
+    overlay.addEventListener("keydown", attemptPlay)
+    this.hlsPlayPromptCleanup = () => {
+      overlay.removeEventListener("click", attemptPlay)
+      overlay.removeEventListener("keydown", attemptPlay)
+      overlay.classList.remove("cursor-pointer")
+      overlay.setAttribute("role", "status")
+      overlay.removeAttribute("tabindex")
+      overlay.removeAttribute("aria-label")
+    }
+  }
+
+  clearHlsPlayPrompt() {
+    if (!this.hlsPlayPromptCleanup) return
+
+    const cleanup = this.hlsPlayPromptCleanup
+    this.hlsPlayPromptCleanup = null
+    cleanup()
   }
 
   // Poll the HLS playlist URL until enough segments are ready, ffmpeg
@@ -2277,6 +2328,16 @@ export default class extends Controller {
         }
       }
       overlay.addEventListener("click", onRetry)
+      return
+    }
+
+    if (this.isDirectPlay() && this.isSafari()) {
+      console.warn("Safari native playback failed — falling back to HLS.")
+      const targetSeconds = Math.floor(this.currentPlaybackPosition())
+      this.startSecondsValue = targetSeconds
+      this.element.dataset.videoPlayerStartSecondsValue = targetSeconds.toString()
+      this.showBufferingOverlay()
+      this.startHlsPlayback()
       return
     }
 

@@ -152,6 +152,31 @@ test("HLS receives selected audio and bitmap subtitle tracks but not text overla
   assert.equal(textParams.has("subtitle_stream"), false)
 })
 
+test("starting HLS clears an installed play prompt before its fetch settles", async () => {
+  const player = new VideoPlayerController()
+  const calls = []
+  let settleFetch
+  const previousFetchHandler = fetchHandler
+  fetchHandler = async () => {
+    calls.push("fetch")
+    return new Promise((resolve) => { settleFetch = resolve })
+  }
+  player.directUrlValue = "https://example.test/movie.mkv"
+  player.cancelRemuxLoad = () => { calls.push("cancel-remux") }
+  player.clearHlsPlayPrompt = () => { calls.push("clear-prompt") }
+
+  try {
+    const start = player.startHlsPlayback()
+
+    assert.deepEqual(calls, ["cancel-remux", "clear-prompt", "fetch"])
+
+    settleFetch({ ok: false, status: 503 })
+    await start
+  } finally {
+    fetchHandler = previousFetchHandler
+  }
+})
+
 test("iOS loads track metadata before starting HLS playback", async () => {
   const player = new VideoPlayerController()
   const calls = []
@@ -163,6 +188,75 @@ test("iOS loads track metadata before starting HLS playback", async () => {
   await player.ensureVideoSource()
 
   assert.deepEqual(calls, ["tracks", "hls"])
+})
+
+test("macOS Safari uses native HLS when direct play is unavailable", async () => {
+  const player = new VideoPlayerController()
+  const calls = []
+  player.streamingUrlValue = "/transcode?url=https%3A%2F%2Fexample.test%2Fmovie.mkv"
+  player.mseSupported = true
+  player.isIOS = () => false
+  player.isSafari = () => true
+  player.loadMediaTracks = async () => { calls.push("tracks") }
+  player.directPlayEligible = () => false
+  player.startHlsPlayback = () => { calls.push("hls") }
+  player.startRemuxDirectPlay = () => { calls.push("remux") }
+  player.setupMseSource = () => { calls.push("mse") }
+
+  await player.ensureVideoSource()
+
+  assert.deepEqual(calls, ["tracks", "hls"])
+})
+
+test("Safari HLS play prompt retries playback from a user gesture", async () => {
+  const player = new VideoPlayerController()
+  const listeners = {}
+  const attributes = {}
+  const classes = new Set()
+  const spinner = { style: {} }
+  const label = { textContent: "" }
+  const sub = { textContent: "" }
+  const overlay = {
+    classList: {
+      add: (...values) => values.forEach((value) => classes.add(value)),
+      remove: (...values) => values.forEach((value) => classes.delete(value))
+    },
+    setAttribute: (name, value) => { attributes[name] = value },
+    removeAttribute: (name) => { delete attributes[name] },
+    querySelector: (selector) => {
+      if (selector === ".animate-spin") return spinner
+      if (selector === "span.text-white") return label
+      return sub
+    },
+    addEventListener: (name, callback) => { listeners[name] = callback },
+    removeEventListener: (name, callback) => {
+      if (listeners[name] === callback) delete listeners[name]
+    }
+  }
+  let playCount = 0
+  player.hasStartupOverlayTarget = true
+  player.startupOverlayTarget = overlay
+  player.videoTarget = {
+    play: () => {
+      playCount += 1
+      return Promise.resolve()
+    }
+  }
+  player.hlsPlayPromptCleanup = null
+
+  player.showHlsPlayPrompt()
+
+  assert.equal(attributes.role, "button")
+  assert.equal(attributes.tabindex, "0")
+  assert.equal(label.textContent, "Play")
+  assert.equal(spinner.style.display, "none")
+
+  listeners.click({ type: "click", preventDefault() {}, stopPropagation() {} })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  assert.equal(playCount, 1)
+  assert.equal(attributes.role, "status")
+  assert.equal(listeners.click, undefined)
 })
 
 test("direct-play hint primes the native MP4 while track validation is pending", async () => {
@@ -333,6 +427,9 @@ test("UHD HEVC skips native remux while 1080p HEVC keeps the fast path", () => {
   player.tracksData.video_width = 1920
   player.tracksData.video_height = 1080
   assert.equal(player.remuxDirectEligible(), true)
+
+  player.isSafari = () => true
+  assert.equal(player.remuxDirectEligible(), false)
 })
 
 test("native direct network failure falls back to remux before video transcoding", () => {
@@ -360,6 +457,35 @@ test("native direct network failure falls back to remux before video transcoding
   player.onVideoError({})
 
   assert.equal(remuxStarts, 1)
+  assert.equal(player.startSecondsValue, 120)
+  assert.equal(player.element.dataset.videoPlayerStartSecondsValue, "120")
+})
+
+test("Safari native playback errors fall back to HLS at the same position", () => {
+  const player = new VideoPlayerController()
+  let hlsStarts = 0
+  let transcodeTarget
+  player.videoTarget = {
+    error: { code: 4, message: "" },
+    src: "/transcode?remux=1",
+    currentSrc: "/transcode?remux=1",
+    readyState: 0,
+    networkState: 3
+  }
+  player.directPlayActive = true
+  player.remuxDirectPlay = true
+  player.element = { dataset: {} }
+  player.currentPlaybackPosition = () => 120.9
+  player.isHls = () => false
+  player.isSafari = () => true
+  player.showBufferingOverlay = () => {}
+  player.startHlsPlayback = () => { hlsStarts += 1 }
+  player.restartPlaybackAt = (target) => { transcodeTarget = target }
+
+  player.onVideoError({})
+
+  assert.equal(hlsStarts, 1)
+  assert.equal(transcodeTarget, undefined)
   assert.equal(player.startSecondsValue, 120)
   assert.equal(player.element.dataset.videoPlayerStartSecondsValue, "120")
 })
