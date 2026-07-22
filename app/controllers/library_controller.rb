@@ -2,7 +2,7 @@
 
 class LibraryController < ApplicationController
   before_action :authenticate_user!
-  before_action :set_entry, only: [:update, :destroy]
+  before_action :set_entry, only: [ :update, :destroy ]
 
   def index
     @page = (params[:page] || 1).to_i.clamp(1, Float::INFINITY)
@@ -15,7 +15,7 @@ class LibraryController < ApplicationController
 
     @total = entries.count
     @total_pages = (@total.to_f / @per_page).ceil
-    @page = @page.clamp(1, [@total_pages, 1].max)
+    @page = @page.clamp(1, [ @total_pages, 1 ].max)
     @entries = entries.offset((@page - 1) * @per_page).limit(@per_page)
 
     # Progress map for cards
@@ -29,18 +29,21 @@ class LibraryController < ApplicationController
   end
 
   def create
-    @entry = current_user.library_entries.build(entry_params)
+    result = CollectionMembershipService.add_to_library(
+      user: current_user,
+      attributes: entry_params.to_h
+    )
 
-    if @entry.save
-      current_user.wishlist_entries.find_by(imdb_id: @entry.imdb_id)&.destroy
+    if result.success?
+      @entry = result.data
       respond_to do |format|
         format.html { redirect_to library_index_path, notice: "#{@entry.title} added to library." }
         format.json { render json: { ok: true, kind: "library", destroy_url: library_path(@entry), notice: "#{@entry.title} added to library." } }
       end
     else
       respond_to do |format|
-        format.html { redirect_back fallback_location: library_index_path, alert: @entry.errors.full_messages.join(", ") }
-        format.json { render json: { ok: false, error: @entry.errors.full_messages.join(", ") }, status: :unprocessable_content }
+        format.html { redirect_back fallback_location: library_index_path, alert: result.error_message }
+        format.json { render json: { ok: false, error: result.error_message }, status: :unprocessable_content }
       end
     end
   end

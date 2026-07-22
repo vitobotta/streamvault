@@ -17,7 +17,11 @@ class ContentController < ApplicationController
 
     if @type != "show"
       content_title = @metadata&.dig(:title)
-      streams_result = fetch_provider_streams(@imdb_id, @type, title: content_title)
+      streams_result = AvailableStreamsService.new(current_user).call(
+        imdb_id: @imdb_id,
+        type: @type,
+        title: content_title
+      )
       @streams = streams_result.success? ? streams_result.data : []
       @streams_error = streams_result.failure? ? streams_result.error_message : nil
     end
@@ -82,9 +86,9 @@ class ContentController < ApplicationController
     end
 
     filter_title = "#{@show_title} #{@episode_title}"
-    streams_result = fetch_provider_streams(
-      @imdb_id,
-      "show",
+    streams_result = AvailableStreamsService.new(current_user).call(
+      imdb_id: @imdb_id,
+      type: "show",
       season: @season,
       episode: @episode,
       title: filter_title
@@ -93,60 +97,5 @@ class ContentController < ApplicationController
     @streams_error = streams_result.failure? ? streams_result.error_message : nil
 
     render layout: false
-  end
-
-  private
-
-  # Fetch streams from all configured providers in parallel, merging results.
-  # Cached for a short TTL (STREAM_CACHE_TTL) keyed by content + language
-  # priority — stream listings are the same for all users with the same
-  # language preferences (the RD key only affects resolve, not listing).
-  # Failures are not cached so a transient provider outage doesn't stick.
-  STREAM_CACHE_TTL = 60.seconds
-
-  def fetch_provider_streams(imdb_id, type, season: nil, episode: nil, title: nil)
-    language_key = current_user.stream_language_priority.join(",")
-    cache_key = "streams/#{imdb_id}/#{type}/#{season}/#{episode}/#{language_key}"
-    cached = Rails.cache.read(cache_key)
-    return cached if cached
-
-    result = fetch_provider_streams_uncached(imdb_id, type, season: season, episode: episode, title: title)
-    Rails.cache.write(cache_key, result, expires_in: STREAM_CACHE_TTL) if result.success?
-    result
-  end
-
-  def fetch_provider_streams_uncached(imdb_id, type, season: nil, episode: nil, title: nil)
-    providers = StreamProvider.providers(rd_api_key: current_user&.realdebrid_api_key)
-    all_streams = []
-
-    Rails.logger.info("[ContentController] fetch_provider_streams: #{providers.length} providers for #{imdb_id} (#{type})")
-
-    # Query all providers concurrently — don't let a slow Comet block Torrentio.
-    threads = providers.map do |provider|
-      Thread.new do
-        name = provider.class.name
-        start = Time.current
-        result = provider.streams(
-          imdb_id,
-          type,
-          season: season,
-          episode: episode,
-          title: title,
-          preferred_languages: current_user.preferred_stream_languages,
-          default_language: current_user.default_stream_language
-        )
-        elapsed = ((Time.current - start) * 1000).round
-        count = result.success? ? result.data.length : 0
-        Rails.logger.info("[ContentController] #{name} returned #{count} streams in #{elapsed}ms")
-        result
-      end
-    end
-    results = threads.map(&:value)
-
-    results.each do |result|
-      all_streams.concat(result.data) if result&.success?
-    end
-
-    all_streams.empty? ? ServiceResult.failure("No streams available") : ServiceResult.success(all_streams)
   end
 end

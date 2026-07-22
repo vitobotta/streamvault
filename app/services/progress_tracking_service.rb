@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
 class ProgressTrackingService
-  MOVIE_COMPLETION_PERCENTAGE = 95
-
   # Save watch progress for content
   def self.save_progress(user, imdb_id, progress_seconds, duration_seconds, type:, season: nil, episode: nil, poster_url: nil, title: nil)
     progress_seconds = progress_seconds.to_i
@@ -131,7 +129,7 @@ class ProgressTrackingService
   def self.continue_watching(user)
     movies = user.watch_history_entries
       .movies_only
-      .where("progress_percentage < ?", MOVIE_COMPLETION_PERCENTAGE)
+      .where("progress_percentage < ?", PlaybackCompletionPolicy::MOVIE_PERCENTAGE)
       .recently_watched
       .limit(20)
       .to_a
@@ -167,9 +165,7 @@ class ProgressTrackingService
     progress_seconds = entry.progress_seconds
     duration_seconds = entry.duration_seconds
     progress_percentage = entry.progress_percentage
-    episode_finished = entry.episode? &&
-      entry.duration_seconds.positive? &&
-      entry.progress_seconds.fdiv(entry.duration_seconds) >= EpisodeProgress::COMPLETION_RATIO
+    episode_finished = entry.episode? && PlaybackCompletionPolicy.episode_finished?(entry)
 
     if episode_finished
       next_episode = self.next_episode(
@@ -226,7 +222,7 @@ class ProgressTrackingService
     return unless entry
 
     new_status =
-      if progress_pct >= 95
+      if PlaybackCompletionPolicy.movie_finished?(progress_pct)
         :finished
       elsif progress_pct.positive?
         :watching

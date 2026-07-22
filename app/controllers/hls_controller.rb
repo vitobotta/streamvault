@@ -95,55 +95,33 @@ class HlsController < ApplicationController
   # error — playback stops and the screen goes black.  Instead, we
   # block for up to SEGMENT_WAIT_SECONDS for the segment to appear,
   # so Safari's request simply waits until ffmpeg produces it.
-  SEGMENT_WAIT_SECONDS = Rails.env.test? ? 1 : 10
-
   def segment
     session = HlsSession.find(params[:id])
     unless session
       head :not_found
       return
     end
+    segment_index = params[:segment].to_i
 
-    error = HlsSession.error(params[:id])
-    if error
-      render json: { error: error }, status: :failed_dependency
+    availability = HlsSegmentAvailabilityService.new(
+      session,
+      session_id: params[:id]
+    ).call(segment_index)
+
+    case availability.status
+    when :failed
+      render json: { error: availability.error }, status: :failed_dependency
+      return
+    when :finished
+      head :not_found
+      return
+    when :pending
+      response.headers["Retry-After"] = "1"
+      head :service_unavailable
       return
     end
 
-    segment_index = params[:segment].to_i
-    path = session.segment_path(segment_index)
-
-    unless File.exist?(path)
-      # Check if ffmpeg has already exited (playlist has #EXT-X-ENDLIST)
-      # — if so, the segment truly doesn't exist and 404 is correct.
-      if ffmpeg_finished?(session)
-        head :not_found
-        return
-      end
-
-      # Wait for the segment to appear.  Poll the filesystem so we
-      # don't hold a DB connection or thread for long.  Return 503
-      # if it doesn't appear within the timeout — Safari will retry.
-      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + SEGMENT_WAIT_SECONDS
-      while Process.clock_gettime(Process::CLOCK_MONOTONIC) < deadline
-        sleep 0.3
-        break if File.exist?(path)
-        # If ffmpeg died while waiting, stop waiting.
-        break if ffmpeg_finished?(session)
-        break if HlsSession.error(params[:id])
-      end
-
-      if (error = HlsSession.error(params[:id]))
-        render json: { error: error }, status: :failed_dependency
-        return
-      end
-
-      unless File.exist?(path)
-        response.headers["Retry-After"] = "1"
-        head :service_unavailable
-        return
-      end
-    end
+    path = availability.path
 
     session.prune_consumed_segments(segment_index)
     response.headers["Cache-Control"] = "no-cache"
@@ -155,15 +133,5 @@ class HlsController < ApplicationController
   def stop
     HlsSession.stop(params[:id])
     head :ok
-  end
-
-  private
-
-  def ffmpeg_finished?(session)
-    playlist = session.playlist_path
-    return false unless File.exist?(playlist)
-    File.read(playlist).include?("#EXT-X-ENDLIST")
-  rescue StandardError
-    false
   end
 end
