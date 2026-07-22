@@ -52,15 +52,16 @@ const MAX_REMUX_PRESENTATION_OFFSET_SECONDS = 1
 const REMUX_SEEK_TOLERANCE_SECONDS = 0.25
 const REMUX_SEEK_TIMEOUT_MS = 500
 const INTERACTIVE_SELECTOR = "button, a, input, textarea, select, [contenteditable='true']"
+const SAFARI_AUTOPLAY_GUIDANCE_KEY = "streamvault:safari-autoplay-guidance-seen"
 
 export default class extends Controller {
   static get targets() {
     return [
       "video", "controls", "seekBar", "seekFilled", "seekBuffered", "seekHandle",
       "playButton", "playIcon", "pauseIcon", "currentTime", "durationDisplay",
-      "volumeIcon", "muteIcon", "startupOverlay", "seekingOverlay",
-      "seekingOverlayMessage", "sourceInfo", "sourceToggle", "sourceDetails", "sourceUrl", "sourceFilename", "backButton",
-      "audioControls", "audioMenu", "audioOptions", "audioButtonLabel",
+      "volumeIcon", "muteIcon", "startupOverlay", "startupStatus", "autoplayGuidance", "autoplayPlayButton",
+      "seekingOverlay", "seekingOverlayMessage", "sourceInfo", "sourceToggle", "sourceDetails", "sourceUrl",
+      "sourceFilename", "backButton", "audioControls", "audioMenu", "audioOptions", "audioButtonLabel",
       "subtitleControls", "subtitleMenu", "subtitleOptions", "subtitleButtonLabel", "subtitleOverlay"
     ]
   }
@@ -983,54 +984,106 @@ export default class extends Controller {
       this.videoTarget.src = data.playlist_url
       this.videoTarget.load()
       const p = this.videoTarget.play()
-      if (p?.catch) p.catch((error) => {
-        // Starting the HLS session and waiting for its playlist crosses an
-        // asynchronous boundary, so Safari may no longer associate play()
-        // with the navigation click. Its audible-autoplay policy then requires
-        // one fresh user gesture. Present that as an explicit play control
-        // instead of treating the policy rejection as a stream failure.
-        if (error?.name === "NotAllowedError") {
-          console.info("HLS: Safari requires a tap to start audible playback")
-        } else {
-          console.warn("HLS: autoplay failed, showing play prompt", error)
-        }
-        this.showHlsPlayPrompt()
-      })
+      if (p?.catch) p.catch((error) => this.handleHlsAutoplayFailure(error))
     } catch (e) {
       console.warn('HLS: start error', e)
     }
   }
 
-  showHlsPlayPrompt() {
+  handleHlsAutoplayFailure(error) {
+    const policyBlocked = error?.name === "NotAllowedError"
+    if (policyBlocked) {
+      console.info("HLS: Safari requires a tap to start audible playback")
+    } else {
+      console.warn("HLS: autoplay failed, showing play prompt", error)
+    }
+
+    this.showHlsPlayPrompt({
+      explainAutoplay: policyBlocked && this.shouldShowSafariAutoplayGuidance()
+    })
+  }
+
+  shouldShowSafariAutoplayGuidance() {
+    if (!this.isSafari() || this.isIOS() || this.safariAutoplayGuidanceShown) return false
+
+    try {
+      return window.localStorage?.getItem(SAFARI_AUTOPLAY_GUIDANCE_KEY) !== "1"
+    } catch {
+      return true
+    }
+  }
+
+  markSafariAutoplayGuidanceSeen() {
+    this.safariAutoplayGuidanceShown = true
+    try {
+      window.localStorage?.setItem(SAFARI_AUTOPLAY_GUIDANCE_KEY, "1")
+    } catch {
+      // Storage may be unavailable in private browsing. The current controller
+      // still remembers that the explanation has already been shown.
+    }
+  }
+
+  showHlsPlayPrompt({ explainAutoplay = false } = {}) {
     if (!this.hasStartupOverlayTarget) return
 
     this.clearHlsPlayPrompt()
     const overlay = this.startupOverlayTarget
+    const status = this.hasStartupStatusTarget ? this.startupStatusTarget : null
+    const guidance = this.hasAutoplayGuidanceTarget ? this.autoplayGuidanceTarget : null
+    const playButton = this.hasAutoplayPlayButtonTarget ? this.autoplayPlayButtonTarget : null
     const spinner = overlay.querySelector(".animate-spin")
     const label = overlay.querySelector("span.text-white")
     const sub = overlay.querySelector("span.text-sv-text-muted")
+    const showGuidance = explainAutoplay && guidance && playButton
+    const interactiveTarget = showGuidance ? playButton : overlay
 
     overlay.classList.remove("hidden", "opacity-0", "pointer-events-none")
-    overlay.classList.add("cursor-pointer")
     overlay.setAttribute("aria-hidden", "false")
-    overlay.setAttribute("role", "button")
-    overlay.setAttribute("tabindex", "0")
-    overlay.setAttribute("aria-label", "Play video")
     if (spinner) spinner.style.display = "none"
-    if (label) label.textContent = "Play"
-    if (sub) sub.textContent = "Tap or press Enter to start"
+
+    if (showGuidance) {
+      this.markSafariAutoplayGuidanceSeen()
+      if (status) status.classList.add("hidden")
+      guidance.classList.remove("hidden")
+      overlay.classList.remove("cursor-pointer")
+      overlay.setAttribute("role", "dialog")
+      overlay.setAttribute("aria-modal", "true")
+      overlay.setAttribute("aria-labelledby", "safari-autoplay-title")
+      overlay.removeAttribute("tabindex")
+      overlay.removeAttribute("aria-label")
+      playButton.focus?.({ preventScroll: true })
+    } else {
+      if (status) status.classList.remove("hidden")
+      if (guidance) guidance.classList.add("hidden")
+      overlay.classList.add("cursor-pointer")
+      overlay.setAttribute("role", "button")
+      overlay.setAttribute("tabindex", "0")
+      overlay.setAttribute("aria-label", "Play video")
+      overlay.removeAttribute("aria-modal")
+      overlay.removeAttribute("aria-labelledby")
+      if (label) label.textContent = "Play"
+      if (sub) sub.textContent = "Tap or press Enter to start"
+    }
 
     const attemptPlay = (event) => {
       if (event.type === "keydown" && event.key !== "Enter" && event.key !== " ") return
       event.preventDefault()
       event.stopPropagation()
+      if (guidance) guidance.classList.add("hidden")
+      if (status) status.classList.remove("hidden")
+      overlay.setAttribute("role", "status")
+      overlay.removeAttribute("aria-modal")
+      overlay.removeAttribute("aria-labelledby")
       if (spinner) spinner.style.display = ""
       if (label) label.textContent = "Starting playback"
       if (sub) sub.textContent = "Loading stream..."
 
       Promise.resolve(this.videoTarget.play()).then(() => {
-        // The "playing" event owns hiding the overlay after the first frame.
+        // A resolved play() means the browser accepted and started playback.
+        // Safari can omit or delay the matching "playing" event, so do not
+        // leave the blocking startup overlay waiting on that event forever.
         this.clearHlsPlayPrompt()
+        this.hideStartupOverlay()
       }).catch((playError) => {
         console.warn("HLS: playback failed after user gesture", playError)
         if (spinner) spinner.style.display = "none"
@@ -1039,15 +1092,19 @@ export default class extends Controller {
       })
     }
 
-    overlay.addEventListener("click", attemptPlay)
-    overlay.addEventListener("keydown", attemptPlay)
+    interactiveTarget.addEventListener("click", attemptPlay)
+    if (!showGuidance) interactiveTarget.addEventListener("keydown", attemptPlay)
     this.hlsPlayPromptCleanup = () => {
-      overlay.removeEventListener("click", attemptPlay)
-      overlay.removeEventListener("keydown", attemptPlay)
+      interactiveTarget.removeEventListener("click", attemptPlay)
+      if (!showGuidance) interactiveTarget.removeEventListener("keydown", attemptPlay)
       overlay.classList.remove("cursor-pointer")
       overlay.setAttribute("role", "status")
       overlay.removeAttribute("tabindex")
       overlay.removeAttribute("aria-label")
+      overlay.removeAttribute("aria-modal")
+      overlay.removeAttribute("aria-labelledby")
+      if (guidance) guidance.classList.add("hidden")
+      if (status) status.classList.remove("hidden")
     }
   }
 

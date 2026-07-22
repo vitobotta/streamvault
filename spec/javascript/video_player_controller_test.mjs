@@ -256,7 +256,92 @@ test("Safari HLS play prompt retries playback from a user gesture", async () => 
 
   assert.equal(playCount, 1)
   assert.equal(attributes.role, "status")
+  assert.equal(classes.has("opacity-0"), true)
+  assert.equal(attributes["aria-hidden"], "true")
   assert.equal(listeners.click, undefined)
+})
+
+test("macOS Safari explains autoplay settings only on the first policy block", async () => {
+  const player = new VideoPlayerController()
+  const overlayAttributes = {}
+  const overlayClasses = new Set()
+  const statusClasses = new Set()
+  const guidanceClasses = new Set(["hidden"])
+  const buttonListeners = {}
+  const spinner = { style: {} }
+  const label = { textContent: "" }
+  const sub = { textContent: "" }
+  const storage = new Map()
+  const previousStorage = context.window.localStorage
+  let focused = false
+  let playCount = 0
+
+  const classList = (classes) => ({
+    add: (...values) => values.forEach((value) => classes.add(value)),
+    remove: (...values) => values.forEach((value) => classes.delete(value))
+  })
+  const overlay = {
+    classList: classList(overlayClasses),
+    setAttribute: (name, value) => { overlayAttributes[name] = value },
+    removeAttribute: (name) => { delete overlayAttributes[name] },
+    querySelector: (selector) => {
+      if (selector === ".animate-spin") return spinner
+      if (selector === "span.text-white") return label
+      return sub
+    }
+  }
+  const playButton = {
+    addEventListener: (name, callback) => { buttonListeners[name] = callback },
+    removeEventListener: (name, callback) => {
+      if (buttonListeners[name] === callback) delete buttonListeners[name]
+    },
+    focus: () => { focused = true }
+  }
+  context.window.localStorage = {
+    getItem: (key) => storage.get(key) ?? null,
+    setItem: (key, value) => storage.set(key, value)
+  }
+  player.isSafari = () => true
+  player.isIOS = () => false
+  player.hasStartupOverlayTarget = true
+  player.startupOverlayTarget = overlay
+  player.hasStartupStatusTarget = true
+  player.startupStatusTarget = { classList: classList(statusClasses) }
+  player.hasAutoplayGuidanceTarget = true
+  player.autoplayGuidanceTarget = { classList: classList(guidanceClasses) }
+  player.hasAutoplayPlayButtonTarget = true
+  player.autoplayPlayButtonTarget = playButton
+  player.videoTarget = {
+    play: () => {
+      playCount += 1
+      return Promise.resolve()
+    }
+  }
+  player.hlsPlayPromptCleanup = null
+
+  try {
+    player.handleHlsAutoplayFailure({ name: "NotAllowedError" })
+
+    assert.equal(overlayAttributes.role, "dialog")
+    assert.equal(overlayAttributes["aria-modal"], "true")
+    assert.equal(statusClasses.has("hidden"), true)
+    assert.equal(guidanceClasses.has("hidden"), false)
+    assert.equal(focused, true)
+    assert.equal(storage.get("streamvault:safari-autoplay-guidance-seen"), "1")
+    assert.equal(player.shouldShowSafariAutoplayGuidance(), false)
+
+    buttonListeners.click({ type: "click", preventDefault() {}, stopPropagation() {} })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    assert.equal(playCount, 1)
+    assert.equal(overlayAttributes.role, "status")
+    assert.equal(overlayClasses.has("opacity-0"), true)
+    assert.equal(overlayAttributes["aria-hidden"], "true")
+    assert.equal(guidanceClasses.has("hidden"), true)
+    assert.equal(buttonListeners.click, undefined)
+  } finally {
+    context.window.localStorage = previousStorage
+  }
 })
 
 test("direct-play hint primes the native MP4 while track validation is pending", async () => {

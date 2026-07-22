@@ -61,10 +61,35 @@
        role="status"
        aria-live="polite"
        aria-hidden="false">
-    <div class="flex flex-col items-center gap-3 px-5 py-4 rounded-lg bg-sv-surface border border-sv-border shadow-xl">
-      <div class="w-12 h-12 border-4 border-white/20 border-t-indigo-500 rounded-full animate-spin"></div>
-      <span class="text-white text-sm font-medium">Starting playback</span>
-      <span class="text-sv-text-muted text-xs">Preparing stream...</span>
+    <div class="max-w-sm rounded-xl border border-sv-border bg-sv-surface px-6 py-5 shadow-xl">
+      <div data-video-player-target="startupStatus" class="flex flex-col items-center gap-3">
+        <div class="w-12 h-12 border-4 border-white/20 border-t-indigo-500 rounded-full animate-spin"></div>
+        <span class="text-white text-sm font-medium">Starting playback</span>
+        <span class="text-sv-text-muted text-xs">Preparing stream...</span>
+      </div>
+
+      <div data-video-player-target="autoplayGuidance" class="hidden">
+        <h2 id="safari-autoplay-title" class="text-lg font-semibold text-white">Allow automatic playback</h2>
+        <p class="mt-2 text-sm leading-6 text-sv-text-muted">
+          Safari blocked video with sound. To start future streams automatically:
+        </p>
+        <ol class="mt-4 space-y-3 text-sm text-sv-text">
+          <li class="flex gap-3">
+            <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-500/20 text-xs font-semibold text-indigo-300">1</span>
+            <span>Open <strong class="font-medium text-white">Safari → Settings for This Website…</strong></span>
+          </li>
+          <li class="flex gap-3">
+            <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-500/20 text-xs font-semibold text-indigo-300">2</span>
+            <span>Set <strong class="font-medium text-white">Auto-Play</strong> to <strong class="font-medium text-white">Allow All Auto-Play</strong></span>
+          </li>
+        </ol>
+        <p class="mt-4 text-xs leading-5 text-sv-text-muted">Safari controls this permission; StreamVault cannot change it for you.</p>
+        <button type="button"
+                data-video-player-target="autoplayPlayButton"
+                class="mt-5 w-full rounded-lg bg-indigo-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:ring-offset-2 focus:ring-offset-sv-surface">
+          Play now
+        </button>
+      </div>
     </div>
   </div>
 
