@@ -2,26 +2,16 @@
 
 class TranscodeController < ApplicationController
   include ActionController::Live
-  include StreamUrlValidation
+  include ResolvedSourceAccess
 
   MAX_START_SECONDS = 24 * 60 * 60
 
   before_action :authenticate_user!
 
-  # GET /transcode?url=...&start_seconds=... — FFmpeg transcode proxy
+  # GET /transcode?source=...&start_seconds=... — FFmpeg transcode proxy
   def stream
-    input_url = params[:url].to_s
-    unless valid_stream_url?(input_url) && verify_stream_url!
-      head :bad_request
-      return
-    end
-
     start_seconds = normalized_start_seconds(params[:start_seconds])
 
-    headers = {}
-    if current_user.has_realdebrid_key?
-      headers["Authorization"] = "Bearer #{current_user.realdebrid_api_key}"
-    end
 
     # Set streaming headers — not committed until the first response.stream.write.
     # If TranscodeError fires before any data is written, we can still
@@ -41,8 +31,10 @@ class TranscodeController < ApplicationController
     outcome = "complete"
 
     begin
-      TranscodeService.transcode_to_fmp4(
-        input_url,
+      source = resolved_source
+      headers = source_headers
+      Media::Transcoder.transcode_to_fmp4(
+        source.url,
         headers: headers,
         start_seconds: start_seconds,
         audio_stream: params[:audio_stream],
@@ -55,7 +47,10 @@ class TranscodeController < ApplicationController
         response.stream.write(chunk)
         written_bytes += chunk.bytesize
       end
-    rescue TranscodeService::TranscodeError => e
+    rescue ResolvedSource::Invalid
+      outcome = "invalid_source"
+      response.status = :bad_request unless response.committed?
+    rescue Media::Transcoder::TranscodeError => e
       outcome = "ffmpeg_error"
       Rails.logger.error("[Transcode] playback_id=#{playback_id} #{e.message}")
       if response.stream.closed? || response.committed?

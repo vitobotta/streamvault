@@ -356,7 +356,6 @@ bin/rubocop
 # Run specific test types
 bundle exec rspec spec/models/      # Model specs
 bundle exec rspec spec/services/    # Service specs
-bundle exec rspec spec/policies/    # Policy specs
 bundle exec rspec spec/requests/    # Request specs
 ```
 
@@ -364,34 +363,31 @@ bundle exec rspec spec/requests/    # Request specs
 
 ```
 app/
-├── controllers/     # Home, search, content, library, wishlist, streaming, settings, episodes, transcode
-├── models/          # User-owned media state, recommendations, and HLS session records
-├── services/        # Business logic (see below)
-├── policies/        # ActionPolicy authorisation — all resources scoped per-user
-├── javascript/      # Stimulus controllers (video player, carousels, language picker, etc.)
-├── jobs/            # Recommendation refresh and background work
-└── views/           # Dark-themed Tailwind views with Turbo Drive
+├── controllers/     # HTML pages, playback orchestration, and signed media endpoints
+├── models/          # User-owned state, HLS records, and immutable playback contracts
+├── services/        # Catalog, stream resolution, playback, and media processing
+├── javascript/      # Stimulus controllers and isolated player services
+├── jobs/            # Recommendation refresh and HLS cleanup
+└── views/           # Server-rendered dark-themed Tailwind views
 ```
 
 ### Services
 
-| Service | Role |
-|---------|------|
-| **TorrentioService** | Searches content via Cinemeta, fetches streams from Torrentio, enriches with OMDB ratings |
-| **CometService** | Fetches streams from a self-hosted Comet instance (independent of Torrentio) |
-| **StreamProvider** | Factory that returns the configured provider(s) with fallback ordering |
-| **RealDebridService** | Manages RealDebrid API: add magnets, select files, get streaming links, verify keys |
-| **ContentStreamingService** | Orchestrates the full streaming flow: fetch streams → resolve best candidate → verify link |
-| **TranscodeService** | FFmpeg-based transcoding: MKV→MP4, audio→AAC, subtitle extraction/burning, video normalisation |
-| **ProgressTrackingService** | Saves watch progress, auto-advances episodes, builds the "Continue Watching" list |
-| **RecommendationService** | Generates "Recommended for You" from watch history via TMDB collaborative filtering |
-| **TmdbService** | TMDB API client for recommendations and poster URLs |
-| **ExternalSubtitleService** | Fetches and serves external subtitles from SubDL |
-| **SubdlSubtitleProvider** | SubDL API client for subtitle search |
+| Boundary | Role |
+|----------|------|
+| **Catalog::CinemetaClient / Catalog::OmdbClient** | Fetch canonical metadata, catalogs, and ratings |
+| **Streams::TorrentioProvider / CometService** | Fetch typed `StreamCandidate` values from configured providers |
+| **AvailableStreamsService / Streams::Resolver** | Cache candidates, rank them, resolve a playback-safe RealDebrid source |
+| **PlaybackStartService / PlaybackResumeService** | Build signed `PlaybackDescriptor` values and choose resume targets |
+| **Playback::ProgressWriter / Playback::ContinueWatchingQuery** | Persist unified progress and build Continue Watching |
+| **Media::Probe / Media::Subtitles / Media::Transcoder** | Probe tracks, extract subtitles, and produce fMP4 or HLS output |
+| **HlsSessionManager** | Persist, monitor, expire, and clean up HLS processes |
+| **RecommendationService / TmdbService** | Cache personalized TMDB recommendations outside user media state |
+| **RealDebridService** | Verify user API keys |
 
 ### Authorisation
 
-All resources are scoped to the current user via ActionPolicy. Users can only access their own library entries, watch history, wishlist, and episode progress. API keys are encrypted at rest using Active Record Encryption.
+Every user-owned query is scoped through `current_user` associations. Playback and media URLs use signed, expiring, user-bound tokens; raw RealDebrid URLs never cross the server/browser boundary. API keys are encrypted at rest with Active Record Encryption.
 
 ## License
 

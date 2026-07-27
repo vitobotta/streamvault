@@ -4,14 +4,14 @@
 #
 # STREAM_PROVIDER env var:
 #   "comet"     → Comet primary, Torrentio fallback
-#   "torrentio" → Torrentio primary (default, backward-compatible)
-#   "auto"      → Comet if configured, else Torrentio; Comet first with
-#                 Torrentio fallback when both are configured
+#   "torrentio" → Torrentio only (default)
+#   "auto"      → configured Comet followed by Torrentio
+#   "comet"     → configured Comet followed by Torrentio
 #
 # Each provider implements:
 #   streams(imdb_id, type, season:, episode:, title:, preferred_languages:, default_language:)
-#     → ServiceResult<Array<Hash>>
-#   self.resolve_base_url → String (for ContentStreamingService origin validation)
+#     → ServiceResult<Array<StreamCandidate>>
+#   resolve_base_urls → Array<String> (for resolver origin validation)
 module StreamProvider
   module_function
 
@@ -19,37 +19,18 @@ module StreamProvider
   # The first provider is primary; subsequent ones are fallbacks used when
   # the primary returns no streams or fails to connect.
   def providers(rd_api_key:)
+    torrentio = Streams::TorrentioProvider.new(rd_api_key: rd_api_key)
     setting = ENV.fetch("STREAM_PROVIDER", "torrentio").to_s.downcase
+    return [ torrentio ] unless %w[comet auto].include?(setting)
 
-    case setting
-    when "comet"
-      [ CometService.new(rd_api_key: rd_api_key), TorrentioService.new(rd_api_key: rd_api_key) ]
-    when "auto"
-      list = []
-      list << CometService.new(rd_api_key: rd_api_key) if CometService.comet_url.present?
-      list << TorrentioService.new(rd_api_key: rd_api_key)
-      list
-    else
-      [ TorrentioService.new(rd_api_key: rd_api_key) ]
-    end
+    [ (CometService.new(rd_api_key: rd_api_key) if CometService.comet_url.present?), torrentio ].compact
   end
 
-  # All base URLs that resolve URLs may originate from — used by
-  # ContentStreamingService for allowed_resolve_origins.
+  # All origins from which the resolver may follow a provider URL.
   def resolve_base_urls
+    urls = [ Streams::TorrentioProvider::BASE_URL, "https://torrentio.strem.fun" ]
     setting = ENV.fetch("STREAM_PROVIDER", "torrentio").to_s.downcase
-    urls = []
-
-    case setting
-    when "comet", "auto"
-      urls << CometService.comet_url if CometService.comet_url.present?
-      urls << TorrentioService::TORRENTIO_URL
-      urls << "https://torrentio.strem.fun"
-    else
-      urls << TorrentioService::TORRENTIO_URL
-      urls << "https://torrentio.strem.fun"
-    end
-
+    urls.unshift(CometService.comet_url) if %w[comet auto].include?(setting) && CometService.comet_url.present?
     urls.uniq
   end
 end

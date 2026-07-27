@@ -16,8 +16,8 @@ export class SubtitlePipeline {
     const track = this.player.subtitleTrackForStream(subtitleStream)
     if (track?.external !== true) return
 
-    const rawUrl = this.player.extractRawUrl()
-    if (!rawUrl) return
+    const source = this.player.sourceToken()
+    if (!source) return
 
     const durationSeconds = EXTERNAL_WINDOW_SECONDS
     const windowStart = Math.max(
@@ -27,7 +27,7 @@ export class SubtitlePipeline {
     const requestKey = this.player.subtitleRequestKey(subtitleStream, windowStart, durationSeconds)
     if (this.player.subtitlePrefetchResults.has(requestKey) || this.player.subtitlePrefetches.has(requestKey)) return
 
-    const url = this.player.subtitleRequestUrl(rawUrl, subtitleStream, windowStart, durationSeconds)
+    const url = this.player.subtitleRequestUrl(source, subtitleStream, windowStart, durationSeconds)
     const prefetch = this.player.fetchSubtitleResponse(url)
       .then((response) => {
         this.player.rememberPrefetchedSubtitleResponse(requestKey, response)
@@ -65,8 +65,8 @@ export class SubtitlePipeline {
   ) {
     if (!this.player.hasSubtitlesUrlValue || !this.player.textSubtitleSelected()) return
 
-    const rawUrl = this.player.extractRawUrl()
-    if (!rawUrl) return
+    const source = this.player.sourceToken()
+    if (!source) return
 
     const requestedSubtitleStream = this.player.selectedSubtitleStream
     const externalSubtitle = this.player.externalSubtitleSelected()
@@ -88,7 +88,7 @@ export class SubtitlePipeline {
     const requestKey = this.player.subtitleRequestKey(requestedSubtitleStream, windowStart, requestedDurationSeconds)
     const cachedPrefetch = this.player.subtitlePrefetchResults.get(requestKey)
     const pendingPrefetch = this.player.subtitlePrefetches.get(requestKey)
-    const url = this.player.subtitleRequestUrl(rawUrl, requestedSubtitleStream, windowStart, requestedDurationSeconds)
+    const url = this.player.subtitleRequestUrl(source, requestedSubtitleStream, windowStart, requestedDurationSeconds)
 
     try {
       const prefetchedResponse = cachedPrefetch || (pendingPrefetch ? await pendingPrefetch : null)
@@ -110,9 +110,9 @@ export class SubtitlePipeline {
     }
   }
 
-  requestUrl(rawUrl, subtitleStream, windowStart, durationSeconds) {
+  requestUrl(source, subtitleStream, windowStart, durationSeconds) {
     const url = new URL(this.player.subtitlesUrlValue, this.origin)
-    url.searchParams.set("url", rawUrl)
+    url.searchParams.set("source", source)
     url.searchParams.set("subtitle_stream", subtitleStream)
     url.searchParams.set("start_seconds", windowStart.toString())
     url.searchParams.set("duration_seconds", durationSeconds.toString())

@@ -16,7 +16,7 @@ class MediaProfileService
 
   def call
     started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-    media_info_thread = Thread.new { TranscodeService.probe_media_info(@input_url, headers: @headers) }
+    media_info_thread = Thread.new { Media::Probe.profile(@input_url, headers: @headers) }
     external_subtitles_thread = Thread.new { ExternalSubtitleService.search(**@subtitle_search) }
     media_info, external_subtitles = [ media_info_thread, external_subtitles_thread ].map(&:value)
     elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at
@@ -24,10 +24,11 @@ class MediaProfileService
 
     tracks = media_info.fetch(:media_tracks)
     video_stream = media_info.fetch(:video_stream)
-    subtitles = TranscodeService.selectable_subtitle_tracks(tracks.fetch(:subtitles, []) + external_subtitles)
+    subtitles = Media::Subtitles.selectable_tracks(tracks.fetch(:subtitles, []) + external_subtitles)
 
     ServiceResult.success(
-      tracks.merge(
+      MediaProfile.new(
+        audio: tracks.fetch(:audio, []),
         subtitles: subtitles,
         video_codec: video_stream[:codec_name].to_s.downcase,
         video_codec_tag: video_stream[:codec_tag].to_s.downcase,
@@ -66,9 +67,9 @@ class MediaProfileService
     return false unless width.positive? && height.positive?
     return HEVC_CODECS.include?(codec) unless codec == "h264"
 
-    width <= TranscodeService::MAX_COPY_VIDEO_WIDTH &&
-      height <= TranscodeService::MAX_COPY_VIDEO_HEIGHT &&
-      TranscodeService::SAFE_H264_PIXEL_FORMATS.include?(pixel_format)
+    width <= Media::Probe::MAX_COPY_VIDEO_WIDTH &&
+      height <= Media::Probe::MAX_COPY_VIDEO_HEIGHT &&
+      Media::Probe::SAFE_H264_PIXEL_FORMATS.include?(pixel_format)
   end
 
   def remux_direct_playable?(video_stream)

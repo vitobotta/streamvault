@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 class HlsController < ApplicationController
-  include StreamUrlValidation
+  include ResolvedSourceAccess
 
   # The start/stop endpoints require an authenticated user (they
   # access current_user and the RealDebrid API key).  The playlist
@@ -17,20 +17,13 @@ class HlsController < ApplicationController
   # Params: url, start_seconds, audio_stream, subtitle_stream
   # Returns: { session_id: "...", playlist_url: "/hls/<id>/playlist.m3u8" }
   def start
-    input_url = params[:url].to_s
-    unless valid_stream_url?(input_url) && verify_stream_url!
-      render json: { error: "Invalid stream URL" }, status: :bad_request
-      return
-    end
+    source = resolved_source
 
-    headers = {}
-    if current_user.has_realdebrid_key?
-      headers["Authorization"] = "Bearer #{current_user.realdebrid_api_key}"
-    end
+    headers = source_headers
 
-    session = HlsSession.create(
+    session = HlsSessionManager.create(
       user_id: current_user.id,
-      input_url: input_url,
+      input_url: source.url,
       headers: headers,
       start_seconds: params[:start_seconds].to_f,
       audio_stream: params[:audio_stream],
@@ -39,10 +32,15 @@ class HlsController < ApplicationController
       preferred_languages: current_user.preferred_stream_languages
     )
     playback_id = params[:playback_id].to_s.gsub(/[^a-zA-Z0-9_-]/, "").first(80).presence || "unknown"
-    Rails.logger.info("[HLS] playback_id=#{playback_id} session_id=#{session.id} started")
+    Rails.logger.info("[HLS] playback_id=#{playback_id} session_id=#{session.session_id} started")
 
-    render json: { session_id: session.id, playlist_url: "/hls/#{session.id}/playlist.m3u8" }
-  rescue TranscodeService::TranscodeError => e
+    render json: {
+      session_id: session.session_id,
+      playlist_url: "/hls/#{session.session_id}/playlist.m3u8"
+    }
+  rescue ResolvedSource::Invalid
+    render json: { error: "Invalid stream source" }, status: :bad_request
+  rescue Media::Transcoder::TranscodeError => e
     Rails.logger.error("[HLS] Failed to start: #{e.message}")
     render json: { error: e.message }, status: :bad_gateway
   end
@@ -52,17 +50,14 @@ class HlsController < ApplicationController
   # sending session cookies.  The session ID is an unguessable bearer
   # token that authorises the request.
   def playlist
-    session = HlsSession.find(params[:id])
+    session = HlsSessionManager.find(params[:id])
     unless session
       head :not_found
       return
     end
 
-    # If ffmpeg failed before producing any segments, return a
-    # descriptive error so the client can stop polling and show it.
-    error = HlsSession.error(params[:id])
-    if error
-      render json: { error: error }, status: :failed_dependency
+    if session.error_message.present?
+      render json: { error: session.error_message }, status: :failed_dependency
       return
     end
 
@@ -96,7 +91,7 @@ class HlsController < ApplicationController
   # block for up to SEGMENT_WAIT_SECONDS for the segment to appear,
   # so Safari's request simply waits until ffmpeg produces it.
   def segment
-    session = HlsSession.find(params[:id])
+    session = HlsSessionManager.find(params[:id])
     unless session
       head :not_found
       return
@@ -131,7 +126,7 @@ class HlsController < ApplicationController
 
   # POST /hls/:id/stop
   def stop
-    HlsSession.stop(params[:id])
+    HlsSessionManager.stop(params[:id])
     head :ok
   end
 end

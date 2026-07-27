@@ -14,7 +14,7 @@ class CreateLibraryEntries < ActiveRecord::Migration[8.1]
       t.timestamps
     end
 
-    add_index :library_entries, [:user_id, :imdb_id], unique: true
+    add_index :library_entries, [ :user_id, :imdb_id ], unique: true
     add_index :library_entries, :content_type
     add_index :library_entries, :watch_status
   end

@@ -1,3 +1,2 @@
-web: bundle exec puma -t 5:5 -p 5000 -e production
-worker: bundle exec rake solid_queue:start
+web: SOLID_QUEUE_IN_PUMA=true bundle exec puma -t 5:5 -p 5000 - b 0.0.0.0 -e production
 release: bundle exec rails db:migrate

@@ -2,8 +2,10 @@ require 'rails_helper'
 
 RSpec.describe "Home", type: :request do
   let(:user) { create(:user) }
+  let(:cache) { ActiveSupport::Cache::MemoryStore.new }
 
   before do
+    allow(Rails).to receive(:cache).and_return(cache)
     # Stub all Cinemeta catalog endpoints used by HomeController
     %w[movie series].each do |type|
       %w[top year imdbRating].each do |cat|
@@ -21,10 +23,10 @@ RSpec.describe "Home", type: :request do
 
     it "item disappears from Continue Watching after delete" do
       # With the upsert design, one row per content.
-      inception = create(:watch_history_entry, :movie, user: user, imdb_id: "tt1375666",
-             title: "Inception", progress_percentage: 50, watched_at: 1.minute.ago)
-      create(:watch_history_entry, :movie, user: user, imdb_id: "tt0903747",
-             title: "Breaking Bad", progress_percentage: 20, watched_at: 2.minutes.ago)
+      inception = create(:playback_progress, :movie, user: user, imdb_id: "tt1375666",
+        title: "Inception", progress_seconds: 3_600, duration_seconds: 7_200, watched_at: 1.minute.ago)
+      create(:playback_progress, :movie, user: user, imdb_id: "tt0903747",
+        title: "Breaking Bad", progress_seconds: 1_200, duration_seconds: 6_000, watched_at: 2.minutes.ago)
 
       # Pre-condition: both titles appear on home.
       get root_path
@@ -59,17 +61,23 @@ RSpec.describe "Home", type: :request do
         expect(response).to have_http_status(:ok)
       end
 
-      it "does not show other users' recommendations (TST-18)" do
+      it "does not show another user's cached recommendations" do
         other_user = create(:user)
-        create(:recommendation, user: other_user, title: "OTHER_USER_REC_TITLE")
+        cache.write("recommendations/user/#{other_user.id}", [
+          { tmdb_id: 1, imdb_id: "tt0000123", title: "OTHER_USER_REC_TITLE", type: "movie" }
+        ])
+
         get root_path
+
         expect(response.body).not_to include("OTHER_USER_REC_TITLE")
       end
 
-      it "does not show stored recommendations after the user watches them" do
-        create(:watch_history_entry, :movie, user: user, imdb_id: "tt0468569")
-        create(:recommendation, user: user, imdb_id: "tt0468569", title: "ALREADY_WATCHED_REC")
-        create(:recommendation, user: user, imdb_id: "tt0000123", title: "UNSEEN_REC")
+      it "filters watched titles from cached recommendations" do
+        create(:playback_progress, user: user, imdb_id: "tt0468569")
+        cache.write("recommendations/user/#{user.id}", [
+          { tmdb_id: 1, imdb_id: "tt0468569", title: "ALREADY_WATCHED_REC", type: "movie" },
+          { tmdb_id: 2, imdb_id: "tt0000123", title: "UNSEEN_REC", type: "movie" }
+        ])
 
         get root_path
 

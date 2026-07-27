@@ -2,23 +2,17 @@
 
 class DirectStreamController < ApplicationController
   include ActionController::Live
-  include StreamUrlValidation
+  include ResolvedSourceAccess
 
   before_action :authenticate_user!
 
   MAX_REDIRECTS = 5
 
-  # GET /direct_stream?url=... — transparent HTTP proxy for direct play.
-  # Forwards the request to the RealDebrid CDN with auth headers and Range
+  # GET /direct_stream?source=... — transparent HTTP proxy for direct play.
+  # Forwards the protected RealDebrid source with auth headers and Range
   # passthrough, so the browser's <video> element downloads at network speed
   # and seeks via Range requests — no ffmpeg involved.
   def show
-    input_url = params[:url].to_s
-    unless valid_stream_url?(input_url) && verify_stream_url!
-      head :bad_request
-      return
-    end
-
     range = request.headers["HTTP_RANGE"]
     playback_id = normalized_playback_id(params[:playback_id])
     started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
@@ -26,24 +20,22 @@ class DirectStreamController < ApplicationController
     expected_bytes = nil
     upstream_status = nil
     outcome = "complete"
+    begin
+      source = resolved_source
 
     response.headers["Cache-Control"] = "no-cache"
     response.headers["Accept-Ranges"] = "bytes"
     response.headers["X-Accel-Buffering"] = "no"
 
-    uri = URI.parse(input_url)
+    uri = URI.parse(source.url)
     http = Net::HTTP.new(uri.host, uri.port)
     http.use_ssl = uri.scheme == "https"
     http.read_timeout = 60
     http.open_timeout = 10
 
-    request_headers = {}
-    if current_user.has_realdebrid_key?
-      request_headers["Authorization"] = "Bearer #{current_user.realdebrid_api_key}"
-    end
+    request_headers = source_headers
     request_headers["Range"] = range if range
 
-    begin
       http.request_get(uri.request_uri, request_headers) do |upstream|
         upstream_status = upstream.code.to_i
         expected_bytes = Integer(upstream["Content-Length"], exception: false)
@@ -64,6 +56,9 @@ class DirectStreamController < ApplicationController
           "written_bytes=#{written_bytes}"
         )
       end
+    rescue ResolvedSource::Invalid
+      outcome = "invalid_source"
+      response.status = :bad_request unless response.committed?
     rescue ActionController::Live::ClientDisconnected => e
       outcome = "client_disconnected"
       Rails.logger.info("[DirectStream] playback_id=#{playback_id} client_disconnect=#{e.class}")

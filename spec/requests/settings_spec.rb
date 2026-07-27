@@ -45,7 +45,7 @@ RSpec.describe "Settings", type: :request do
     end
 
     it "updates preferred languages" do
-      patch settings_path, params: { user: { preferred_languages: ["ENG", "FRENCH"] } }
+      patch settings_path, params: { user: { preferred_languages: [ "ENG", "FRENCH" ] } }
       expect(response).to redirect_to(settings_path)
       expect(user.reload.preferred_languages).to include("ENG", "FRENCH")
     end

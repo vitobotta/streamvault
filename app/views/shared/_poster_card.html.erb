@@ -1,15 +1,43 @@
-<div class="poster-card group shrink-0" style="width: 160px">
+<%
+  poster_url = item.respond_to?(:poster_url) ? item.poster_url : item[:poster_url]
+  title = item.respond_to?(:title) ? item.title : item[:title]
+  year = item.respond_to?(:year) ? item.year : item[:year]
+  imdb_id = item.respond_to?(:imdb_id) ? item.imdb_id : item[:imdb_id]
+  width = local_assigns.fetch(:width, 160)
+  subtitle = local_assigns.fetch(:subtitle, year)
+  progress = local_assigns.fetch(:progress, 0).to_i
+  controls = local_assigns[:controls]
+%>
+<div class="poster-card group shrink-0" style="width: <%= width %>px">
   <%= link_to link_path, data: { page_loader: "link" } do %>
-    <% if item[:poster_url] %>
-      <img src="<%= item[:poster_url] %>" alt="<%= item[:title] %>" loading="lazy" class="w-full aspect-[2/3] object-cover">
+    <% if poster_url.present? %>
+      <img src="<%= poster_url %>" alt="<%= title %>" loading="lazy" class="w-full aspect-[2/3] object-cover">
     <% else %>
       <div class="w-full aspect-[2/3] bg-sv-surface flex items-center justify-center">
         <svg class="w-12 h-12 text-sv-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>
       </div>
     <% end %>
     <div class="p-2">
-      <h3 class="text-xs font-medium text-white truncate"><%= item[:title] %></h3>
-      <p class="text-xs text-sv-text-muted mt-0.5"><%= item[:year] %></p>
+      <h3 class="text-xs font-medium text-white truncate"><%= title %></h3>
+      <p class="text-xs text-sv-text-muted mt-0.5"><%= subtitle %></p>
+    </div>
+    <% if progress.positive? %>
+      <div class="card-progress" aria-label="<%= progress %>% watched">
+        <div class="card-progress-bar" style="width: <%= progress %>%"></div>
+      </div>
+    <% end %>
+  <% end %>
+
+  <% if controls.present? %>
+    <div class="absolute top-2 right-2 [@media(hover:hover)]:opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+      <% if controls == :wishlist %>
+        <%= button_to collection_path, method: :patch, params: { state: "library", collection_entry: { imdb_id: imdb_id } }, class: "w-7 h-7 bg-black/60 rounded-full flex items-center justify-center text-white hover:bg-sv-accent", title: "Move to library", aria: { label: "Move #{title} to library" } do %>
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        <% end %>
+      <% end %>
+      <%= button_to collection_path, method: :patch, params: { state: "none", collection_entry: { imdb_id: imdb_id } }, class: "w-7 h-7 bg-black/60 rounded-full flex items-center justify-center text-white hover:bg-red-600", title: "Remove", aria: { label: "Remove #{title} from #{controls}" } do %>
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+      <% end %>
     </div>
   <% end %>
 </div>

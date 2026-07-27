@@ -4,22 +4,16 @@ class WatchHistoryController < ApplicationController
   before_action :authenticate_user!
 
   def index
-    @page = (params[:page] || 1).to_i.clamp(1, Float::INFINITY)
-    @per_page = (params[:per_page] || 25).to_i.clamp(1, 100)
-
-    # Use policy_scope for consistency with library/wishlist/home — if a
-    # future policy adds a scope condition (e.g. hide soft-deleted), this
-    # controller will honour it rather than silently bypassing it.
-    entries = policy_scope(WatchHistoryEntry).recently_watched
-
-    @total = entries.count
-    @total_pages = (@total.to_f / @per_page).ceil
-    @page = @page.clamp(1, [ @total_pages, 1 ].max)
-    @entries = entries.offset((@page - 1) * @per_page).limit(@per_page)
+    @pagination = PageSlice.from_relation(
+      current_user.playback_progresses.recently_watched,
+      page: params.fetch(:page, 1),
+      per_page: params.fetch(:per_page, 25)
+    )
+    @entries = @pagination.items
   end
 
   def destroy
-    entry = current_user.watch_history_entries.find(params[:id])
+    entry = current_user.playback_progresses.find(params[:id])
 
     result = WatchHistoryCleanupService.remove(user: current_user, entry: entry)
     if result.failure?

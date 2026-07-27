@@ -20,8 +20,8 @@
     <% end %>
 
     <%# Tailwind compiled CSS + custom styles %>
-    <%= stylesheet_link_tag "tailwind", "data-turbo-track": "reload" %>
-    <%= stylesheet_link_tag "application", "data-turbo-track": "reload" %>
+    <%= stylesheet_link_tag "tailwind" %>
+    <%= stylesheet_link_tag "application" %>
     <%= javascript_importmap_tags %>
   </head>
 
@@ -139,10 +139,7 @@
             </div>
           <% end %>
 
-          <%# Turbo Frame for main content %>
-          <turbo-frame id="content" data-turbo-cache="false">
-            <%= yield %>
-          </turbo-frame>
+          <%= yield %>
         </main>
 
         <%# Mobile bottom nav %>

@@ -1,0 +1,17 @@
+{
+  "ignored_warnings": [
+    {
+      "fingerprint": "6ce3f648c394b670d30b398a0b23a4dca89800c758166febb029e4b7369dfaf5",
+      "note": "HLS segment paths are built by HlsSession#segment_path from the persisted record ID and Integer(segment), never from the bearer session ID or raw segment parameter."
+    },
+    {
+      "fingerprint": "95b8e4a3539f734ae75852b62026d40032109ceb7f18004745665a3b667c29cc",
+      "note": "HlsSession#storage_path derives the directory exclusively from the integer database ID under HlsSession::HLS_ROOT; no path is persisted or accepted from a request."
+    },
+    {
+      "fingerprint": "d28b0183c1b63bdc8912c173ed755b3dbfe223e4c337b131c2efcd13a551230b",
+      "note": "HlsSession#playlist_path is a fixed filename under storage_path, which is derived from the integer database ID rather than the bearer session parameter."
+    }
+  ],
+  "updated": "2026-07-22 11:38:00 +0300"
+}

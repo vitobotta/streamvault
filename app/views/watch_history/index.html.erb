@@ -2,7 +2,7 @@
   <div class="flex items-center justify-between mb-6">
     <h1 class="text-3xl font-bold text-white">Watch History</h1>
     <% if @entries.any? %>
-      <%= button_to "Clear History", clear_all_watch_history_index_path, method: :delete, class: "btn-secondary text-sm", data: { turbo_confirm: "Clear all watch history?" } %>
+      <%= button_to "Clear History", clear_all_watch_history_index_path, method: :delete, class: "btn-secondary text-sm", data: { confirm: "Clear all watch history?" } %>
     <% end %>
   </div>
 
@@ -10,11 +10,11 @@
     <%# Result count and page size %>
     <div class="flex items-center justify-between mb-4">
       <p class="text-sm text-sv-text-muted">
-        Showing <%= (@page - 1) * @per_page + 1 %>&ndash;<%= [@page * @per_page, @total].min %> of <%= @total %>
+        Showing <%= @pagination.first_item_number %>&ndash;<%= @pagination.last_item_number %> of <%= @pagination.total %>
       </p>
       <div class="flex items-center gap-1">
         <% [25, 50, 100].each do |size| %>
-          <% if size == @per_page %>
+          <% if size == @pagination.per_page %>
             <span class="px-2 py-1 rounded bg-sv-accent text-white text-xs font-medium"><%= size %></span>
           <% else %>
             <%= link_to size, watch_history_index_path(per_page: size, page: 1), class: "px-2 py-1 rounded bg-sv-surface text-sv-text-muted hover:text-white text-xs transition-colors" %>
@@ -26,14 +26,14 @@
     <div class="space-y-2">
       <% @entries.each do |entry| %>
         <div class="relative flex items-center gap-4 p-3 bg-sv-surface rounded-lg hover:bg-sv-surface-hover transition-colors">
-          <%= link_to content_path(type: entry.episode? ? "show" : "movie", imdb_id: entry.show_imdb_id || entry.imdb_id, season: entry.season_number, episode: entry.episode_number), class: "absolute inset-0 rounded-lg", data: { page_loader: "link" }, aria: { label: entry.title } %>
+          <%= link_to content_path(type: entry.episode? ? "show" : "movie", imdb_id: entry.imdb_id, season: entry.season_number, episode: entry.episode_number), class: "absolute inset-0 rounded-lg", data: { page_loader: "link" }, aria: { label: entry.title } %>
           <% if entry.poster_url %>
             <img src="<%= entry.poster_url %>" alt="<%= entry.title %>" class="w-12 h-18 object-cover rounded pointer-events-none">
           <% end %>
           <div class="flex-1 min-w-0">
             <h3 class="text-sm font-medium text-white truncate"><%= entry.title %></h3>
             <% if entry.episode? %>
-              <p class="text-xs text-sv-text-muted">S<%= entry.season_number.to_s.rjust(2, '0') %>E<%= entry.episode_number.to_s.rjust(2, '0') %> · <%= entry.show_title %></p>
+              <p class="text-xs text-sv-text-muted">S<%= entry.season_number.to_s.rjust(2, '0') %>E<%= entry.episode_number.to_s.rjust(2, '0') %></p>
             <% end %>
             <div class="mt-1 h-1 bg-sv-border rounded-full overflow-hidden">
               <div class="h-full bg-sv-accent rounded-full" style="width: <%= entry.progress_percentage %>%"></div>
@@ -49,31 +49,7 @@
       <% end %>
     </div>
 
-    <%# Pagination %>
-    <% if @total_pages > 1 %>
-      <nav class="flex items-center justify-center gap-2 mt-8">
-        <% if @page > 1 %>
-          <%= link_to "&larr; Previous".html_safe, watch_history_index_path(page: @page - 1, per_page: @per_page), class: "px-3 py-2 rounded-lg bg-sv-surface text-sv-text hover:bg-sv-surface-hover transition-colors text-sm" %>
-        <% end %>
-        <% visible = [] %>
-        <% visible << 1 unless @total_pages <= 1 %>
-        <% ([@page - 2, 2].max..[@page + 2, @total_pages - 1].min).each { |p| visible << p } %>
-        <% visible << @total_pages if @total_pages > 1 %>
-        <% prev_p = 0 %>
-        <% visible.uniq.sort.each do |p| %>
-          <% if p - prev_p > 1 %><span class="px-2 text-sv-text-muted">&hellip;</span><% end %>
-          <% if p == @page %>
-            <span class="px-3 py-2 rounded-lg bg-sv-accent text-white text-sm font-medium"><%= p %></span>
-          <% else %>
-            <%= link_to p, watch_history_index_path(page: p, per_page: @per_page), class: "px-3 py-2 rounded-lg bg-sv-surface text-sv-text hover:bg-sv-surface-hover transition-colors text-sm" %>
-          <% end %>
-          <% prev_p = p %>
-        <% end %>
-        <% if @page < @total_pages %>
-          <%= link_to "Next &rarr;".html_safe, watch_history_index_path(page: @page + 1, per_page: @per_page), class: "px-3 py-2 rounded-lg bg-sv-surface text-sv-text hover:bg-sv-surface-hover transition-colors text-sm" %>
-        <% end %>
-      </nav>
-    <% end %>
+    <%= render "shared/pagination", pagination: @pagination, label: "Watch history" %>
   <% else %>
     <div class="text-center py-16">
       <svg class="w-16 h-16 text-sv-text-muted mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>

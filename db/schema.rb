@@ -10,27 +10,27 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_06_26_102104) do
-  create_table "episode_progresses", force: :cascade do |t|
+ActiveRecord::Schema[8.1].define(version: 2026_07_22_050003) do
+  create_table "collection_entries", force: :cascade do |t|
+    t.integer "content_type", default: 0, null: false
     t.datetime "created_at", null: false
-    t.integer "duration_seconds", default: 0, null: false
-    t.integer "episode_number", null: false
-    t.datetime "last_watched_at", null: false
-    t.integer "progress_seconds", default: 0, null: false
-    t.integer "season_number", null: false
-    t.string "show_imdb_id", null: false
-    t.string "show_title", null: false
+    t.string "imdb_id", null: false
+    t.integer "list_state", default: 1, null: false
+    t.string "poster_url"
+    t.string "title", null: false
     t.datetime "updated_at", null: false
     t.integer "user_id", null: false
-    t.index ["user_id", "show_imdb_id", "season_number", "episode_number"], name: "idx_episode_progresses_unique", unique: true
-    t.index ["user_id", "show_imdb_id"], name: "index_episode_progresses_on_user_id_and_show_imdb_id"
-    t.index ["user_id"], name: "index_episode_progresses_on_user_id"
+    t.integer "year"
+    t.index ["content_type"], name: "index_collection_entries_on_content_type"
+    t.index ["user_id", "imdb_id"], name: "idx_collection_entries_unique", unique: true
+    t.index ["user_id", "list_state"], name: "idx_collection_entries_state"
+    t.index ["user_id"], name: "index_collection_entries_on_user_id"
   end
 
   create_table "hls_sessions", force: :cascade do |t|
     t.datetime "created_at", null: false
+    t.text "error_message"
     t.integer "pid"
-    t.string "segment_dir", null: false
     t.string "session_id", null: false
     t.datetime "updated_at", null: false
     t.integer "user_id", null: false
@@ -38,38 +38,23 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_26_102104) do
     t.index ["user_id"], name: "index_hls_sessions_on_user_id"
   end
 
-  create_table "library_entries", force: :cascade do |t|
+  create_table "playback_progresses", force: :cascade do |t|
     t.integer "content_type", default: 0, null: false
     t.datetime "created_at", null: false
-    t.integer "current_episode"
-    t.integer "current_season"
+    t.integer "duration_seconds", default: 0, null: false
+    t.integer "episode_number", default: 0, null: false
     t.string "imdb_id", null: false
     t.string "poster_url"
+    t.integer "progress_seconds", default: 0, null: false
+    t.integer "season_number", default: 0, null: false
     t.string "title", null: false
     t.datetime "updated_at", null: false
     t.integer "user_id", null: false
-    t.integer "watch_status", default: 0, null: false
-    t.integer "year"
-    t.index ["content_type"], name: "index_library_entries_on_content_type"
-    t.index ["user_id", "imdb_id"], name: "index_library_entries_on_user_id_and_imdb_id", unique: true
-    t.index ["user_id"], name: "index_library_entries_on_user_id"
-    t.index ["watch_status"], name: "index_library_entries_on_watch_status"
-  end
-
-  create_table "recommendations", force: :cascade do |t|
-    t.string "content_type"
-    t.datetime "created_at", null: false
-    t.string "imdb_id", null: false
-    t.integer "position", default: 0, null: false
-    t.string "poster_url"
-    t.string "title"
-    t.integer "tmdb_id", null: false
-    t.datetime "updated_at", null: false
-    t.integer "user_id", null: false
-    t.string "year"
-    t.index ["user_id", "position"], name: "index_recommendations_on_user_id_and_position"
-    t.index ["user_id", "tmdb_id"], name: "index_recommendations_on_user_id_and_tmdb_id", unique: true
-    t.index ["user_id"], name: "index_recommendations_on_user_id"
+    t.datetime "watched_at", null: false
+    t.index ["user_id", "imdb_id", "content_type", "season_number", "episode_number"], name: "idx_playback_progresses_unique", unique: true
+    t.index ["user_id", "imdb_id"], name: "idx_playback_progresses_content"
+    t.index ["user_id"], name: "index_playback_progresses_on_user_id"
+    t.index ["watched_at"], name: "index_playback_progresses_on_watched_at"
   end
 
   create_table "solid_cache_entries", force: :cascade do |t|
@@ -220,52 +205,13 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_26_102104) do
     t.index ["reset_password_token"], name: "index_users_on_reset_password_token", unique: true
   end
 
-  create_table "watch_history_entries", force: :cascade do |t|
-    t.integer "content_type", default: 0, null: false
-    t.datetime "created_at", null: false
-    t.integer "duration_seconds", default: 0, null: false
-    t.integer "episode_number", default: 0, null: false
-    t.string "imdb_id", null: false
-    t.string "poster_url"
-    t.integer "progress_percentage", default: 0, null: false
-    t.integer "progress_seconds", default: 0, null: false
-    t.integer "season_number", default: 0, null: false
-    t.string "show_imdb_id"
-    t.string "show_title"
-    t.string "title", null: false
-    t.datetime "updated_at", null: false
-    t.integer "user_id", null: false
-    t.datetime "watched_at", null: false
-    t.index ["show_imdb_id"], name: "index_watch_history_entries_on_show_imdb_id"
-    t.index ["user_id", "imdb_id", "content_type", "season_number", "episode_number"], name: "idx_watch_history_entries_unique", unique: true
-    t.index ["user_id", "imdb_id"], name: "index_watch_history_entries_on_user_id_and_imdb_id"
-    t.index ["user_id"], name: "index_watch_history_entries_on_user_id"
-    t.index ["watched_at"], name: "index_watch_history_entries_on_watched_at"
-  end
-
-  create_table "wishlist_entries", force: :cascade do |t|
-    t.integer "content_type", default: 0, null: false
-    t.datetime "created_at", null: false
-    t.string "imdb_id", null: false
-    t.string "poster_url"
-    t.string "title", null: false
-    t.datetime "updated_at", null: false
-    t.integer "user_id", null: false
-    t.integer "year"
-    t.index ["user_id", "imdb_id"], name: "index_wishlist_entries_on_user_id_and_imdb_id", unique: true
-    t.index ["user_id"], name: "index_wishlist_entries_on_user_id"
-  end
-
-  add_foreign_key "episode_progresses", "users"
+  add_foreign_key "collection_entries", "users"
   add_foreign_key "hls_sessions", "users"
-  add_foreign_key "library_entries", "users"
-  add_foreign_key "recommendations", "users"
+  add_foreign_key "playback_progresses", "users"
   add_foreign_key "solid_queue_blocked_executions", "solid_queue_jobs", column: "job_id", on_delete: :cascade
   add_foreign_key "solid_queue_claimed_executions", "solid_queue_jobs", column: "job_id", on_delete: :cascade
   add_foreign_key "solid_queue_failed_executions", "solid_queue_jobs", column: "job_id", on_delete: :cascade
   add_foreign_key "solid_queue_ready_executions", "solid_queue_jobs", column: "job_id", on_delete: :cascade
   add_foreign_key "solid_queue_recurring_executions", "solid_queue_jobs", column: "job_id", on_delete: :cascade
   add_foreign_key "solid_queue_scheduled_executions", "solid_queue_jobs", column: "job_id", on_delete: :cascade
-  add_foreign_key "watch_history_entries", "users"
-  add_foreign_key "wishlist_entries", "users"
 end

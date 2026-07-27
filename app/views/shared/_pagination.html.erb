@@ -1,0 +1,25 @@
+<% if pagination.total_pages > 1 %>
+  <nav class="flex items-center justify-center gap-2 mt-8" aria-label="<%= label %> pagination">
+    <% query = request.query_parameters.except("page", "per_page") %>
+    <% if pagination.page > 1 %>
+      <%= link_to "← Previous", url_for(query.merge(page: pagination.page - 1, per_page: pagination.per_page)), class: "px-3 py-2 rounded-lg bg-sv-surface text-sv-text hover:bg-sv-surface-hover transition-colors text-sm" %>
+    <% end %>
+
+    <% previous_page = 0 %>
+    <% pagination.visible_pages.each do |page| %>
+      <% if page - previous_page > 1 %>
+        <span class="px-2 text-sv-text-muted" aria-hidden="true">…</span>
+      <% end %>
+      <% if page == pagination.page %>
+        <span class="px-3 py-2 rounded-lg bg-sv-accent text-white text-sm font-medium" aria-current="page"><%= page %></span>
+      <% else %>
+        <%= link_to page, url_for(query.merge(page: page, per_page: pagination.per_page)), class: "px-3 py-2 rounded-lg bg-sv-surface text-sv-text hover:bg-sv-surface-hover transition-colors text-sm", aria: { label: "Page #{page}" } %>
+      <% end %>
+      <% previous_page = page %>
+    <% end %>
+
+    <% if pagination.page < pagination.total_pages %>
+      <%= link_to "Next →", url_for(query.merge(page: pagination.page + 1, per_page: pagination.per_page)), class: "px-3 py-2 rounded-lg bg-sv-surface text-sv-text hover:bg-sv-surface-hover transition-colors text-sm" %>
+    <% end %>
+  </nav>
+<% end %>

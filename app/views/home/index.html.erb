@@ -1,7 +1,7 @@
 <div class="px-6 py-8">
   <%# Search bar %>
   <div class="mb-8">
-    <%= form_tag search_index_path, method: :get, class: "max-w-2xl", data: { turbo_frame: "_top", page_loader: "search" } do %>
+    <%= form_tag search_index_path, method: :get, class: "max-w-2xl", data: { page_loader: "search" } do %>
       <div class="flex gap-3">
         <%= text_field_tag :q, params[:q], class: "input-field flex-1", placeholder: "Search for movies, TV shows..." %>
         <%= submit_tag "Search", class: "btn-primary cursor-pointer" %>
@@ -33,7 +33,7 @@
         <div data-carousel-target="track" class="flex gap-4 overflow-x-auto scrollbar-hide pb-2">
           <% @continue_watching.each do |item| %>
             <div class="poster-card group shrink-0" style="width: 180px">
-              <%= link_to resume_streaming_index_path(type: item[:content_type] == "episode" ? "show" : "movie", show_imdb_id: item[:imdb_id], imdb_id: item[:imdb_id]), data: { page_loader: "link" } do %>
+              <%= link_to resume_streaming_index_path(type: item[:content_type] == "episode" ? "show" : "movie", imdb_id: item[:imdb_id]), data: { page_loader: "link" } do %>
                 <% if item[:poster_url] %>
                   <img src="<%= item[:poster_url] %>" alt="<%= item[:title] %>" loading="lazy" class="w-full aspect-[2/3] object-cover">
                 <% else %>

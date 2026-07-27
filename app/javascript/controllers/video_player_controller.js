@@ -1,11 +1,6 @@
 import { Controller } from "@hotwired/stimulus"
 import { WebVttParser } from "player/web_vtt_parser"
-import { ProgressReporter } from "player/progress_reporter"
-import { SubtitlePipeline } from "player/subtitle_pipeline"
-import { MseBufferManager } from "player/mse_buffer_manager"
-import { HlsSessionClient } from "player/hls_session_client"
-import { PlaybackRecoveryMonitor } from "player/playback_recovery_monitor"
-import { PlaybackEngine } from "player/playback_engine"
+import { PlaybackCoordinator } from "player/playback_coordinator"
 
 const MIN_VALID_DURATION_SECONDS = 60
 const SUBTITLE_STARTUP_WINDOW_SECONDS = 5
@@ -61,7 +56,7 @@ export default class extends Controller {
   }
   static get values() {
     return {
-      streamingUrl: String, directUrl: String, directStreamUrl: String, filename: String, imdbId: String, type: String,
+      streamingUrl: String, source: String, directStreamUrl: String, filename: String, imdbId: String, type: String,
       directPlayHint: Boolean,
       season: String, episode: String, resumeAt: String, startSeconds: Number,
       title: String, duration: Number, posterUrl: String,
@@ -105,7 +100,7 @@ export default class extends Controller {
     this.directPlayActive = false
     this.primedDirectPlayUrl = null
     this.startupOverlayHideTimer = null
-    this.hlsPlayPromptCleanup = null
+    this.playPromptCleanup = null
     this.dragMoveHandler = null
     this.suppressNextSeekClick = false
     this.suppressSeekClickTimer = null
@@ -151,11 +146,10 @@ export default class extends Controller {
     this.playbackId = globalThis.crypto?.randomUUID?.() ||
       `${Date.now()}-${Math.random().toString(16).slice(2)}`
 
-    this.ensureVideoSource()
 
     // Show source info
     this.sourceInfoTarget.classList.remove("hidden")
-    this.sourceUrlTarget.textContent = this.streamingUrlValue
+    this.sourceUrlTarget.textContent = "Protected RealDebrid source"
     this.sourceFilenameTarget.textContent = this.filenameValue || "Unknown"
     this.showOverlayUi()
     this.element.addEventListener("mousemove", this.mouseMoveHandler)
@@ -189,6 +183,7 @@ export default class extends Controller {
     this.updateDurationDisplay()
     this.onTimeUpdate()
     this.syncStartupOverlay()
+    this.playbackCoordinator().connect()
     this.probeDuration()
 
     // Save progress on page unload — but skip if navigateBack already
@@ -196,18 +191,15 @@ export default class extends Controller {
     this.beforeUnloadHandler = () => { if (!this.navigatingAway) this.saveProgressSync() }
     window.addEventListener("beforeunload", this.beforeUnloadHandler)
 
-    // Track progress every 5s
-    this.startProgressTracking()
   }
 
   disconnect() {
-    this.stopHlsSession()
-    this.stopProgressTracking()
+    this.playbackCoordinator().disconnect()
     // Save progress only if navigateBack hasn't already done it.
     if (!this.navigatingAway) this.saveProgressSync()
     this.clearUiHideTimer()
     this.clearStartupOverlayTimer()
-    this.clearHlsPlayPrompt()
+    this.clearPlayPrompt()
     this.clearSuppressSeekClickTimer()
     this.clearStallWatchdog()
     clearTimeout(this.bufferingOverlayTimer)
@@ -215,7 +207,6 @@ export default class extends Controller {
     clearTimeout(this.rebufferDeadlineTimer)
     clearTimeout(this.bufferAheadDeadlineTimer)
     clearTimeout(this.prematureEndRecoveryTimer)
-    this.stopProgressWatchdog()
     this.playbackStarted = false
     this.bufferAheadDeadline = null
     this.rebufferDeadline = null
@@ -259,10 +250,10 @@ export default class extends Controller {
     if (this.validDuration(this.knownDuration)) return
 
     try {
-      const rawUrl = this.extractRawUrl()
-      if (!rawUrl) return
+      const source = this.sourceToken()
+      if (!source) return
 
-      const response = await fetch(`/transcode/duration?url=${encodeURIComponent(rawUrl)}`)
+      const response = await fetch(`/transcode/duration?source=${encodeURIComponent(source)}`)
       const data = await response.json()
       const probedDuration = Number(data.duration)
       if (this.validDuration(probedDuration)) {
@@ -277,10 +268,12 @@ export default class extends Controller {
     }
   }
 
-  extractRawUrl() {
+  sourceToken() {
+    if (this.hasSourceValue && this.sourceValue) return this.sourceValue
+
     try {
       const url = new URL(this.streamingUrlValue, window.location.origin)
-      return url.searchParams.get("url")
+      return url.searchParams.get("source")
     } catch {
       return null
     }
@@ -300,19 +293,23 @@ export default class extends Controller {
     url.searchParams.set("playback_id", this.playbackId)
     return url.pathname + url.search
   }
-  playbackEngine() {
-    this._playbackEngine ||= new PlaybackEngine(this, {
+  playbackCoordinator() {
+    this._playbackCoordinator ||= new PlaybackCoordinator(this, {
+      fetcher: (...args) => fetch(...args),
+      documentRoot: document,
+      origin: window.location.origin,
       userAgent: () => globalThis.navigator?.userAgent || "",
       createMediaSource: () => new MediaSource(),
       createObjectUrl: (value) => URL.createObjectURL(value),
       revokeObjectUrl: (value) => URL.revokeObjectURL(value)
     })
-    return this._playbackEngine
+    return this._playbackCoordinator
   }
 
-  async ensureVideoSource() {
-    return this.playbackEngine().ensureSource()
+  playbackEngine() {
+    return this.playbackCoordinator().engine
   }
+
 
   primeDirectPlay() {
     return this.playbackEngine().primeDirectPlay()
@@ -398,7 +395,7 @@ export default class extends Controller {
     const directUrl = this.urlWithPlaybackId(this.directStreamUrlValue)
     const play = () => {
       const promise = this.videoTarget.play()
-      if (promise?.catch) promise.catch(() => {})
+      if (promise?.catch) promise.catch((error) => this.handleAutoplayFailure(error))
     }
     const seekAndPlay = () => {
       if (this.startSecondsValue <= 0) {
@@ -490,13 +487,13 @@ export default class extends Controller {
   }
 
   async loadRemuxSeekPlan(targetSeconds, signal = null) {
-    const rawUrl = this.extractRawUrl()
-    if (!rawUrl) return null
+    const source = this.sourceToken()
+    if (!source) return null
 
     try {
       const endpoint = this.hasSeekUrlValue ? this.seekUrlValue : "/transcode/seek"
       const url = new URL(endpoint, window.location.origin)
-      url.searchParams.set("url", rawUrl)
+      url.searchParams.set("source", source)
       url.searchParams.set("start_seconds", targetSeconds)
       const response = await fetch(url.pathname + url.search, {
         headers: { "Accept": "application/json" },
@@ -729,26 +726,22 @@ export default class extends Controller {
   }
 
   hlsSessionClient() {
-    this._hlsSessionClient ||= new HlsSessionClient(this, {
-      fetcher: (...args) => fetch(...args),
-      documentRoot: document
-    })
-    return this._hlsSessionClient
+    return this.playbackCoordinator().hls
   }
 
   async startHlsPlayback() {
     return this.hlsSessionClient().start()
   }
 
-  handleHlsAutoplayFailure(error) {
+  handleAutoplayFailure(error) {
     const policyBlocked = error?.name === "NotAllowedError"
     if (policyBlocked) {
-      console.info("HLS: Safari requires a tap to start audible playback")
+      console.info("Playback: Safari requires a tap to start audible playback")
     } else {
-      console.warn("HLS: autoplay failed, showing play prompt", error)
+      console.warn("Playback: autoplay failed, showing play prompt", error)
     }
 
-    this.showHlsPlayPrompt({
+    this.showPlayPrompt({
       explainAutoplay: policyBlocked && this.shouldShowSafariAutoplayGuidance()
     })
   }
@@ -773,10 +766,10 @@ export default class extends Controller {
     }
   }
 
-  showHlsPlayPrompt({ explainAutoplay = false } = {}) {
+  showPlayPrompt({ explainAutoplay = false } = {}) {
     if (!this.hasStartupOverlayTarget) return
 
-    this.clearHlsPlayPrompt()
+    this.clearPlayPrompt()
     const overlay = this.startupOverlayTarget
     const status = this.hasStartupStatusTarget ? this.startupStatusTarget : null
     const guidance = this.hasAutoplayGuidanceTarget ? this.autoplayGuidanceTarget : null
@@ -832,10 +825,10 @@ export default class extends Controller {
         // A resolved play() means the browser accepted and started playback.
         // Safari can omit or delay the matching "playing" event, so do not
         // leave the blocking startup overlay waiting on that event forever.
-        this.clearHlsPlayPrompt()
+        this.clearPlayPrompt()
         this.hideStartupOverlay()
       }).catch((playError) => {
-        console.warn("HLS: playback failed after user gesture", playError)
+        console.warn("Playback: failed after user gesture", playError)
         if (spinner) spinner.style.display = "none"
         if (label) label.textContent = "Try again"
         if (sub) sub.textContent = "Tap or press Enter to retry"
@@ -844,7 +837,7 @@ export default class extends Controller {
 
     interactiveTarget.addEventListener("click", attemptPlay)
     if (!showGuidance) interactiveTarget.addEventListener("keydown", attemptPlay)
-    this.hlsPlayPromptCleanup = () => {
+    this.playPromptCleanup = () => {
       interactiveTarget.removeEventListener("click", attemptPlay)
       if (!showGuidance) interactiveTarget.removeEventListener("keydown", attemptPlay)
       overlay.classList.remove("cursor-pointer")
@@ -858,11 +851,11 @@ export default class extends Controller {
     }
   }
 
-  clearHlsPlayPrompt() {
-    if (!this.hlsPlayPromptCleanup) return
+  clearPlayPrompt() {
+    if (!this.playPromptCleanup) return
 
-    const cleanup = this.hlsPlayPromptCleanup
-    this.hlsPlayPromptCleanup = null
+    const cleanup = this.playPromptCleanup
+    this.playPromptCleanup = null
     cleanup()
   }
 
@@ -1104,11 +1097,7 @@ export default class extends Controller {
   }
 
   recoveryMonitor() {
-    this._recoveryMonitor ||= new PlaybackRecoveryMonitor(this, {
-      fetcher: (...args) => fetch(...args),
-      documentRoot: document
-    })
-    return this._recoveryMonitor
+    return this.playbackCoordinator().recovery
   }
 
   startStallWatchdog(timeoutMs = STREAM_STALL_TIMEOUT_MS) {
@@ -1307,8 +1296,7 @@ export default class extends Controller {
   // and only feeds complete top-level boxes (or moof+mdat pairs) to
   // appendBuffer, holding back partial boxes until more data arrives.
   mseBufferManager() {
-    this._mseBufferManager ||= new MseBufferManager(this)
-    return this._mseBufferManager
+    return this.playbackCoordinator().buffer
   }
 
   queueBufferChunk(chunk) {
@@ -1461,7 +1449,7 @@ export default class extends Controller {
 
   // Tear down playback before navigating away.  The ONLY thing that
   // must happen synchronously is aborting the fetch so the backend
-  // kills ffmpeg (TranscodeService ensure block on ClientDisconnected).
+  // kills ffmpeg (Media::Transcoder ensure block on ClientDisconnected).
   // The video element teardown (revokeObjectURL, src="", load) is
   // skipped: load() forces a synchronous media-engine pipeline flush
   // that blocks the main thread for a noticeable moment — especially
@@ -1473,8 +1461,7 @@ export default class extends Controller {
   // save (navigateBack already saved).
   stopPlaybackForNavigation() {
     if (this.hasVideoTarget) { try { this.videoTarget.pause() } catch {} }
-    this.stopHlsSession()
-    this.stopProgressTracking()
+    this.playbackCoordinator().disconnect()
     this.saveProgressSync()
     this.navigatingAway = true
     if (this.fetchController) { this.fetchController.abort(); this.fetchController = null }
@@ -1494,7 +1481,7 @@ export default class extends Controller {
     if (this.resumeUrlValue) {
       const url = new URL(this.resumeUrlValue, window.location.origin)
       url.searchParams.set("type", "show")
-      url.searchParams.set("show_imdb_id", this.imdbIdValue)
+      url.searchParams.set("imdb_id", this.imdbIdValue)
       url.searchParams.set("autoplay", "1")
       window.location.href = url.toString()
     }
@@ -1721,12 +1708,12 @@ export default class extends Controller {
     if (this.mediaTracksLoaded) return
     if (!this.hasTracksUrlValue) return
 
-    const rawUrl = this.extractRawUrl()
-    if (!rawUrl) return
+    const source = this.sourceToken()
+    if (!source) return
 
     try {
       const url = new URL(this.tracksUrlValue, window.location.origin)
-      url.searchParams.set("url", rawUrl)
+      url.searchParams.set("source", source)
       this.addContentMetadataParams(url)
       const response = await fetch(url.pathname + url.search, { headers: { "Accept": "application/json" } })
       if (!response.ok) return
@@ -1938,11 +1925,7 @@ export default class extends Controller {
   }
 
   subtitlePipeline() {
-    this._subtitlePipeline ||= new SubtitlePipeline(this, {
-      fetcher: (...args) => fetch(...args),
-      origin: window.location.origin
-    })
-    return this._subtitlePipeline
+    return this.playbackCoordinator().subtitles
   }
 
   prefetchSubtitleStream(subtitleStream) {
@@ -1957,8 +1940,8 @@ export default class extends Controller {
     return this.subtitlePipeline().load(currentPosition, options)
   }
 
-  subtitleRequestUrl(rawUrl, subtitleStream, windowStart, durationSeconds) {
-    return this.subtitlePipeline().requestUrl(rawUrl, subtitleStream, windowStart, durationSeconds)
+  subtitleRequestUrl(source, subtitleStream, windowStart, durationSeconds) {
+    return this.subtitlePipeline().requestUrl(source, subtitleStream, windowStart, durationSeconds)
   }
 
   subtitleRequestKey(subtitleStream, windowStart, durationSeconds) {
@@ -2527,20 +2510,10 @@ export default class extends Controller {
   // ── Progress tracking ─────────────────────────────────────────────
 
   progressReporter() {
-    this._progressReporter ||= new ProgressReporter(this, {
-      fetcher: (...args) => fetch(...args),
-      documentRoot: document
-    })
-    return this._progressReporter
+    return this.playbackCoordinator().progress
   }
 
-  startProgressTracking() {
-    this.progressReporter().start()
-  }
 
-  stopProgressTracking() {
-    this.progressReporter().stop()
-  }
 
   async saveProgress(completed = false) {
     return this.progressReporter().save(completed)

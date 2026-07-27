@@ -17,5 +17,5 @@ production:
   # segment directories. Active playlist and segment requests refresh
   # session activity, while an absolute lifetime still bounds storage.
   cleanup_hls_sessions:
-    command: "HlsSession.cleanup_expired"
+    command: "HlsSessionManager.cleanup_expired"
     schedule: every 5 minutes

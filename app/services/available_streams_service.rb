@@ -24,7 +24,7 @@ class AvailableStreamsService
 
   def cache_key_for(imdb_id, type, season, episode)
     language_key = Array(@user.stream_language_priority).join(",")
-    "streams/#{imdb_id}/#{type}/#{season}/#{episode}/#{language_key}"
+    "streams/v2/#{@user.cache_key_with_version}/#{imdb_id}/#{type}/#{season}/#{episode}/#{language_key}"
   end
 
   def fetch_streams(imdb_id, type, season, episode, title)
@@ -52,7 +52,11 @@ class AvailableStreamsService
     elapsed_ms = ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at) * 1000).round
     count = result&.success? ? result.data.length : 0
     @logger.info("[AvailableStreamsService] #{provider.class.name} returned #{count} streams in #{elapsed_ms}ms")
-    result
+    return result unless result&.success?
+
+    ServiceResult.success(
+      result.data.map { |stream| StreamCandidate.from(stream, provider: provider.class.name) }
+    )
   rescue StandardError => e
     @logger.warn("[AvailableStreamsService] #{provider.class.name} failed: #{e.class}: #{e.message}")
     ServiceResult.failure(e.message)

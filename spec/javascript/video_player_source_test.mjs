@@ -134,9 +134,9 @@ test("starting HLS clears an installed play prompt before its fetch settles", as
     calls.push("fetch")
     return new Promise((resolve) => { settleFetch = resolve })
   }
-  player.directUrlValue = "https://example.test/movie.mkv"
+  player.streamingUrlValue = "/transcode?source=protected-source"
   player.cancelRemuxLoad = () => { calls.push("cancel-remux") }
-  player.clearHlsPlayPrompt = () => { calls.push("clear-prompt") }
+  player.clearPlayPrompt = () => { calls.push("clear-prompt") }
 
   try {
     const start = player.startHlsPlayback()
@@ -153,12 +153,12 @@ test("starting HLS clears an installed play prompt before its fetch settles", as
 test("iOS loads track metadata before starting HLS playback", async () => {
   const player = new VideoPlayerController()
   const calls = []
-  player.streamingUrlValue = "/transcode?url=https%3A%2F%2Fexample.test%2Fmovie.mkv"
+  player.streamingUrlValue = "/transcode?source=protected-source"
   player.isIOS = () => true
   player.loadMediaTracks = async () => { calls.push("tracks") }
   player.startHlsPlayback = () => { calls.push("hls") }
 
-  await player.ensureVideoSource()
+  await player.playbackEngine().ensureSource()
 
   assert.deepEqual(calls, ["tracks", "hls"])
 })
@@ -166,7 +166,7 @@ test("iOS loads track metadata before starting HLS playback", async () => {
 test("macOS Safari uses native HLS when direct play is unavailable", async () => {
   const player = new VideoPlayerController()
   const calls = []
-  player.streamingUrlValue = "/transcode?url=https%3A%2F%2Fexample.test%2Fmovie.mkv"
+  player.streamingUrlValue = "/transcode?source=protected-source"
   player.mseSupported = true
   player.isIOS = () => false
   player.isSafari = () => true
@@ -176,12 +176,12 @@ test("macOS Safari uses native HLS when direct play is unavailable", async () =>
   player.startRemuxDirectPlay = () => { calls.push("remux") }
   player.setupMseSource = () => { calls.push("mse") }
 
-  await player.ensureVideoSource()
+  await player.playbackEngine().ensureSource()
 
   assert.deepEqual(calls, ["tracks", "hls"])
 })
 
-test("Safari HLS play prompt retries playback from a user gesture", async () => {
+test("Safari play prompt retries playback from a user gesture", async () => {
   const player = new VideoPlayerController()
   const listeners = {}
   const attributes = {}
@@ -215,9 +215,9 @@ test("Safari HLS play prompt retries playback from a user gesture", async () => 
       return Promise.resolve()
     }
   }
-  player.hlsPlayPromptCleanup = null
+  player.playPromptCleanup = null
 
-  player.showHlsPlayPrompt()
+  player.showPlayPrompt()
 
   assert.equal(attributes.role, "button")
   assert.equal(attributes.tabindex, "0")
@@ -290,10 +290,10 @@ test("macOS Safari explains autoplay settings only on the first policy block", a
       return Promise.resolve()
     }
   }
-  player.hlsPlayPromptCleanup = null
+  player.playPromptCleanup = null
 
   try {
-    player.handleHlsAutoplayFailure({ name: "NotAllowedError" })
+    player.handleAutoplayFailure({ name: "NotAllowedError" })
 
     assert.equal(overlayAttributes.role, "dialog")
     assert.equal(overlayAttributes["aria-modal"], "true")
@@ -321,7 +321,7 @@ test("direct-play hint primes the native MP4 while track validation is pending",
   const player = new VideoPlayerController()
   const calls = []
   let finishTracks
-  player.streamingUrlValue = "/transcode?url=https%3A%2F%2Fexample.test%2Fmovie.mp4"
+  player.streamingUrlValue = "/transcode?source=protected-source"
   player.directPlayHintValue = true
   player.mseSupported = true
   player.isIOS = () => false
@@ -333,7 +333,7 @@ test("direct-play hint primes the native MP4 while track validation is pending",
   player.directPlayEligible = () => true
   player.startDirectPlay = () => { calls.push("direct") }
 
-  const sourcePromise = player.ensureVideoSource()
+  const sourcePromise = player.playbackEngine().ensureSource()
   assert.deepEqual(calls, ["tracks", "prime"])
 
   finishTracks()
@@ -386,6 +386,30 @@ test("native direct play assigns its source without restarting it with load", ()
   assert.match(player.videoTarget.src, /playback_id=playback-1/)
   assert.equal(loadCount, 0)
   assert.equal(playCount, 1)
+})
+
+test("native direct play exposes Safari autoplay rejection as a user play prompt", async () => {
+  const player = new VideoPlayerController()
+  const autoplayError = { name: "NotAllowedError" }
+  let handledError
+  player.playbackId = "playback-1"
+  player.directStreamUrlValue = "/direct_stream?url=https%3A%2F%2Fexample.test%2Fmovie.mp4"
+  player.startSecondsValue = 0
+  player.mediaSource = null
+  player.fetchController = null
+  player.videoTarget = {
+    autoplay: true,
+    readyState: 0,
+    src: "",
+    addEventListener: () => {},
+    play: () => Promise.reject(autoplayError)
+  }
+  player.handleAutoplayFailure = (error) => { handledError = error }
+
+  player.startDirectPlay()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  assert.equal(handledError, autoplayError)
 })
 
 test("MSE fallback creates a High Profile Level 4.0 AVC SourceBuffer", () => {
@@ -582,4 +606,3 @@ test("native HEVC decode and unsupported-source errors bypass copy remux", () =>
     assert.equal(player.remuxDirectPlay, false)
   }
 })
-

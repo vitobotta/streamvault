@@ -11,6 +11,6 @@ class CreateWishlistEntries < ActiveRecord::Migration[8.1]
       t.timestamps
     end
 
-    add_index :wishlist_entries, [:user_id, :imdb_id], unique: true
+    add_index :wishlist_entries, [ :user_id, :imdb_id ], unique: true
   end
 end

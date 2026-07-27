@@ -1,22 +1,18 @@
 # frozen_string_literal: true
 
 class TranscodeTracksController < ApplicationController
-  include StreamUrlValidation
+  include ResolvedSourceAccess
 
 
   before_action :authenticate_user!
 
   def show
-    input_url = params[:url].to_s
-    unless valid_stream_url?(input_url) && verify_stream_url!
-      render json: { audio: [], subtitles: [] }, status: :bad_request
-      return
-    end
+    source = resolved_source
 
     result = MediaProfileService.new(
-      input_url: input_url,
-      filename: params[:filename],
-      headers: transcode_headers,
+      input_url: source.url,
+      filename: source.filename,
+      headers: source_headers,
       subtitle_search: {
         imdb_id: params[:imdb_id],
         type: params[:type],
@@ -34,25 +30,23 @@ class TranscodeTracksController < ApplicationController
       return
     end
 
-    render json: result.data.merge(
-      direct_stream_url: direct_stream_url(input_url),
-      remux_direct_url: remux_direct_url(input_url)
+    render json: result.data.to_h.merge(
+      direct_stream_url: direct_stream_url,
+      remux_direct_url: remux_direct_url
     )
+  rescue ResolvedSource::Invalid
+    render json: { audio: [], subtitles: [] }, status: :bad_request
   end
 
   # Return a keyframe-aligned remux start plus the short local pre-roll
   # the browser must skip to land on the exact requested position.
   def seek
-    input_url = params[:url].to_s
-    unless valid_stream_url?(input_url) && verify_stream_url!
-      render json: { copy_safe: false }, status: :bad_request
-      return
-    end
+    source = resolved_source
 
-    plan = TranscodeService.probe_remux_seek(
-      input_url,
+    plan = Media::Probe.remux_seek(
+      source.url,
       target_seconds: params[:start_seconds],
-      headers: transcode_headers
+      headers: source_headers
     )
 
     if plan
@@ -60,21 +54,18 @@ class TranscodeTracksController < ApplicationController
     else
       render json: { copy_safe: false }
     end
+  rescue ResolvedSource::Invalid
+    render json: { copy_safe: false }, status: :bad_request
   end
 
   private
 
-  def transcode_headers
-    return {} unless current_user.has_realdebrid_key?
 
-    { "Authorization" => "Bearer #{current_user.realdebrid_api_key}" }
+  def direct_stream_url
+    direct_stream_path(source: params[:source])
   end
 
-  def direct_stream_url(input_url)
-    "/direct_stream?url=#{CGI.escape(input_url)}"
-  end
-
-  def remux_direct_url(input_url)
-    "/transcode?url=#{CGI.escape(input_url)}&remux=1"
+  def remux_direct_url
+    transcode_stream_path(source: params[:source], remux: 1)
   end
 end

@@ -1,8 +1,8 @@
 # SQLite for development and test, Postgres for production.
 #
 # Development/test use SQLite (no external dependencies).
-# Production uses a single Postgres database for primary, cache,
-# queue, and cable — no separate connections.
+# Production uses a single Postgres database for primary, cache, and
+# queue storage.
 
 default: &default
   adapter: sqlite3

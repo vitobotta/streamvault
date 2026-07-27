@@ -13,7 +13,7 @@ class HlsSegmentAvailabilityService
     file_system: File,
     clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) },
     sleeper: ->(seconds) { sleep(seconds) },
-    error_lookup: -> { HlsSession.error(session_id) }
+    error_lookup: -> { HlsSessionManager.error(session_id) }
   )
     @session = session
     @wait_seconds = wait_seconds

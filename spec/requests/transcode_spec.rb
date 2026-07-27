@@ -2,6 +2,16 @@ require 'rails_helper'
 
 RSpec.describe "Transcode", type: :request do
   let(:user) { create(:user, realdebrid_api_key: "test_key") }
+  let(:video_mkv_url) { "https://download.real-debrid.com/d/file123/video.mkv" }
+  let(:video_mkv_source) { signed_source_for(user, url: video_mkv_url, filename: "video.mkv") }
+  let(:inception_url) { "https://download.real-debrid.com/d/file123/Inception.mkv" }
+  let(:inception_source) { signed_source_for(user, url: inception_url, filename: "Inception.mkv") }
+  let(:movie_mp4_source) do
+    signed_source_for(user, url: "https://download.real-debrid.com/d/file123/movie.mp4", filename: "movie.mp4")
+  end
+  let(:movie_mkv_source) do
+    signed_source_for(user, url: "https://download.real-debrid.com/d/file123/movie.mkv", filename: "movie.mkv")
+  end
 
   before do
     sign_in user
@@ -15,36 +25,20 @@ RSpec.describe "Transcode", type: :request do
   end
 
   describe "GET /transcode" do
-    it "rejects non-HTTP media URLs before invoking ffmpeg" do
-      expect(TranscodeService).not_to receive(:transcode_to_fmp4)
+    it "rejects an invalid source token before invoking ffmpeg" do
+      expect(Media::Transcoder).not_to receive(:transcode_to_fmp4)
 
-      get transcode_stream_path, params: { url: "file:///etc/passwd" }
-
-      expect(response).to have_http_status(:bad_request)
-    end
-
-    it "rejects localhost media URLs before invoking ffmpeg" do
-      expect(TranscodeService).not_to receive(:transcode_to_fmp4)
-
-      get transcode_stream_path, params: { url: "http://127.0.0.1:3000/internal.mp4" }
-
-      expect(response).to have_http_status(:bad_request)
-    end
-
-    it "rejects non-allowlisted public media URLs before invoking ffmpeg" do
-      expect(TranscodeService).not_to receive(:transcode_to_fmp4)
-
-      get transcode_stream_path, params: { url: "https://example.com/video.mkv" }
+      get transcode_stream_path, params: { source: "tampered" }
 
       expect(response).to have_http_status(:bad_request)
     end
 
     it "returns bad gateway when ffmpeg fails before producing data" do
-      allow(TranscodeService).to receive(:transcode_to_fmp4).and_raise(
-        TranscodeService::TranscodeError, "FFmpeg exited without producing output. stderr: error"
+      allow(Media::Transcoder).to receive(:transcode_to_fmp4).and_raise(
+        Media::Transcoder::TranscodeError, "FFmpeg exited without producing output. stderr: error"
       )
 
-      get transcode_stream_path, params: { url: "https://download.real-debrid.com/d/file123/video.mkv" }
+      get transcode_stream_path, params: { source: video_mkv_source }
 
       expect(response).to have_http_status(:bad_gateway)
       expect(response.content_type).to include("text/plain")
@@ -52,13 +46,13 @@ RSpec.describe "Transcode", type: :request do
     end
 
     it "logs and closes gracefully when ffmpeg stalls after data is committed" do
-      allow(TranscodeService).to receive(:transcode_to_fmp4) do |*_args, &block|
+      allow(Media::Transcoder).to receive(:transcode_to_fmp4) do |*_args, &block|
         block.call("fMP4 data chunk")
-        raise TranscodeService::TranscodeError, "FFmpeg stream stalled — no data for 20s."
+        raise Media::Transcoder::TranscodeError, "FFmpeg stream stalled — no data for 20s."
       end
       allow(Rails.logger).to receive(:error)
 
-      get transcode_stream_path, params: { url: "https://download.real-debrid.com/d/file123/video.mkv" }
+      get transcode_stream_path, params: { source: video_mkv_source }
 
       expect(Rails.logger).to have_received(:error).with(/\[Transcode\].*stream stalled/)
       expect(response).to have_http_status(:ok)
@@ -66,13 +60,13 @@ RSpec.describe "Transcode", type: :request do
 
     it "clamps start_seconds to 24 hours (MAX_START_SECONDS)" do
       captured_kwargs = nil
-      allow(TranscodeService).to receive(:transcode_to_fmp4) do |*_args, **kwargs|
+      allow(Media::Transcoder).to receive(:transcode_to_fmp4) do |*_args, **kwargs|
         captured_kwargs = kwargs
-        raise TranscodeService::TranscodeError, "stub"
+        raise Media::Transcoder::TranscodeError, "stub"
       end
 
       get transcode_stream_path, params: {
-        url: "https://download.real-debrid.com/d/file123/video.mkv",
+        source: video_mkv_source,
         start_seconds: "999999"
       }
 
@@ -81,13 +75,13 @@ RSpec.describe "Transcode", type: :request do
 
     it "clamps negative start_seconds to 0" do
       captured_kwargs = nil
-      allow(TranscodeService).to receive(:transcode_to_fmp4) do |*_args, **kwargs|
+      allow(Media::Transcoder).to receive(:transcode_to_fmp4) do |*_args, **kwargs|
         captured_kwargs = kwargs
-        raise TranscodeService::TranscodeError, "stub"
+        raise Media::Transcoder::TranscodeError, "stub"
       end
 
       get transcode_stream_path, params: {
-        url: "https://download.real-debrid.com/d/file123/video.mkv",
+        source: video_mkv_source,
         start_seconds: "-100"
       }
 
@@ -114,12 +108,12 @@ RSpec.describe "Transcode", type: :request do
         end
         result
       end
-      allow(TranscodeService).to receive(:probe_media_info) do
+      allow(Media::Transcoder).to receive(:probe_media_info) do
         barrier.call(media_tracks: { audio: [], subtitles: [] }, video_stream: {})
       end
       allow(ExternalSubtitleService).to receive(:search) { barrier.call([]) }
 
-      get transcode_tracks_path, params: { url: "https://download.real-debrid.com/d/file123/Inception.mkv" }
+      get transcode_tracks_path, params: { source: inception_source }
 
       expect(response).to have_http_status(:ok)
       expect(started).to eq(2)
@@ -133,10 +127,10 @@ RSpec.describe "Transcode", type: :request do
           { index: 3, language: "FRENCH", language_label: "French", label: "French · Forced", text_supported: true, partial: true, quality_score: 100 }
         ]
       }
-      allow(TranscodeService).to receive(:probe_media_info).and_return(media_tracks: tracks, video_stream: {})
+      allow(Media::Transcoder).to receive(:probe_media_info).and_return(media_tracks: tracks, video_stream: {})
       allow(ExternalSubtitleService).to receive(:search).and_return([])
 
-      get transcode_tracks_path, params: { url: "https://download.real-debrid.com/d/file123/Inception.mkv" }
+      get transcode_tracks_path, params: { source: inception_source }
 
       expect(response).to have_http_status(:ok)
       expect(response.parsed_body["audio"].first["language"]).to eq("ENG")
@@ -149,11 +143,11 @@ RSpec.describe "Transcode", type: :request do
         subtitles: []
       }
       video = { codec_name: "hevc", codec_tag: "hev1", width: 1920, height: 816, pix_fmt: "yuv420p10le" }
-      allow(TranscodeService).to receive(:probe_media_info).and_return(media_tracks: tracks, video_stream: video)
+      allow(Media::Transcoder).to receive(:probe_media_info).and_return(media_tracks: tracks, video_stream: video)
       allow(ExternalSubtitleService).to receive(:search).and_return([])
 
       get transcode_tracks_path, params: {
-        url: "https://download.real-debrid.com/d/file123/movie.mp4",
+        source: movie_mp4_source,
         filename: "movie.mp4"
       }
 
@@ -169,11 +163,11 @@ RSpec.describe "Transcode", type: :request do
         subtitles: []
       }
       video = { codec_name: "hevc", width: 1920, height: 816, pix_fmt: "yuv420p10le" }
-      allow(TranscodeService).to receive(:probe_media_info).and_return(media_tracks: tracks, video_stream: video)
+      allow(Media::Transcoder).to receive(:probe_media_info).and_return(media_tracks: tracks, video_stream: video)
       allow(ExternalSubtitleService).to receive(:search).and_return([])
 
       get transcode_tracks_path, params: {
-        url: "https://download.real-debrid.com/d/file123/movie.mkv",
+        source: movie_mkv_source,
         filename: "movie.mkv"
       }
 
@@ -191,11 +185,11 @@ RSpec.describe "Transcode", type: :request do
         subtitles: []
       }
       video = { codec_name: "hevc", width: 1920, height: 816, pix_fmt: "yuv420p10le" }
-      allow(TranscodeService).to receive(:probe_media_info).and_return(media_tracks: tracks, video_stream: video)
+      allow(Media::Transcoder).to receive(:probe_media_info).and_return(media_tracks: tracks, video_stream: video)
       allow(ExternalSubtitleService).to receive(:search).and_return([])
 
       get transcode_tracks_path, params: {
-        url: "https://download.real-debrid.com/d/file123/movie.mp4",
+        source: movie_mp4_source,
         filename: "movie.mp4"
       }
 
@@ -216,11 +210,11 @@ RSpec.describe "Transcode", type: :request do
           source: "subdl"
         }
       ]
-      allow(TranscodeService).to receive(:probe_media_info).and_return(media_tracks: tracks, video_stream: {})
+      allow(Media::Transcoder).to receive(:probe_media_info).and_return(media_tracks: tracks, video_stream: {})
       allow(ExternalSubtitleService).to receive(:search).and_return(external_subtitles)
 
       get transcode_tracks_path, params: {
-        url: "https://download.real-debrid.com/d/file123/Inception.mkv",
+        source: inception_source,
         imdb_id: "tt1375666",
         type: "movie",
         title: "Inception",
@@ -241,11 +235,11 @@ RSpec.describe "Transcode", type: :request do
       )
     end
 
-    it "rejects private media URLs" do
-      expect(TranscodeService).not_to receive(:probe_media_info)
+    it "rejects an invalid source before probing metadata" do
+      expect(Media::Transcoder).not_to receive(:probe_media_info)
       expect(ExternalSubtitleService).not_to receive(:search)
 
-      get transcode_tracks_path, params: { url: "http://localhost/video.mkv" }
+      get transcode_tracks_path, params: { source: "tampered" }
 
       expect(response).to have_http_status(:bad_request)
     end
@@ -253,11 +247,11 @@ RSpec.describe "Transcode", type: :request do
 
   describe "GET /transcode/seek" do
     it "returns a keyframe-aligned copy plan" do
-      allow(TranscodeService).to receive(:probe_remux_seek)
+      allow(Media::Transcoder).to receive(:probe_remux_seek)
         .and_return(anchor_seconds: 120.0, input_seek_seconds: 123.5, skip_seconds: 3.5)
 
       get transcode_seek_path, params: {
-        url: "https://download.real-debrid.com/d/file123/Inception.mkv",
+        source: inception_source,
         start_seconds: 123.5
       }
 
@@ -271,10 +265,10 @@ RSpec.describe "Transcode", type: :request do
     end
 
     it "fails closed when no trustworthy keyframe can be probed" do
-      allow(TranscodeService).to receive(:probe_remux_seek).and_return(nil)
+      allow(Media::Transcoder).to receive(:probe_remux_seek).and_return(nil)
 
       get transcode_seek_path, params: {
-        url: "https://download.real-debrid.com/d/file123/Inception.mkv",
+        source: inception_source,
         start_seconds: 123.5
       }
 
@@ -284,11 +278,11 @@ RSpec.describe "Transcode", type: :request do
   end
 
   describe "GET /transcode/subtitles" do
-    it "rejects private subtitle media URLs before extracting" do
-      expect(TranscodeService).not_to receive(:extract_subtitles)
+    it "rejects an invalid source before extracting" do
+      expect(Media::Transcoder).not_to receive(:extract_subtitles)
 
       get transcode_subtitles_path, params: {
-        url: "http://127.0.0.1/video.mkv",
+        source: "tampered",
         subtitle_stream: "2"
       }
 
@@ -296,8 +290,8 @@ RSpec.describe "Transcode", type: :request do
     end
 
     it "returns selected subtitles as WebVTT" do
-      allow(TranscodeService).to receive(:extract_subtitles).and_return(
-        TranscodeService::SubtitleExtractionResult.new(
+      allow(Media::Transcoder).to receive(:extract_subtitles).and_return(
+        Media::Transcoder::SubtitleExtractionResult.new(
           status: :ok,
           vtt: "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHello\n",
           cue_count: 1,
@@ -306,7 +300,7 @@ RSpec.describe "Transcode", type: :request do
       )
 
       get transcode_subtitles_path, params: {
-        url: "https://download.real-debrid.com/d/file123/Inception.mkv",
+        source: inception_source,
         subtitle_stream: "2",
         start_seconds: "30",
         duration_seconds: "5"
@@ -315,7 +309,7 @@ RSpec.describe "Transcode", type: :request do
       expect(response).to have_http_status(:ok)
       expect(response.media_type).to eq("text/vtt")
       expect(response.body).to start_with("WEBVTT")
-      expect(TranscodeService).to have_received(:extract_subtitles).with(
+      expect(Media::Transcoder).to have_received(:extract_subtitles).with(
         "https://download.real-debrid.com/d/file123/Inception.mkv",
         headers: { "Authorization" => "Bearer test_key" },
         subtitle_stream: "2",
@@ -326,17 +320,17 @@ RSpec.describe "Transcode", type: :request do
 
     it "returns external subtitles as WebVTT" do
       allow(ExternalSubtitleService).to receive(:extract_subtitles).and_return(
-        TranscodeService::SubtitleExtractionResult.new(
+        Media::Transcoder::SubtitleExtractionResult.new(
           status: :ok,
           vtt: "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nExternal\n",
           cue_count: 1,
           source: :subdl
         )
       )
-      expect(TranscodeService).not_to receive(:extract_subtitles)
+      expect(Media::Transcoder).not_to receive(:extract_subtitles)
 
       get transcode_subtitles_path, params: {
-        url: "https://download.real-debrid.com/d/file123/Inception.mkv",
+        source: inception_source,
         subtitle_stream: "external:subdl:abc",
         start_seconds: "30",
         duration_seconds: "60"
@@ -352,8 +346,8 @@ RSpec.describe "Transcode", type: :request do
     end
 
     it "uses the default subtitle window when duration is omitted" do
-      allow(TranscodeService).to receive(:extract_subtitles).and_return(
-        TranscodeService::SubtitleExtractionResult.new(
+      allow(Media::Transcoder).to receive(:extract_subtitles).and_return(
+        Media::Transcoder::SubtitleExtractionResult.new(
           status: :ok,
           vtt: "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHello\n",
           cue_count: 1,
@@ -362,28 +356,28 @@ RSpec.describe "Transcode", type: :request do
       )
 
       get transcode_subtitles_path, params: {
-        url: "https://download.real-debrid.com/d/file123/Inception.mkv",
+        source: inception_source,
         subtitle_stream: "2",
         start_seconds: "30"
       }
 
       expect(response).to have_http_status(:ok)
-      expect(TranscodeService).to have_received(:extract_subtitles).with(
+      expect(Media::Transcoder).to have_received(:extract_subtitles).with(
         "https://download.real-debrid.com/d/file123/Inception.mkv",
         headers: { "Authorization" => "Bearer test_key" },
         subtitle_stream: "2",
         start_seconds: 30.0,
-        duration_seconds: TranscodeService::SUBTITLE_EXTRACTION_WINDOW_SECONDS
+        duration_seconds: Media::Transcoder::SUBTITLE_EXTRACTION_WINDOW_SECONDS
       )
     end
 
     it "returns no content when the selected subtitle window has no cues" do
-      allow(TranscodeService).to receive(:extract_subtitles).and_return(
-        TranscodeService::SubtitleExtractionResult.new(status: :empty_window, vtt: "", cue_count: 0, source: :ffprobe_packets)
+      allow(Media::Transcoder).to receive(:extract_subtitles).and_return(
+        Media::Transcoder::SubtitleExtractionResult.new(status: :empty_window, vtt: "", cue_count: 0, source: :ffprobe_packets)
       )
 
       get transcode_subtitles_path, params: {
-        url: "https://download.real-debrid.com/d/file123/Inception.mkv",
+        source: inception_source,
         subtitle_stream: "2",
         start_seconds: "30"
       }
@@ -393,12 +387,12 @@ RSpec.describe "Transcode", type: :request do
     end
 
     it "returns gateway timeout when subtitle extraction times out" do
-      allow(TranscodeService).to receive(:extract_subtitles).and_return(
-        TranscodeService::SubtitleExtractionResult.new(status: :timeout, vtt: "", cue_count: 0, source: :ffmpeg)
+      allow(Media::Transcoder).to receive(:extract_subtitles).and_return(
+        Media::Transcoder::SubtitleExtractionResult.new(status: :timeout, vtt: "", cue_count: 0, source: :ffmpeg)
       )
 
       get transcode_subtitles_path, params: {
-        url: "https://download.real-debrid.com/d/file123/Inception.mkv",
+        source: inception_source,
         subtitle_stream: "2",
         start_seconds: "30"
       }
@@ -408,12 +402,12 @@ RSpec.describe "Transcode", type: :request do
     end
 
     it "returns unprocessable entity for unsupported subtitle tracks" do
-      allow(TranscodeService).to receive(:extract_subtitles).and_return(
-        TranscodeService::SubtitleExtractionResult.new(status: :unsupported_track, vtt: "", cue_count: 0, source: nil)
+      allow(Media::Transcoder).to receive(:extract_subtitles).and_return(
+        Media::Transcoder::SubtitleExtractionResult.new(status: :unsupported_track, vtt: "", cue_count: 0, source: nil)
       )
 
       get transcode_subtitles_path, params: {
-        url: "https://download.real-debrid.com/d/file123/Inception.mkv",
+        source: inception_source,
         subtitle_stream: "4",
         start_seconds: "30"
       }
@@ -423,12 +417,12 @@ RSpec.describe "Transcode", type: :request do
     end
 
     it "returns bad gateway when subtitle extraction fails" do
-      allow(TranscodeService).to receive(:extract_subtitles).and_return(
-        TranscodeService::SubtitleExtractionResult.new(status: :failed, vtt: "", cue_count: 0, source: :ffmpeg)
+      allow(Media::Transcoder).to receive(:extract_subtitles).and_return(
+        Media::Transcoder::SubtitleExtractionResult.new(status: :failed, vtt: "", cue_count: 0, source: :ffmpeg)
       )
 
       get transcode_subtitles_path, params: {
-        url: "https://download.real-debrid.com/d/file123/Inception.mkv",
+        source: inception_source,
         subtitle_stream: "2",
         start_seconds: "30"
       }

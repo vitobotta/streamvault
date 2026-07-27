@@ -173,7 +173,7 @@ test("ended shows save completion before navigating to autoplay resume", async (
   await player.onVideoEnded()
 
   assert.equal(completedSave, true)
-  assert.match(context.window.location.href, /show_imdb_id=tt0903747/)
+  assert.match(context.window.location.href, /imdb_id=tt0903747/)
   assert.match(context.window.location.href, /autoplay=1/)
 })
 

@@ -7,19 +7,19 @@ export class HlsSessionClient {
 
   async start() {
     this.player.cancelRemuxLoad()
-    this.player.clearHlsPlayPrompt()
+    this.player.clearPlayPrompt()
     this.player.directPlayActive = false
     this.player.remuxDirectPlay = false
     this.player.primedDirectPlayUrl = null
 
-    const directUrl = this.player.directUrlValue || this.player.extractRawUrl()
-    if (!directUrl) {
+    const source = this.player.sourceToken()
+    if (!source) {
       console.warn("HLS: no direct URL available")
       return
     }
 
     try {
-      const data = await this.startSession(directUrl, this.player.startSecondsValue)
+      const data = await this.startSession(source, this.player.startSecondsValue)
       if (!data) return
 
       this.player.hlsSessionId = data.session_id
@@ -33,7 +33,7 @@ export class HlsSessionClient {
       this.player.videoTarget.src = data.playlist_url
       this.player.videoTarget.load()
       const playPromise = this.player.videoTarget.play()
-      if (playPromise?.catch) playPromise.catch((error) => this.player.handleHlsAutoplayFailure(error))
+      if (playPromise?.catch) playPromise.catch((error) => this.player.handleAutoplayFailure(error))
     } catch (error) {
       console.warn("HLS: start error", error)
     }
@@ -77,15 +77,15 @@ export class HlsSessionClient {
     this.player.reloadTextSubtitlesAt(startSeconds)
     this.player.stopHlsSession()
 
-    const directUrl = this.player.directUrlValue || this.player.extractRawUrl()
-    if (!directUrl) {
+    const source = this.player.sourceToken()
+    if (!source) {
       console.warn("HLS seek: no direct URL available")
       this.finishSeek()
       return
     }
 
     try {
-      const data = await this.startSession(directUrl, startSeconds)
+      const data = await this.startSession(source, startSeconds)
       if (!data) {
         this.finishSeek()
         return
@@ -133,8 +133,8 @@ export class HlsSessionClient {
     }
   }
 
-  async startSession(directUrl, startSeconds) {
-    const params = new URLSearchParams({ url: directUrl })
+  async startSession(source, startSeconds) {
+    const params = new URLSearchParams({ source })
     params.set("playback_id", this.player.playbackId)
     if (startSeconds && startSeconds > 0) params.set("start_seconds", startSeconds)
     this.player.appendSelectedHlsTracks(params)

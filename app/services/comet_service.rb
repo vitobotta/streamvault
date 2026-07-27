@@ -22,10 +22,6 @@ require "json"
 # /{b64config}/playback/... endpoint, which 302-redirects to the
 # RealDebrid direct download URL — same follow-redirect flow as Torrentio.
 class CometService
-  include StreamCompatibility
-  LANGUAGE_PATTERNS = TorrentioService::LANGUAGE_PATTERNS
-  QUALITY_SORT = TorrentioService::QUALITY_SORT
-
   def self.comet_url
     ENV.fetch("COMET_URL", "")
   end
@@ -36,6 +32,7 @@ class CometService
 
   def initialize(rd_api_key: nil)
     @rd_api_key = rd_api_key
+    @parser = Streams::ReleaseParser.new
     @comet = Faraday.new(url: self.class.comet_url) do |f|
       f.request :json
       f.response :json
@@ -56,10 +53,11 @@ class CometService
 
     if response.success? && response.body.is_a?(Hash) && response.body["streams"]
       parsed = parse_streams(response.body["streams"])
-      language_priority = normalize_language_priority(default_language, preferred_languages)
-      parsed = filter_by_preferred_languages(parsed, language_priority) if language_priority.present?
-      parsed = sort_streams(parsed, language_priority: language_priority)
-      ServiceResult.success(parsed)
+      ranked = Streams::Ranker.new(
+        default_language: default_language,
+        preferred_languages: preferred_languages
+      ).call(parsed)
+      ServiceResult.success(ranked)
     elsif response.status == 404
       ServiceResult.success([])
     else
@@ -114,9 +112,8 @@ class CometService
     Base64.urlsafe_encode64(JSON.generate(config))
   end
 
-  # Parse Comet stream objects into the same normalized hash shape that
-  # TorrentioService produces, so ContentStreamingService can consume
-  # streams from either provider interchangeably.
+  # Normalize Comet stream objects into StreamCandidate values shared by
+  # every provider and the resolver.
   # Comet's Stremio stream objects carry the real metadata in `description`
   # and `behaviorHints`, NOT in top-level `title`/`infoHash`/`sources` (those
   # are Torrentio's shape).  Comet returns:
@@ -127,119 +124,25 @@ class CometService
   #   behaviorHints.videoSize  => file size in bytes
   #   behaviorHints.bingeGroup => "comet|realdebrid|<sha1_info_hash>"
   def parse_streams(raw_streams)
-    raw_streams.map do |s|
-      description = s["description"].to_s
-      behavior_hints = s["behaviorHints"] || {}
+    raw_streams.map do |stream|
+      description = stream["description"].to_s
+      behavior_hints = stream["behaviorHints"] || {}
       filename = behavior_hints["filename"].to_s
+      title = filename.presence || stream["name"].to_s
+      attributes = @parser.analyze(title: title, filename: filename.presence || description)
+      size = behavior_hints["videoSize"] || @parser.size_bytes(description) || attributes[:raw_size]
+      info_hash = behavior_hints["bingeGroup"].to_s.split("|").last.presence || stream["infoHash"]
 
-      binge_group = behavior_hints["bingeGroup"].to_s
-      info_hash = binge_group.split("|").last.presence || s["infoHash"]
-
-      title_text = filename.presence || s["name"].to_s
-      size_bytes = behavior_hints["videoSize"] || parse_size_bytes(description)
-      cached = s["name"].to_s.include?("⚡")
-
-      # Parse codec/container from the release name and filename.
-      # Comet's title_text is the actual release filename; description
-      # may also contain the container extension for codec hints.
-      video_codec = detect_video_codec(title_text)
-      audio_codec = detect_audio_codec(title_text)
-      container = detect_container(filename.presence || description)
-
-      {
-        title: title_text,
-        info_hash: info_hash,
-        file_idx: s["fileIdx"],
-        name: s["name"],
-        quality: extract_quality(s["name"] || title_text),
-        seeders: extract_seeders(s, description),
-        size: size_bytes ? format_size(size_bytes) : "Unknown",
-        raw_size: size_bytes || 0,
-        rd_plus: cached,
-        filename: filename,
-        resolve_url: s["url"].to_s,
-        languages: extract_languages(description),
-        video_codec: video_codec,
-        audio_codec: audio_codec,
-        container: container,
-        compatibility_score: compatibility_score(video_codec: video_codec, audio_codec: audio_codec, container: container)
-      }
-    end
-  end
-
-  def filter_by_preferred_languages(streams, preferred_languages, default_language: nil)
-    return streams if preferred_languages.blank?
-    langs = normalize_language_list(preferred_languages)
-
-    streams.select do |s|
-      (s[:languages] & langs).any? || (s[:languages].empty? && langs.include?("ENG"))
-    end
-  end
-
-  def sort_streams(streams, language_priority: [])
-    streams_with_scores = streams.map do |stream|
-      stream.merge(language_score: stream_language_score(stream, language_priority))
-    end
-
-    streams_with_scores.sort_by do |s|
-      language_score = s[:language_score]
-      compatibility_score = -(s[:compatibility_score] || 0)
-      rd_score = s[:rd_plus] ? 0 : 1
-      quality_score = QUALITY_SORT[s[:quality]] || 4
-      size_bytes = s[:raw_size].is_a?(Numeric) ? s[:raw_size] : 0
-      [ language_score, compatibility_score, rd_score, quality_score, -size_bytes ]
-    end
-  end
-
-  def stream_language_score(stream, language_priority)
-    return 0 if language_priority.blank?
-
-    stream_languages = Array(stream[:languages]).map(&:to_s).map(&:upcase)
-    # Unmarked streams are assumed English — score them as ENG.
-    stream_languages = [ "ENG" ] if stream_languages.empty?
-    matching_indexes = stream_languages.filter_map { |language| language_priority.index(language) }
-    matching_indexes.min || language_priority.length
-  end
-
-  def normalize_language_priority(default_language, preferred_languages)
-    normalize_language_list([ default_language ] + Array(preferred_languages))
-  end
-
-  def normalize_language_list(languages)
-    Array(languages)
-      .flatten
-      .map(&:to_s)
-      .map(&:upcase)
-      .select { |language| LANGUAGE_PATTERNS.key?(language) }
-      .uniq
-  end
-
-  def extract_languages(title)
-    return [] if title.blank?
-    langs = LANGUAGE_PATTERNS.select { |_, pattern| title.match?(pattern) }.keys
-    langs = LANGUAGE_PATTERNS.keys if title.match?(/\bMULTi|MULTIPLE|MULTI\b/i)
-    langs
-  end
-
-  def parse_size_bytes(title)
-    match = title.match(/💾\s*([\d.]+)\s*(GB|MB|KB)/i)
-    return nil unless match
-    value = match[1].to_f
-    case match[2].upcase
-    when "GB" then (value * 1_073_741_824).to_i
-    when "MB" then (value * 1_048_576).to_i
-    when "KB" then (value * 1024).to_i
-    end
-  end
-
-  def extract_quality(title)
-    return "Unknown" unless title
-    case title
-    when /2160p|4K/i then "4K"
-    when /1080p/i then "1080p"
-    when /720p/i then "720p"
-    when /480p/i then "480p"
-    else "Unknown"
+      StreamCandidate.new(
+        title: title, info_hash: info_hash, file_idx: stream["fileIdx"], name: stream["name"],
+        quality: @parser.quality(stream["name"].presence || title),
+        seeders: extract_seeders(stream, description), size: @parser.format_size(size), raw_size: size,
+        rd_plus: stream["name"].to_s.include?("⚡"), filename: filename,
+        resolve_url: stream["url"].to_s, languages: @parser.languages(description),
+        video_codec: attributes[:video_codec], audio_codec: attributes[:audio_codec],
+        container: attributes[:container], compatibility_score: attributes[:compatibility_score],
+        provider: self.class.name
+      )
     end
   end
 
@@ -253,17 +156,6 @@ class CometService
       else
         0
       end
-    end
-  end
-
-  def format_size(bytes)
-    return "Unknown" unless bytes.is_a?(Numeric)
-    if bytes >= 1_073_741_824
-      "#{(bytes / 1_073_741_824.0).round(1)} GB"
-    elsif bytes >= 1_048_576
-      "#{(bytes / 1_048_576.0).round(1)} MB"
-    else
-      "#{(bytes / 1024.0).round(1)} KB"
     end
   end
 end

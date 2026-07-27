@@ -18,7 +18,7 @@ class CreateWatchHistoryEntries < ActiveRecord::Migration[8.1]
       t.timestamps
     end
 
-    add_index :watch_history_entries, [:user_id, :imdb_id]
+    add_index :watch_history_entries, [ :user_id, :imdb_id ]
     add_index :watch_history_entries, :watched_at
     add_index :watch_history_entries, :show_imdb_id
   end

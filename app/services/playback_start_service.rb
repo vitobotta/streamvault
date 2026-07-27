@@ -4,14 +4,16 @@ class PlaybackStartService
   MIN_KNOWN_DURATION_SECONDS = 60
   MAX_KNOWN_DURATION_SECONDS = 24 * 60 * 60
 
-  def initialize(user, streaming_service: ContentStreamingService.new(user), logger: Rails.logger)
+  def initialize(user, streaming_service: Streams::Resolver.new(user), catalog: Catalog::CinemetaClient.new, logger: Rails.logger)
     @user = user
     @streaming_service = streaming_service
+    @catalog = catalog
     @logger = logger
   end
 
   def start(imdb_id:, type:, season: nil, episode: nil, title: nil, poster_url: nil, requested_duration: nil, selection: {})
-    stream_result = resolve_stream(imdb_id, type, season, episode, selection)
+    content_ref = ContentRef.new(imdb_id: imdb_id, type: type, season: season, episode: episode)
+    stream_result = resolve_stream(content_ref, selection)
     return stream_result if stream_result.failure?
 
     progress_entry = find_progress_entry(imdb_id, type, season, episode)
@@ -25,42 +27,41 @@ class PlaybackStartService
     )
 
     ServiceResult.success(
-      playback_payload(
+      playback_descriptor(
         stream: stream_result.data,
-        imdb_id: imdb_id,
-        type: type,
-        season: season,
-        episode: episode,
+        content_ref: content_ref,
         title: title,
         poster_url: poster_url,
         resume_at: progress_entry&.progress_seconds,
         duration: duration
       )
     )
+  rescue ArgumentError => e
+    ServiceResult.failure(e.message)
   end
 
   def resume(imdb_id:, type:, target:)
-    stream_result = @streaming_service.start_stream(
-      imdb_id,
-      type,
+    content_ref = ContentRef.new(
+      imdb_id: imdb_id,
+      type: type,
       season: target[:season],
       episode: target[:episode]
     )
+    stream_result = @streaming_service.start(content_ref)
     return stream_result if stream_result.failure?
 
     ServiceResult.success(
-      playback_payload(
+      playback_descriptor(
         stream: stream_result.data,
-        imdb_id: imdb_id,
-        type: type,
-        season: target[:season],
-        episode: target[:episode],
+        content_ref: content_ref,
         title: target[:title],
         poster_url: target[:poster_url],
         resume_at: target[:resume_at],
         duration: target[:duration_seconds]
       )
     )
+  rescue ArgumentError => e
+    ServiceResult.failure(e.message)
   end
 
   def known_duration(imdb_id:, type:, season: nil, episode: nil, requested_duration: nil, metadata_fallback: true)
@@ -77,57 +78,44 @@ class PlaybackStartService
 
   private
 
-  def resolve_stream(imdb_id, type, season, episode, selection)
+  def resolve_stream(content_ref, selection)
     if selection[:resolve_url].present?
-      @streaming_service.resolve_single(
-        selection[:resolve_url],
+      candidate = StreamCandidate.new(
+        resolve_url: selection[:resolve_url],
         filename: selection[:filename],
-        imdb_id: imdb_id,
-        type: type,
-        season: season&.to_i,
-        episode: episode&.to_i,
-        duration: selection[:duration],
         raw_size: selection[:raw_size],
         video_codec: selection[:video_codec],
         compatibility_score: selection[:compatibility_score]
       )
+      @streaming_service.resolve(candidate, content_ref: content_ref, duration: selection[:duration])
     else
-      @streaming_service.start_stream(
-        imdb_id,
-        type,
-        season: season&.to_i,
-        episode: episode&.to_i
-      )
+      @streaming_service.start(content_ref)
     end
   end
 
-  def playback_payload(stream:, imdb_id:, type:, season:, episode:, title:, poster_url:, resume_at:, duration:)
-    payload = {
-      streaming_url: stream[:streaming_url],
-      filename: stream[:filename],
-      imdb_id: imdb_id,
-      type: type,
-      season: season,
-      episode: episode,
+  def playback_descriptor(stream:, content_ref:, title:, poster_url:, resume_at:, duration:)
+    source = stream[:source]
+    source ||= ResolvedSource.new(url: stream.fetch(:streaming_url), filename: stream[:filename])
+
+    PlaybackDescriptor.new(
+      source_token: ResolvedSource.issue(user: @user, url: source.url, filename: source.filename),
+      filename: source.filename,
+      content_ref: content_ref,
       title: title,
       poster_url: poster_url,
       resume_at: resume_at,
-      duration: normalized_duration_seconds(duration)
-    }
-    payload[:direct_play_hint] = true if stream[:direct_play_hint]
-    payload
+      duration: normalized_duration_seconds(duration),
+      direct_play_hint: stream[:direct_play_hint]
+    )
   end
 
   def find_progress_entry(imdb_id, type, season, episode)
-    if type == "show" && season.present? && episode.present?
-      return @user.episode_progresses.find_by(
-        show_imdb_id: imdb_id,
-        season_number: season.to_i,
-        episode_number: episode.to_i
-      )
-    end
-
-    @user.watch_history_entries.where(imdb_id: imdb_id).order(watched_at: :desc).first
+    @user.playback_progresses.find_by(
+      imdb_id: imdb_id,
+      content_type: type == "show" ? :episode : :movie,
+      season_number: type == "show" ? season.to_i : 0,
+      episode_number: type == "show" ? episode.to_i : 0
+    )
   end
 
   def duration_for(imdb_id:, type:, season:, episode:, progress_entry:, requested_duration:)
@@ -141,7 +129,7 @@ class PlaybackStartService
   end
 
   def metadata_duration_seconds(imdb_id, type, season, episode)
-    result = TorrentioService.new(rd_api_key: @user.realdebrid_api_key).metadata(imdb_id, type)
+    result = @catalog.metadata(imdb_id, type)
     return 0 if result.failure?
 
     if type == "show" && season.present? && episode.present?

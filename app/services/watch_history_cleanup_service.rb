@@ -3,9 +3,9 @@
 class WatchHistoryCleanupService
   def self.remove(user:, entry:)
     scope = if entry.movie?
-      user.watch_history_entries.where(content_type: :movie, imdb_id: entry.imdb_id)
+      user.playback_progresses.movies_only.where(imdb_id: entry.imdb_id)
     else
-      user.watch_history_entries.where(content_type: :episode, show_imdb_id: entry.show_imdb_id)
+      user.playback_progresses.for_show(entry.imdb_id)
     end
 
     ServiceResult.success(scope.delete_all)
@@ -15,12 +15,7 @@ class WatchHistoryCleanupService
   end
 
   def self.clear(user:)
-    deleted = ActiveRecord::Base.transaction do
-      {
-        history: user.watch_history_entries.delete_all,
-        episode_progresses: user.episode_progresses.delete_all
-      }
-    end
+    deleted = user.playback_progresses.delete_all
 
     ServiceResult.success(deleted)
   rescue StandardError => e

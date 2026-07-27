@@ -1,3 +1,5 @@
+import { PlaybackPaths } from "player/playback_paths"
+
 const MSE_MIME_TYPE = 'video/mp4; codecs="avc1.640028,mp4a.40.2"'
 
 export class PlaybackEngine {
@@ -18,39 +20,8 @@ export class PlaybackEngine {
   }
 
   async ensureSource() {
-    const player = this.player
-    if (!player.streamingUrlValue) return
-    if (player.isIOS()) {
-      await player.loadMediaTracks()
-      player.startHlsPlayback()
-      return
-    }
-
-    const safari = player.isSafari()
-    if (!player.mseSupported && !safari) {
-      player.videoTarget.src = player.streamingUrlValue
-      return
-    }
-
-    const tracksPromise = player.loadMediaTracks()
-    if (player.directPlayHintValue) player.primeDirectPlay()
-    await tracksPromise
-    if (player.directPlayEligible()) {
-      console.log("[Player] Path: direct play (native <video>, no ffmpeg)")
-      player.startDirectPlay()
-    } else if (safari) {
-      player.primedDirectPlayUrl = null
-      console.log("[Player] Path: native HLS (Safari)")
-      player.startHlsPlayback()
-    } else if (player.remuxDirectEligible()) {
-      player.primedDirectPlayUrl = null
-      console.log("[Player] Path: remux direct play (-c:v copy, no re-encode)")
-      player.startRemuxDirectPlay()
-    } else {
-      player.primedDirectPlayUrl = null
-      console.log("[Player] Path: MSE/transcode (hardware decode + encode)")
-      player.setupMseSource(player.streamingUrlValue)
-    }
+    this.paths ||= new PlaybackPaths(this.player)
+    await this.paths.start()
   }
 
   primeDirectPlay() {

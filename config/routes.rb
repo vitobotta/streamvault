@@ -5,35 +5,28 @@ Rails.application.routes.draw do
   root "home#index"
 
   # Search
-  resources :search, only: [:index]
+  resources :search, only: [ :index ]
 
   # Content detail
   get "content/:type/:imdb_id", to: "content#show", as: :content
   get "content/:type/:imdb_id/status", to: "content#status", as: :content_status
   get "content/:type/:imdb_id/episode_streams", to: "content#episode_streams", as: :episode_streams
 
-  # Library
-  resources :library, only: [:index, :create, :update, :destroy]
-
-  # Wishlist
-  resources :wishlist, only: [:index, :create, :destroy] do
-    member do
-      post :move_to_library
-    end
-  end
+  # Collection
+  resources :library, only: [ :index ]
+  resources :wishlist, only: [ :index ]
+  resource :collection, only: [ :update ]
 
   # Watch History
-  resources :watch_history, only: [:index, :destroy] do
+  resources :watch_history, only: [ :index, :destroy ] do
     collection do
       delete :clear_all
     end
   end
 
-  # Episodes
-  get "episodes/:show_imdb_id", to: "episodes#index", as: :episodes
 
   # Streaming
-  resources :streaming, only: [:create, :show] do
+  resources :streaming, only: [ :create, :show ] do
     collection do
       get :resume
       post :stall_telemetry

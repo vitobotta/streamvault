@@ -32,9 +32,8 @@ RSpec.describe "Content", type: :request do
 
         get content_path(type: "movie", imdb_id: "tt1375666")
         expect(response).to have_http_status(:ok)
-        expect(response.body).to include("stream-resolve-loading")
-        expect(response.body).to include("Finding a working stream")
-        expect(response.body).to include('data-controller="stream-loading"')
+        expect(response.body).to include('data-controller="page-loader"')
+        expect(response.body).not_to include('data-controller="stream-loading"')
       end
 
       it "rejects an invalid imdb_id format (SEC-09)" do
@@ -56,29 +55,23 @@ RSpec.describe "Content", type: :request do
 
     before { sign_in user }
 
-    it "returns JSON with library and wishlist status for the current user" do
-      library_entry = create(:library_entry, user: user, imdb_id: "tt1375666")
-      wishlist_entry = create(:wishlist_entry, user: user, imdb_id: "tt1375666")
+    it "returns the current user's unified collection state" do
+      create(:collection_entry, :wishlist, user: user, imdb_id: "tt1375666")
 
       get content_status_path(type: "movie", imdb_id: "tt1375666")
+
       expect(response).to have_http_status(:ok)
       expect(response.media_type).to eq("application/json")
-      body = response.parsed_body
-      expect(body["in_library"]).to be true
-      expect(body["in_wishlist"]).to be true
-      expect(body["library_entry_id"]).to eq(library_entry.id)
-      expect(body["wishlist_entry_id"]).to eq(wishlist_entry.id)
+      expect(response.parsed_body).to eq("state" => "wishlist")
     end
 
-    it "scopes to the current user (IDOR — other user's entries are not visible)" do
-      create(:library_entry, user: other_user, imdb_id: "tt1375666")
-      create(:wishlist_entry, user: other_user, imdb_id: "tt1375666")
+    it "does not expose another user's membership" do
+      create(:collection_entry, user: other_user, imdb_id: "tt1375666")
 
       get content_status_path(type: "movie", imdb_id: "tt1375666")
+
       expect(response).to have_http_status(:ok)
-      body = response.parsed_body
-      expect(body["in_library"]).to be false
-      expect(body["in_wishlist"]).to be false
+      expect(response.parsed_body).to eq("state" => "none")
     end
 
     it "rejects an invalid imdb_id" do

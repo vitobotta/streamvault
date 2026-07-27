@@ -10,9 +10,9 @@ class ContentController < ApplicationController
 
     return if reject_invalid_imdb_id!(@imdb_id) || reject_invalid_content_type!(@type)
 
-    torrentio = TorrentioService.new(rd_api_key: current_user&.realdebrid_api_key)
+    catalog = Catalog::CinemetaClient.new
 
-    meta_result = torrentio.metadata(@imdb_id, @type)
+    meta_result = catalog.metadata(@imdb_id, @type)
     @metadata = meta_result.success? ? meta_result.data : nil
 
     if @type != "show"
@@ -26,24 +26,20 @@ class ContentController < ApplicationController
       @streams_error = streams_result.failure? ? streams_result.error_message : nil
     end
 
-    @library_entry = current_user.library_entries.find_by(imdb_id: @imdb_id)
-    @wishlist_entry = current_user.wishlist_entries.find_by(imdb_id: @imdb_id)
-    @in_library = @library_entry.present?
-    @in_wishlist = @wishlist_entry.present?
+    @collection_entry = current_user.collection_entries.find_by(imdb_id: @imdb_id)
+    @in_library = @collection_entry&.library? || false
+    @in_wishlist = @collection_entry&.wishlist? || false
 
     if @type == "show"
-      @episode_progress = current_user.episode_progresses.for_show(@imdb_id).index_by { |ep| [ ep.season_number, ep.episode_number ] }
+      @episode_progress = current_user.playback_progresses.for_show(@imdb_id)
+        .index_by { |progress| [ progress.season_number, progress.episode_number ] }
       @selected_season = params[:season]&.to_i || 1
-      # Show progress = last watched episode (ordered by watched_at so
-      # the result is deterministic — find_by without ORDER BY returns
-      # whichever row the DB happens to find first).
-      @progress = current_user.watch_history_entries
-        .where(show_imdb_id: @imdb_id, content_type: :episode)
-        .order(watched_at: :desc).first&.progress_percentage
+      @progress = current_user.playback_progresses.for_show(@imdb_id)
+        .recently_watched.first&.progress_percentage
     else
       # Movie progress
-      @progress = current_user.watch_history_entries
-        .find_by(imdb_id: @imdb_id, content_type: :movie)
+      @progress = current_user.playback_progresses.movies_only
+        .find_by(imdb_id: @imdb_id)
         &.progress_percentage
     end
   end
@@ -53,15 +49,8 @@ class ContentController < ApplicationController
     type = params[:type]
     return if reject_invalid_imdb_id!(imdb_id) || reject_invalid_content_type!(type)
 
-    library_entry = current_user.library_entries.find_by(imdb_id: imdb_id)
-    wishlist_entry = current_user.wishlist_entries.find_by(imdb_id: imdb_id)
-
-    render json: {
-      in_library: library_entry.present?,
-      in_wishlist: wishlist_entry.present?,
-      library_entry_id: library_entry&.id,
-      wishlist_entry_id: wishlist_entry&.id
-    }
+    entry = current_user.collection_entries.find_by(imdb_id: imdb_id)
+    render json: { state: entry&.list_state || "none" }
   end
 
   def episode_streams
@@ -72,9 +61,9 @@ class ContentController < ApplicationController
 
     return if reject_invalid_imdb_id!(@imdb_id) || reject_invalid_content_type!(@type)
 
-    torrentio = TorrentioService.new(rd_api_key: current_user&.realdebrid_api_key)
+    catalog = Catalog::CinemetaClient.new
 
-    meta = torrentio.metadata(@imdb_id, @type)
+    meta = catalog.metadata(@imdb_id, @type)
     @show_title = meta.success? ? meta.data[:title] : @imdb_id
     @poster_url = meta.success? ? meta.data[:poster_url] : nil
     @episode_title = ""

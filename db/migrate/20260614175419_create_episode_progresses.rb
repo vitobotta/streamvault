@@ -13,7 +13,7 @@ class CreateEpisodeProgresses < ActiveRecord::Migration[8.1]
       t.timestamps
     end
 
-    add_index :episode_progresses, [:user_id, :show_imdb_id, :season_number, :episode_number], unique: true, name: "idx_episode_progresses_unique"
-    add_index :episode_progresses, [:user_id, :show_imdb_id]
+    add_index :episode_progresses, [ :user_id, :show_imdb_id, :season_number, :episode_number ], unique: true, name: "idx_episode_progresses_unique"
+    add_index :episode_progresses, [ :user_id, :show_imdb_id ]
   end
 end

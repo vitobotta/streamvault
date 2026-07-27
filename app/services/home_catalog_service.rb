@@ -8,8 +8,8 @@ class HomeCatalogService
     trending_shows: [ :trending, "show" ]
   }.freeze
 
-  def initialize(torrentio, limit: 20, logger: Rails.logger)
-    @torrentio = torrentio
+  def initialize(catalog, limit: 20, logger: Rails.logger)
+    @catalog = catalog
     @limit = limit
     @logger = logger
   end
@@ -23,7 +23,7 @@ class HomeCatalogService
   private
 
   def fetch(name, method_name, type)
-    @torrentio.public_send(method_name, type, limit: @limit)
+    @catalog.public_send(method_name, type, limit: @limit)
   rescue StandardError => e
     @logger.warn("[HomeCatalogService] #{name} failed: #{e.class}: #{e.message}")
     ServiceResult.failure("Unable to load #{name.to_s.tr('_', ' ')}")

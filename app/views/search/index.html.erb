@@ -1,7 +1,7 @@
 <div class="px-6 py-8">
   <h1 class="text-3xl font-bold text-white mb-6">Search</h1>
 
-  <%= form_tag search_index_path, method: :get, class: "mb-8", data: { turbo_frame: "_top", page_loader: "search" } do %>
+  <%= form_tag search_index_path, method: :get, class: "mb-8", data: { page_loader: "search" } do %>
     <div class="flex gap-3">
       <%= text_field_tag :q, @query, class: "input-field flex-1", placeholder: "Search for movies, TV shows...", autofocus: true %>
       <%= submit_tag "Search", class: "btn-primary cursor-pointer" %>
@@ -16,11 +16,11 @@
     <%# Results header with per_page control %>
     <div class="flex items-center justify-between mb-4">
       <p class="text-sm text-sv-text-muted">
-        Showing <%= (@page - 1) * @per_page + 1 %>&ndash;<%= [@page * @per_page, @total].min %> of <%= @total %> results
+        Showing <%= @pagination.first_item_number %>&ndash;<%= @pagination.last_item_number %> of <%= @pagination.total %> results
       </p>
       <div class="flex items-center gap-1 text-sm">
         <% [25, 50, 100, 200].each do |size| %>
-          <% if size == @per_page %>
+          <% if size == @pagination.per_page %>
             <span class="px-2 py-1 rounded bg-sv-accent text-white text-xs font-medium"><%= size %></span>
           <% else %>
             <%= link_to size, search_index_path(q: @query, per_page: size), class: "px-2 py-1 rounded bg-sv-surface text-sv-text-muted hover:text-white text-xs transition-colors" %>
@@ -32,64 +32,14 @@
     <%# Results grid %>
     <div class="grid gap-4" style="grid-template-columns: repeat(auto-fill, 160px)">
       <% @results.each do |result| %>
-        <div class="poster-card group shrink-0" style="width: 160px">
-        <%= link_to content_path(type: result[:type], imdb_id: result[:imdb_id]), data: { page_loader: "link" } do %>
-            <% if result[:poster_url] %>
-              <img src="<%= result[:poster_url] %>" alt="<%= result[:title] %>" loading="lazy" class="w-full aspect-[2/3] object-cover">
-            <% else %>
-              <div class="w-full aspect-[2/3] bg-sv-surface flex items-center justify-center">
-                <svg class="w-12 h-12 text-sv-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>
-              </div>
-            <% end %>
-            <div class="p-2">
-              <h3 class="text-xs font-medium text-white truncate"><%= result[:title] %></h3>
-              <p class="text-xs text-sv-text-muted mt-0.5"><%= result[:year] %> · <%= result[:type].capitalize %></p>
-            </div>
-          <% end %>
-        </div>
+        <%= render "shared/poster_card",
+                   item: result,
+                   link_path: content_path(type: result[:type], imdb_id: result[:imdb_id]),
+                   subtitle: [result[:year], result[:type]&.capitalize].compact.join(" · ") %>
       <% end %>
     </div>
 
-    <%# Pagination controls %>
-    <% if @total_pages > 1 %>
-      <nav class="flex items-center justify-center gap-2 mt-8" aria-label="Search pagination">
-        <%# Previous %>
-        <% if @page > 1 %>
-          <%= link_to search_index_path(q: @query, page: @page - 1, per_page: @per_page), class: "px-3 py-2 rounded-lg bg-sv-surface text-sv-text hover:bg-sv-surface-hover transition-colors text-sm" do %>
-            &larr; Previous
-          <% end %>
-        <% end %>
-
-        <%# Page numbers %>
-        <%
-          visible_pages = []
-          visible_pages << 1 unless @total_pages <= 1
-          ([@page - 2, 2].max..[@page + 2, @total_pages - 1].min).each { |p| visible_pages << p }
-          visible_pages << @total_pages if @total_pages > 1
-          visible_pages = visible_pages.uniq.sort
-        %>
-
-        <% prev_page = 0 %>
-        <% visible_pages.each do |p| %>
-          <% if p - prev_page > 1 %>
-            <span class="px-2 text-sv-text-muted">&hellip;</span>
-          <% end %>
-          <% if p == @page %>
-            <span class="px-3 py-2 rounded-lg bg-sv-accent text-white text-sm font-medium"><%= p %></span>
-          <% else %>
-            <%= link_to p, search_index_path(q: @query, page: p, per_page: @per_page), class: "px-3 py-2 rounded-lg bg-sv-surface text-sv-text hover:bg-sv-surface-hover transition-colors text-sm" %>
-          <% end %>
-          <% prev_page = p %>
-        <% end %>
-
-        <%# Next %>
-        <% if @page < @total_pages %>
-          <%= link_to search_index_path(q: @query, page: @page + 1, per_page: @per_page), class: "px-3 py-2 rounded-lg bg-sv-surface text-sv-text hover:bg-sv-surface-hover transition-colors text-sm" do %>
-            Next &rarr;
-          <% end %>
-        <% end %>
-      </nav>
-    <% end %>
+    <%= render "shared/pagination", pagination: @pagination, label: "Search" %>
 
   <% elsif @query.present? %>
     <p class="text-sv-text-muted">No results found for "<%= @query %>".</p>

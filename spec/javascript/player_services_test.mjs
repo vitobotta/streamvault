@@ -1,8 +1,16 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import { readFile } from "node:fs/promises"
 import { WebVttParser } from "../../app/javascript/player/web_vtt_parser.js"
 
 const parser = new WebVttParser()
+
+test("browser player modules use pinned importmap specifiers", async () => {
+  for (const filename of [ "playback_coordinator.js", "playback_engine.js" ]) {
+    const source = await readFile(new URL(`../../app/javascript/player/${filename}`, import.meta.url), "utf8")
+    assert.doesNotMatch(source, /from\s+["']\.\//)
+  }
+})
 
 test("WebVTT parser accepts identifiers, cue settings, and HTML entities", () => {
   const cues = parser.parse(`WEBVTT\n\n42\n00:01.250 --> 00:03.500 align:center\n<i>Hello &amp; goodbye</i>\n`)

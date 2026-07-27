@@ -2,10 +2,9 @@ require 'rails_helper'
 
 RSpec.describe User, type: :model do
   describe "associations" do
-    it { is_expected.to have_many(:library_entries).dependent(:destroy) }
-    it { is_expected.to have_many(:watch_history_entries).dependent(:destroy) }
-    it { is_expected.to have_many(:wishlist_entries).dependent(:destroy) }
-    it { is_expected.to have_many(:episode_progresses).dependent(:destroy) }
+    it { is_expected.to have_many(:collection_entries).dependent(:destroy) }
+    it { is_expected.to have_many(:playback_progresses).dependent(:destroy) }
+    it { is_expected.to have_many(:hls_sessions).dependent(:destroy) }
   end
 
   describe "encryption" do
@@ -24,7 +23,7 @@ RSpec.describe User, type: :model do
   describe "language defaults" do
     it "defaults preferred_languages to English on create" do
       user = create(:user)
-      expect(user.preferred_languages).to eq(["ENG"])
+      expect(user.preferred_languages).to eq([ "ENG" ])
       expect(user.default_language).to eq("ENG")
     end
   end

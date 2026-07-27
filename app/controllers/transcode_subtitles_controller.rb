@@ -1,18 +1,14 @@
 # frozen_string_literal: true
 
 class TranscodeSubtitlesController < ApplicationController
-  include StreamUrlValidation
+  include ResolvedSourceAccess
 
   before_action :authenticate_user!
 
   def show
-    input_url = params[:url].to_s
-    unless valid_stream_url?(input_url) && verify_stream_url!
-      head :bad_request
-      return
-    end
+    source = resolved_source
 
-    result = subtitle_result(input_url)
+    result = subtitle_result(source)
 
     case result.status
     when :ok
@@ -26,15 +22,12 @@ class TranscodeSubtitlesController < ApplicationController
     else
       render json: { error: "Subtitle extraction failed" }, status: :bad_gateway
     end
+  rescue ResolvedSource::Invalid
+    head :bad_request
   end
 
   private
 
-  def transcode_headers
-    return {} unless current_user.has_realdebrid_key?
-
-    { "Authorization" => "Bearer #{current_user.realdebrid_api_key}" }
-  end
 
   def normalized_start_seconds(value)
     seconds = value.to_f
@@ -43,15 +36,15 @@ class TranscodeSubtitlesController < ApplicationController
 
   def normalized_duration_seconds(value)
     seconds = value.to_i
-    return TranscodeService::SUBTITLE_EXTRACTION_WINDOW_SECONDS unless seconds.positive?
+    return Media::Subtitles::DEFAULT_WINDOW_SECONDS unless seconds.positive?
 
     seconds.clamp(
-      TranscodeService::MIN_SUBTITLE_EXTRACTION_WINDOW_SECONDS,
-      TranscodeService::MAX_SUBTITLE_EXTRACTION_WINDOW_SECONDS
+      Media::Subtitles::MIN_WINDOW_SECONDS,
+      Media::Subtitles::MAX_WINDOW_SECONDS
     )
   end
 
-  def subtitle_result(input_url)
+  def subtitle_result(source)
     if ExternalSubtitleService.external_stream?(params[:subtitle_stream])
       return ExternalSubtitleService.extract_subtitles(
         params[:subtitle_stream],
@@ -60,9 +53,9 @@ class TranscodeSubtitlesController < ApplicationController
       )
     end
 
-    TranscodeService.extract_subtitles(
-      input_url,
-      headers: transcode_headers,
+    Media::Subtitles.extract(
+      source.url,
+      headers: source_headers,
       subtitle_stream: params[:subtitle_stream],
       start_seconds: normalized_start_seconds(params[:start_seconds]),
       duration_seconds: normalized_duration_seconds(params[:duration_seconds])

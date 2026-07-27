@@ -9,6 +9,15 @@ RSpec.describe "Streaming", type: :request do
     ENV.delete("STREAM_PROVIDER")
   end
 
+  def expect_playback_redirect(user:, source_url:, **attributes)
+    expect(response).to have_http_status(:found)
+    descriptor = redirected_playback_descriptor(response, user: user)
+    expect(descriptor.to_h).to include(attributes)
+    source = ResolvedSource.resolve(token: descriptor.source_token, user: user, verify_dns: false)
+    expect(source.url).to eq(source_url)
+    descriptor
+  end
+
   describe "POST /streaming" do
     context "when not authenticated" do
       it "redirects to login" do
@@ -54,14 +63,14 @@ RSpec.describe "Streaming", type: :request do
           .to_return(status: 302, headers: { "Location" => "https://download.real-debrid.com/d/file123/Inception.mp4" })
 
         post streaming_index_path, params: { imdb_id: "tt1375666", type: "movie", title: "Inception" }
-        expect(response).to redirect_to(streaming_path("play",
-          streaming_url: "https://download.real-debrid.com/d/file123/Inception.mp4",
+        expect_playback_redirect(
+          user: user,
+          source_url: "https://download.real-debrid.com/d/file123/Inception.mp4",
           filename: "Inception.mp4",
-          imdb_id: "tt1375666",
-          type: "movie",
+          content_ref: { imdb_id: "tt1375666", type: "movie", season: nil, episode: nil },
           title: "Inception",
           duration: 0
-        ))
+        )
       end
 
       it "passes metadata runtime to the player duration" do
@@ -83,14 +92,14 @@ RSpec.describe "Streaming", type: :request do
           filename: "Inception.mp4"
         }
 
-        expect(response).to redirect_to(streaming_path("play",
-          streaming_url: "https://download.real-debrid.com/d/file123/Inception.mp4",
+        expect_playback_redirect(
+          user: user,
+          source_url: "https://download.real-debrid.com/d/file123/Inception.mp4",
           filename: "Inception.mp4",
-          imdb_id: "tt1375666",
-          type: "movie",
+          content_ref: { imdb_id: "tt1375666", type: "movie", season: nil, episode: nil },
           title: "Inception",
-          duration: 8880
-        ))
+          duration: 8_880
+        )
       end
 
       it "redirects oversized heavy-transcode selections to a playback-safe source" do
@@ -128,20 +137,20 @@ RSpec.describe "Streaming", type: :request do
           video_codec: "hevc"
         }
 
-        expect(response).to redirect_to(streaming_path("play",
-          streaming_url: "https://download.real-debrid.com/d/small/Inception1080.mp4",
+        expect_playback_redirect(
+          user: user,
+          source_url: "https://download.real-debrid.com/d/small/Inception1080.mp4",
           filename: "Inception1080.mp4",
-          imdb_id: "tt1375666",
-          type: "movie",
+          content_ref: { imdb_id: "tt1375666", type: "movie", season: nil, episode: nil },
           title: "Inception",
-          duration: 8880,
+          duration: 8_880,
           direct_play_hint: true
-        ))
+        )
         expect(WebMock).not_to have_requested(:get, selected_url)
       end
 
       it "prefers saved progress duration over metadata runtime" do
-        create(:watch_history_entry, user: user, imdb_id: "tt1375666", progress_seconds: 3600, duration_seconds: 7200)
+        create(:playback_progress, user: user, imdb_id: "tt1375666", progress_seconds: 3600, duration_seconds: 7200)
 
         stub_request(:get, "https://v3-cinemeta.strem.io/meta/movie/tt1375666.json")
           .to_return(
@@ -161,15 +170,15 @@ RSpec.describe "Streaming", type: :request do
           filename: "Inception.mp4"
         }
 
-        expect(response).to redirect_to(streaming_path("play",
-          streaming_url: "https://download.real-debrid.com/d/file123/Inception.mp4",
+        expect_playback_redirect(
+          user: user,
+          source_url: "https://download.real-debrid.com/d/file123/Inception.mp4",
           filename: "Inception.mp4",
-          imdb_id: "tt1375666",
-          type: "movie",
+          content_ref: { imdb_id: "tt1375666", type: "movie", season: nil, episode: nil },
           title: "Inception",
-          resume_at: 3600,
-          duration: 7200
-        ))
+          resume_at: 3_600.0,
+          duration: 7_200
+        )
       end
 
       it "marks MKV streams for transcoding" do
@@ -195,14 +204,14 @@ RSpec.describe "Streaming", type: :request do
           .to_return(status: 302, headers: { "Location" => "https://download.real-debrid.com/d/file123/Inception.mkv" })
 
         post streaming_index_path, params: { imdb_id: "tt1375666", type: "movie", title: "Inception" }
-        expect(response).to redirect_to(streaming_path("play",
-          streaming_url: "https://download.real-debrid.com/d/file123/Inception.mkv",
+        expect_playback_redirect(
+          user: user,
+          source_url: "https://download.real-debrid.com/d/file123/Inception.mkv",
           filename: "Inception.mkv",
-          imdb_id: "tt1375666",
-          type: "movie",
+          content_ref: { imdb_id: "tt1375666", type: "movie", season: nil, episode: nil },
           title: "Inception",
           duration: 0
-        ))
+        )
       end
 
       it "skips blocked streams and tries next" do
@@ -232,14 +241,14 @@ RSpec.describe "Streaming", type: :request do
           .to_return(status: 302, headers: { "Location" => "https://download.real-debrid.com/d/file456/Inception720.mp4" })
 
         post streaming_index_path, params: { imdb_id: "tt1375666", type: "movie", title: "Inception" }
-        expect(response).to redirect_to(streaming_path("play",
-          streaming_url: "https://download.real-debrid.com/d/file456/Inception720.mp4",
+        expect_playback_redirect(
+          user: user,
+          source_url: "https://download.real-debrid.com/d/file456/Inception720.mp4",
           filename: "Inception720.mp4",
-          imdb_id: "tt1375666",
-          type: "movie",
+          content_ref: { imdb_id: "tt1375666", type: "movie", season: nil, episode: nil },
           title: "Inception",
           duration: 0
-        ))
+        )
       end
 
       it "falls back when the selected stream is blocked" do
@@ -276,14 +285,14 @@ RSpec.describe "Streaming", type: :request do
           filename: "Inception.mkv"
         }
 
-        expect(response).to redirect_to(streaming_path("play",
-          streaming_url: "https://download.real-debrid.com/d/file456/Inception720.mp4",
+        expect_playback_redirect(
+          user: user,
+          source_url: "https://download.real-debrid.com/d/file456/Inception720.mp4",
           filename: "Inception720.mp4",
-          imdb_id: "tt1375666",
-          type: "movie",
+          content_ref: { imdb_id: "tt1375666", type: "movie", season: nil, episode: nil },
           title: "Inception",
           duration: 0
-        ))
+        )
       end
     end
   end
@@ -312,10 +321,51 @@ RSpec.describe "Streaming", type: :request do
 
     before { cinemeta_stub }
 
+    it "resumes an incomplete movie without episode coordinates" do
+      progress = create(:playback_progress, :movie,
+        user: user,
+        imdb_id: "tt1375666",
+        title: "Inception",
+        poster_url: "https://img.example.com/inception.jpg",
+        progress_seconds: 3_000,
+        duration_seconds: 7_200)
+      resolve_url = "https://torrentio.strem.fun/resolve/realdebrid/test_key/movie/null/0/Inception.mp4"
+
+      stub_request(:get, %r{torrentio\.strem\.fun/([^/]+/)?stream/movie/tt1375666\.json})
+        .to_return(
+          status: 200,
+          body: {
+            "streams" => [
+              {
+                "title" => "Inception ENG 1080p",
+                "url" => resolve_url,
+                "behaviorHints" => { "filename" => "Inception.mp4" }
+              }
+            ]
+          }.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+      stub_request(:get, resolve_url)
+        .to_return(status: 302, headers: { "Location" => "https://download.real-debrid.com/d/movie/Inception.mp4" })
+
+      get resume_streaming_index_path(imdb_id: "tt1375666", type: "movie")
+
+      expect_playback_redirect(
+        user: user,
+        source_url: "https://download.real-debrid.com/d/movie/Inception.mp4",
+        filename: "Inception.mp4",
+        content_ref: { imdb_id: "tt1375666", type: "movie", season: nil, episode: nil },
+        title: progress.title,
+        poster_url: progress.poster_url,
+        resume_at: 3_000.0,
+        duration: 7_200
+      )
+    end
+
     it "resumes the current episode at 97.5% despite rounded display progress" do
-      progress = create(:episode_progress, user: user, show_imdb_id: "tt0903747",
-             season_number: 1, episode_number: 1,
-             progress_seconds: 3393, duration_seconds: 3480)
+      progress = create(:playback_progress, :episode, user: user, imdb_id: "tt0903747",
+        season_number: 1, episode_number: 1,
+        progress_seconds: 3393, duration_seconds: 3480)
 
       stub_request(:get, %r{torrentio\.strem\.fun/([^/]+/)?stream/series/tt0903747:1:1\.json})
         .to_return(
@@ -326,29 +376,27 @@ RSpec.describe "Streaming", type: :request do
       stub_request(:get, "https://torrentio.strem.fun/resolve/realdebrid/test_key/abc/null/0/bb.mp4")
         .to_return(status: 302, headers: { "Location" => "https://download.real-debrid.com/d/bb/bb.mp4" })
 
-      get resume_streaming_index_path(show_imdb_id: "tt0903747", type: "show")
+      get resume_streaming_index_path(imdb_id: "tt0903747", type: "show")
 
       # Metadata (title, duration) now comes from the DB progress row,
       # not a Cinemeta round-trip — resume is faster and no external
       # metadata call is made.
-      expect(response).to redirect_to(streaming_path("play",
-        streaming_url: "https://download.real-debrid.com/d/bb/bb.mp4",
+      expect_playback_redirect(
+        user: user,
+        source_url: "https://download.real-debrid.com/d/bb/bb.mp4",
         filename: "bb.mp4",
-        imdb_id: "tt0903747",
-        type: "show",
-        season: 1,
-        episode: 1,
-        title: progress.show_title,
+        content_ref: { imdb_id: "tt0903747", type: "show", season: 1, episode: 1 },
+        title: progress.title,
         poster_url: nil,
-        resume_at: 3393,
-        duration: 3480
-      ))
+        resume_at: 3_393.0,
+        duration: 3_480
+      )
     end
 
     it "advances to the next episode when the last-watched is >= 98%" do
-      progress = create(:episode_progress, user: user, show_imdb_id: "tt0903747",
-             season_number: 1, episode_number: 1,
-             progress_seconds: 3411, duration_seconds: 3480) # > 98%
+      progress = create(:playback_progress, :episode, user: user, imdb_id: "tt0903747",
+        season_number: 1, episode_number: 1,
+        progress_seconds: 3411, duration_seconds: 3480) # > 98%
 
       stub_request(:get, %r{torrentio\.strem\.fun/([^/]+/)?stream/series/tt0903747:1:2\.json})
         .to_return(
@@ -359,31 +407,29 @@ RSpec.describe "Streaming", type: :request do
       stub_request(:get, "https://torrentio.strem.fun/resolve/realdebrid/test_key/def/null/0/bb2.mp4")
         .to_return(status: 302, headers: { "Location" => "https://download.real-debrid.com/d/bb2/bb2.mp4" })
 
-      get resume_streaming_index_path(show_imdb_id: "tt0903747", type: "show")
+      get resume_streaming_index_path(imdb_id: "tt0903747", type: "show")
 
       # Title comes from the DB progress row's show_title; duration is 0
       # because no progress row exists yet for the next episode.
-      expect(response).to redirect_to(streaming_path("play",
-        streaming_url: "https://download.real-debrid.com/d/bb2/bb2.mp4",
+      expect_playback_redirect(
+        user: user,
+        source_url: "https://download.real-debrid.com/d/bb2/bb2.mp4",
         filename: "bb2.mp4",
-        imdb_id: "tt0903747",
-        type: "show",
-        season: 1,
-        episode: 2,
-        title: progress.show_title,
+        content_ref: { imdb_id: "tt0903747", type: "show", season: 1, episode: 2 },
+        title: progress.title,
         poster_url: nil,
-        resume_at: 0,
+        resume_at: 0.0,
         duration: 0
-      ))
+      )
     end
 
     it "leaves the ended player in place when autoplay reaches the series finale" do
-      create(:episode_progress, user: user, show_imdb_id: "tt0903747",
+      create(:playback_progress, :episode, user: user, imdb_id: "tt0903747",
         season_number: 1, episode_number: 2,
         progress_seconds: 2880, duration_seconds: 2880)
 
       get resume_streaming_index_path(
-        show_imdb_id: "tt0903747",
+        imdb_id: "tt0903747",
         type: "show",
         autoplay: "1"
       )
@@ -395,18 +441,20 @@ RSpec.describe "Streaming", type: :request do
   describe "GET /streaming/:id" do
     before { sign_in user }
 
-    it "renders the player page with video source" do
-      get streaming_path("play",
-        streaming_url: "https://download.real-debrid.com/d/file123/Inception.mp4",
+    it "renders the player from a signed playback descriptor without exposing the source URL" do
+      playback = signed_playback_for(
+        user,
+        url: "https://download.real-debrid.com/d/file123/Inception.mp4",
         filename: "Inception.mp4",
-        imdb_id: "tt1375666",
-        type: "movie",
-        title: "Inception",
-        needs_transcode: true
+        title: "Inception"
       )
+
+      get streaming_path("play", playback: playback)
+
       expect(response).to have_http_status(:ok)
       expect(response.body).to include("video-player")
-      expect(response.body).to include("download.real-debrid.com")
+      expect(response.body).not_to include("https://download.real-debrid.com")
+      expect(response.body).to include(%(data-video-player-source-value="))
       expect(response.body).to include(%(data-video-player-target="startupOverlay"))
       expect(response.body).to include("Starting playback")
       expect(response.body).to include(%(data-video-player-default-language-value="ENG"))
@@ -423,54 +471,33 @@ RSpec.describe "Streaming", type: :request do
     end
 
     it "renders the direct-play preload hint" do
-      get streaming_path("play",
-        streaming_url: "https://download.real-debrid.com/d/file123/Inception.mp4",
-        filename: "Inception.mp4",
-        imdb_id: "tt1375666",
-        type: "movie",
-        direct_play_hint: true
-      )
+      playback = signed_playback_for(user, direct_play_hint: true)
+
+      get streaming_path("play", playback: playback)
 
       expect(response).to have_http_status(:ok)
       expect(response.body).to include(%(data-video-player-direct-play-hint-value="true"))
     end
 
-    it "uses transcode proxy for MKV files" do
-      get streaming_path("play",
-        streaming_url: "https://download.real-debrid.com/d/file123/Inception.mkv",
+    it "uses the signed source on transcode endpoints for MKV files" do
+      playback = signed_playback_for(
+        user,
+        url: "https://download.real-debrid.com/d/file123/Inception.mkv",
         filename: "Inception.mkv",
-        imdb_id: "tt1375666",
-        type: "movie",
-        title: "Inception",
-        needs_transcode: true
-      )
-      expect(response).to have_http_status(:ok)
-      expect(response.body).to include("transcode")
-    end
-
-    it "passes a selected subtitle stream to the transcode proxy" do
-      get streaming_path("play",
-        streaming_url: "https://download.real-debrid.com/d/file123/Inception.mkv",
-        filename: "Inception.mkv",
-        imdb_id: "tt1375666",
-        type: "movie",
-        title: "Inception",
-        subtitle_stream: "4"
+        title: "Inception"
       )
 
+      get streaming_path("play", playback: playback)
+
       expect(response).to have_http_status(:ok)
-      expect(response.body).to include("subtitle_stream=4")
+      expect(response.body).to include("/transcode?source=")
+      expect(response.body).not_to include("streaming_url=")
     end
 
     it "renders the known duration for the player controller" do
-      get streaming_path("play",
-        streaming_url: "https://download.real-debrid.com/d/file123/Inception.mp4",
-        filename: "Inception.mp4",
-        imdb_id: "tt1375666",
-        type: "movie",
-        title: "Inception",
-        duration: 8880
-      )
+      playback = signed_playback_for(user, title: "Inception", duration: 8_880)
+
+      get streaming_path("play", playback: playback)
 
       expect(response).to have_http_status(:ok)
       expect(response.body).to include(%(data-video-player-duration-value="8880"))
@@ -481,42 +508,23 @@ RSpec.describe "Streaming", type: :request do
       expect(response.body).not_to include("progressFallbackAttached")
     end
 
-    it "backfills duration for old player URLs that still have duration zero" do
-      stub_request(:get, "https://v3-cinemeta.strem.io/meta/movie/tt1375666.json")
-        .to_return(
-          status: 200,
-          body: { "meta" => { "id" => "tt1375666", "name" => "Inception", "runtime" => "148 min" } }.to_json,
-          headers: { 'Content-Type' => 'application/json' }
-        )
-
-      get streaming_path("play",
-        streaming_url: "https://download.real-debrid.com/d/file123/Inception.mp4",
-        filename: "Inception.mp4",
-        imdb_id: "tt1375666",
-        type: "movie",
-        title: "Inception",
-        duration: 0
-      )
-
-      expect(response).to have_http_status(:ok)
-      expect(response.body).to include(%(data-video-player-duration-value="8880"))
-      expect(response.body).to include(">2:28:00</span>")
-    end
-
     it "renders progress metadata when duration is unknown" do
-      get streaming_path("play",
-        streaming_url: "https://download.real-debrid.com/d/file123/Inception.mp4",
-        filename: "Inception.mp4",
-        imdb_id: "tt1375666",
-        type: "movie",
-        title: "Inception"
-      )
+      playback = signed_playback_for(user, title: "Inception")
+
+      get streaming_path("play", playback: playback)
 
       expect(response).to have_http_status(:ok)
       expect(response.body).to include(%(data-video-player-progress-url-value="/streaming/play/progress"))
       expect(response.body).to include(%(data-video-player-duration-value="0"))
       expect(response.body).not_to include("progressFallbackAttached")
       expect(response.body).not_to include("duration_seconds: durationSeconds()")
+    end
+
+    it "rejects a tampered playback descriptor" do
+      get streaming_path("play", playback: "tampered")
+
+      expect(response).to redirect_to(root_path)
+      expect(flash[:alert]).to eq("Playback link is invalid or expired.")
     end
   end
 
@@ -532,7 +540,7 @@ RSpec.describe "Streaming", type: :request do
     end
 
     it "saves progress" do
-      create(:library_entry, user: user, imdb_id: "tt1375666")
+      create(:collection_entry, user: user, imdb_id: "tt1375666")
 
       patch progress_streaming_path("play"), params: {
         imdb_id: "tt1375666",
@@ -542,7 +550,7 @@ RSpec.describe "Streaming", type: :request do
       }
 
       expect(response).to have_http_status(:ok)
-      expect(user.watch_history_entries.count).to eq(1)
+      expect(user.playback_progresses.count).to eq(1)
     end
 
     it "persists poster_url passed from the player" do
@@ -556,12 +564,12 @@ RSpec.describe "Streaming", type: :request do
       }
 
       expect(response).to have_http_status(:ok)
-      entry = user.watch_history_entries.first
+      entry = user.playback_progresses.first
       expect(entry.poster_url).to eq("https://img.example.com/inception.jpg")
     end
 
     it "falls back to wishlist poster when poster_url not sent" do
-      create(:wishlist_entry, user: user, imdb_id: "tt1375666", poster_url: "https://img.example.com/wish.jpg")
+      create(:collection_entry, :wishlist, user: user, imdb_id: "tt1375666", poster_url: "https://img.example.com/wish.jpg")
 
       patch progress_streaming_path("play"), params: {
         imdb_id: "tt1375666",
@@ -571,7 +579,7 @@ RSpec.describe "Streaming", type: :request do
       }
 
       expect(response).to have_http_status(:ok)
-      expect(user.watch_history_entries.first.poster_url).to eq("https://img.example.com/wish.jpg")
+      expect(user.playback_progresses.first.poster_url).to eq("https://img.example.com/wish.jpg")
     end
 
     it "saves first progress tick before duration is known" do
@@ -584,7 +592,7 @@ RSpec.describe "Streaming", type: :request do
       }
 
       expect(response).to have_http_status(:ok)
-      entry = user.watch_history_entries.first
+      entry = user.playback_progresses.first
       expect(entry.title).to eq("Inception")
       expect(entry.duration_seconds).to eq(0)
       expect(entry.progress_percentage).to eq(1)

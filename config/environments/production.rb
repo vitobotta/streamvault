@@ -21,8 +21,6 @@ Rails.application.configure do
   # Enable serving of images, stylesheets, and JavaScripts from an asset server.
   # config.asset_host = "http://assets.example.com"
 
-  # Store uploaded files on the local file system (see config/storage.yml for options).
-  config.active_storage.service = :local
 
   # Assume all access to the app is happening through a SSL-terminating
   # reverse proxy (Caddy / kamal-proxy), so request.ssl? reflects the
@@ -51,9 +49,7 @@ Rails.application.configure do
   config.active_support.report_deprecations = false
 
   # Use the database-backed adapters for Rails.cache and Active Job.
-  # Both share the single primary Postgres database — no separate
-  # connections.  Action Cable is configured via config/cable.yml
-  # (also using solid_cable on the primary database).
+  # Both share the single primary Postgres database.
   config.cache_store = :solid_cache_store
   config.active_job.queue_adapter = :solid_queue
 
@@ -83,7 +79,7 @@ Rails.application.configure do
   # Only use :id for inspections in production.
   config.active_record.attributes_for_inspect = [ :id ]
 
-  # Enable DNS rebinding protection. When APP_DOMAIN is set, only
+ # Enable DNS rebinding protection. When APP_DOMAIN is set, only
  # requests with that Host header are allowed. The health check
  # endpoint is always excluded so Kamal deploy probes work.
  if ENV["APP_DOMAIN"].present?

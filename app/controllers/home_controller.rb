@@ -4,21 +4,12 @@ class HomeController < ApplicationController
   before_action :authenticate_user!
 
   def index
-    torrentio = TorrentioService.new(rd_api_key: current_user.realdebrid_api_key)
-    excluded_recommendation_ids = RecommendationService.excluded_imdb_ids(current_user)
-    visible_recommendations = policy_scope(Recommendation)
-      .where.not(imdb_id: excluded_recommendation_ids)
-      .ordered
-      .limit(20)
-    @recommendations = ServiceResult.success(
-      visible_recommendations.map { |r|
-        { tmdb_id: r.tmdb_id, imdb_id: r.imdb_id, title: r.title, poster_url: r.poster_url, type: r.content_type, year: r.year }
-      }
-    )
+    catalog = Catalog::CinemetaClient.new
+    @recommendations = RecommendationService.for(current_user)
     @continue_watching = fetch_continue_watching
-    @recently_added = policy_scope(LibraryEntry).where("created_at > ?", 2.weeks.ago).recently_added.limit(20)
-    @wishlist_preview = policy_scope(WishlistEntry).recently_added.limit(20)
-    catalogs = HomeCatalogService.new(torrentio).call
+    @recently_added = current_user.collection_entries.library.where("created_at > ?", 2.weeks.ago).recently_added.limit(20)
+    @wishlist_preview = current_user.collection_entries.wishlist.recently_added.limit(20)
+    catalogs = HomeCatalogService.new(catalog).call
     @popular = catalogs.fetch(:popular)
     @popular_shows = catalogs.fetch(:popular_shows)
     @trending = catalogs.fetch(:trending)
@@ -28,7 +19,7 @@ class HomeController < ApplicationController
   private
 
   def fetch_continue_watching
-    result = ProgressTrackingService.continue_watching(current_user)
+    result = Playback::ContinueWatchingQuery.new(current_user).call
     result.success? ? result.data : []
   end
 end

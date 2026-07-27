@@ -26,6 +26,7 @@ services:
     environment:
       RAILS_ENV: production
       DATABASE_URL: postgres://${POSTGRES_USER:-streamvault}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-streamvault}
+      SOLID_QUEUE_IN_PUMA: "true"
     depends_on:
       db:
         condition: service_healthy

@@ -8,12 +8,9 @@ class User < ApplicationRecord
   encrypts :realdebrid_api_key, deterministic: false
 
   # Associations
-  has_many :library_entries, dependent: :destroy
-  has_many :watch_history_entries, dependent: :destroy
-  has_many :wishlist_entries, dependent: :destroy
-  has_many :episode_progresses, dependent: :destroy
-  has_many :recommendations, dependent: :destroy
-  has_many :hls_session_records, dependent: :destroy
+  has_many :collection_entries, dependent: :destroy
+  has_many :playback_progresses, dependent: :destroy
+  has_many :hls_sessions, dependent: :destroy
 
   # Language preferences
   serialize :preferred_languages, coder: JSON

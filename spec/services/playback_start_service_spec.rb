@@ -2,48 +2,60 @@ require "rails_helper"
 
 RSpec.describe PlaybackStartService do
   let(:user) { create(:user, realdebrid_api_key: "test_key") }
-  let(:streaming_service) { instance_double(ContentStreamingService) }
-  subject(:service) { described_class.new(user, streaming_service: streaming_service) }
+  let(:resolver) { instance_double(Streams::Resolver) }
+  let(:catalog) { instance_double(Catalog::CinemetaClient) }
+  let(:source) do
+    ResolvedSource.new(
+      url: "https://download.real-debrid.com/d/file/movie.mp4",
+      filename: "movie.mp4"
+    )
+  end
+  let(:stream_result) do
+    ServiceResult.success(source: source, stream: StreamCandidate.new(filename: source.filename))
+  end
 
-  it "builds the player payload for an automatically selected stream" do
-    allow(streaming_service).to receive(:start_stream)
-      .with("tt1375666", "movie", season: nil, episode: nil)
-      .and_return(ServiceResult.success(streaming_url: "https://media.test/movie.mp4", filename: "movie.mp4"))
-    allow_any_instance_of(TorrentioService).to receive(:metadata)
+  subject(:service) do
+    described_class.new(user, streaming_service: resolver, catalog: catalog)
+  end
+
+  before do
+    allow(catalog).to receive(:metadata).and_return(ServiceResult.failure("metadata unavailable"))
+  end
+
+  it "builds a playback descriptor for an automatically selected stream" do
+    content_ref = ContentRef.new(imdb_id: "tt1375666", type: "movie")
+    allow(resolver).to receive(:start).with(content_ref).and_return(stream_result)
+    allow(catalog).to receive(:metadata)
+      .with("tt1375666", "movie")
       .and_return(ServiceResult.success(runtime_seconds: 7_200))
 
     result = service.start(imdb_id: "tt1375666", type: "movie", title: "Inception")
 
     expect(result).to be_success
-    expect(result.data).to include(
-      streaming_url: "https://media.test/movie.mp4",
+    expect(result.data).to be_a(PlaybackDescriptor)
+    expect(result.data.to_h).to include(
       filename: "movie.mp4",
-      imdb_id: "tt1375666",
-      type: "movie",
+      content_ref: content_ref.to_h,
       title: "Inception",
       duration: 7_200
     )
+    resolved_source = ResolvedSource.resolve(token: result.data.source_token, user: user, verify_dns: false)
+    expect(resolved_source.to_h).to eq(source.to_h)
   end
 
   it "resolves an explicit selection and preserves its direct-play hint" do
-    allow(streaming_service).to receive(:resolve_single)
-      .with(
-        "https://provider.test/resolve/1",
+    allow(resolver).to receive(:resolve) do |candidate, content_ref:, duration:|
+      expect(candidate).to eq(StreamCandidate.new(
+        resolve_url: "https://provider.test/resolve/1",
         filename: "movie.mp4",
-        imdb_id: "tt1375666",
-        type: "movie",
-        season: nil,
-        episode: nil,
-        duration: 7_200,
         raw_size: 1_000,
         video_codec: "h264",
         compatibility_score: 100
-      )
-      .and_return(ServiceResult.success(
-        streaming_url: "https://media.test/movie.mp4",
-        filename: "movie.mp4",
-        direct_play_hint: true
       ))
+      expect(content_ref).to eq(ContentRef.new(imdb_id: "tt1375666", type: "movie"))
+      expect(duration).to eq(7_200)
+      ServiceResult.success(source: source, stream: candidate, direct_play_hint: true)
+    end
 
     result = service.start(
       imdb_id: "tt1375666",
@@ -59,27 +71,25 @@ RSpec.describe PlaybackStartService do
       }
     )
 
-    expect(result.data).to include(duration: 7_200, direct_play_hint: true)
+    expect(result.data.to_h).to include(duration: 7_200, direct_play_hint: true)
   end
 
   it "prefers a saved duration and position over a requested duration" do
-    create(:watch_history_entry, :movie,
+    create(:playback_progress, :movie,
       user: user,
       imdb_id: "tt1375666",
       progress_seconds: 3_600,
       duration_seconds: 7_200)
-    allow(streaming_service).to receive(:start_stream)
-      .and_return(ServiceResult.success(streaming_url: "https://media.test/movie.mp4", filename: "movie.mp4"))
+    allow(resolver).to receive(:start).and_return(stream_result)
 
     result = service.start(imdb_id: "tt1375666", type: "movie", requested_duration: 8_880)
 
-    expect(result.data).to include(resume_at: 3_600, duration: 7_200)
+    expect(result.data.to_h).to include(resume_at: 3_600.0, duration: 7_200)
   end
 
-  it "uses an already-resolved resume target without another progress lookup" do
-    allow(streaming_service).to receive(:start_stream)
-      .with("tt0903747", "show", season: 2, episode: 3)
-      .and_return(ServiceResult.success(streaming_url: "https://media.test/episode.mp4", filename: "episode.mp4"))
+  it "uses an already-resolved resume target" do
+    content_ref = ContentRef.new(imdb_id: "tt0903747", type: "show", season: 2, episode: 3)
+    allow(resolver).to receive(:start).with(content_ref).and_return(stream_result)
 
     result = service.resume(
       imdb_id: "tt0903747",
@@ -94,12 +104,41 @@ RSpec.describe PlaybackStartService do
       }
     )
 
-    expect(result.data).to include(season: 2, episode: 3, resume_at: 90, duration: 3_000)
+    expect(result.data.to_h).to include(
+      content_ref: content_ref.to_h,
+      resume_at: 90.0,
+      duration: 3_000
+    )
+  end
+
+  it "uses an episode-free resume target for a movie" do
+    content_ref = ContentRef.new(imdb_id: "tt1375666", type: "movie")
+    allow(resolver).to receive(:start).with(content_ref).and_return(stream_result)
+
+    result = service.resume(
+      imdb_id: "tt1375666",
+      type: "movie",
+      target: {
+        season: nil,
+        episode: nil,
+        resume_at: 3_000,
+        title: "Inception",
+        poster_url: "https://example.com/inception.jpg",
+        duration_seconds: 7_200
+      }
+    )
+
+    expect(result).to be_success
+    expect(result.data.to_h).to include(
+      content_ref: content_ref.to_h,
+      resume_at: 3_000.0,
+      duration: 7_200
+    )
   end
 
   it "propagates stream resolution failures" do
     failure = ServiceResult.failure("No playable streams")
-    allow(streaming_service).to receive(:start_stream).and_return(failure)
+    allow(resolver).to receive(:start).and_return(failure)
 
     expect(service.start(imdb_id: "tt1375666", type: "movie")).to equal(failure)
   end

@@ -17,12 +17,10 @@ class PlaybackResumeService
   private
 
   def movie_target(imdb_id)
-    last = @user.watch_history_entries.where(imdb_id: imdb_id).order(watched_at: :desc).first
-    return base_target(season: 0, episode: 0) unless last
+    last = @user.playback_progresses.movies_only.where(imdb_id: imdb_id).recently_watched.first
+    return base_target unless last
 
     base_target(
-      season: 0,
-      episode: 0,
       resume_at: PlaybackCompletionPolicy.movie_finished?(last) ? 0 : last.progress_seconds,
       title: last.title,
       poster_url: last.poster_url,
@@ -31,7 +29,7 @@ class PlaybackResumeService
   end
 
   def show_target(imdb_id)
-    last = @user.episode_progresses.for_show(imdb_id).recently_watched.first
+    last = @user.playback_progresses.for_show(imdb_id).recently_watched.first
     return base_target(season: 1, episode: 1) unless last
     return current_episode_target(last) unless PlaybackCompletionPolicy.episode_finished?(last)
 
@@ -39,25 +37,27 @@ class PlaybackResumeService
   end
 
   def next_episode_target(imdb_id, last)
-    next_episode = ProgressTrackingService.next_episode(
-      @user,
-      imdb_id,
-      last.season_number,
-      last.episode_number
+    next_episode = Playback::EpisodeSequence.new.next_after(
+      ContentRef.new(
+        imdb_id: imdb_id,
+        type: "show",
+        season: last.season_number,
+        episode: last.episode_number
+      )
     )
 
     if next_episode.success?
       return base_target(
-        season: next_episode.data[:season],
-        episode: next_episode.data[:episode],
-        title: last.show_title
+        season: next_episode.data.season,
+        episode: next_episode.data.episode,
+        title: last.title
       )
     end
 
     base_target(
       season: last.season_number,
       episode: last.episode_number,
-      title: last.show_title,
+      title: last.title,
       duration_seconds: last.duration_seconds,
       series_complete: next_episode.error_code == :series_complete
     )
@@ -68,12 +68,12 @@ class PlaybackResumeService
       season: last.season_number,
       episode: last.episode_number,
       resume_at: last.progress_seconds,
-      title: last.show_title,
+      title: last.title,
       duration_seconds: last.duration_seconds
     )
   end
 
-  def base_target(season:, episode:, resume_at: 0, title: nil, poster_url: nil, duration_seconds: 0, series_complete: false)
+  def base_target(season: nil, episode: nil, resume_at: 0, title: nil, poster_url: nil, duration_seconds: 0, series_complete: false)
     {
       season: season,
       episode: episode,

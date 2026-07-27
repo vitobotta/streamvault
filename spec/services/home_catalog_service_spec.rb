@@ -1,15 +1,15 @@
 require "rails_helper"
 
 RSpec.describe HomeCatalogService do
-  let(:torrentio) { instance_double(TorrentioService) }
+  let(:catalog) { instance_double(Catalog::CinemetaClient) }
   let(:logger) { instance_double(ActiveSupport::Logger, warn: nil) }
-  subject(:service) { described_class.new(torrentio, logger: logger) }
+  subject(:service) { described_class.new(catalog, logger: logger) }
 
   it "returns each catalog under its presentation key" do
-    allow(torrentio).to receive(:popular).with("movie", limit: 20).and_return(ServiceResult.success([ :popular_movie ]))
-    allow(torrentio).to receive(:popular).with("show", limit: 20).and_return(ServiceResult.success([ :popular_show ]))
-    allow(torrentio).to receive(:trending).with("movie", limit: 20).and_return(ServiceResult.success([ :trending_movie ]))
-    allow(torrentio).to receive(:trending).with("show", limit: 20).and_return(ServiceResult.success([ :trending_show ]))
+    allow(catalog).to receive(:popular).with("movie", limit: 20).and_return(ServiceResult.success([ :popular_movie ]))
+    allow(catalog).to receive(:popular).with("show", limit: 20).and_return(ServiceResult.success([ :popular_show ]))
+    allow(catalog).to receive(:trending).with("movie", limit: 20).and_return(ServiceResult.success([ :trending_movie ]))
+    allow(catalog).to receive(:trending).with("show", limit: 20).and_return(ServiceResult.success([ :trending_show ]))
 
     result = service.call
 
@@ -22,9 +22,9 @@ RSpec.describe HomeCatalogService do
   end
 
   it "isolates a failed catalog from successful catalogs" do
-    allow(torrentio).to receive(:popular).with("movie", limit: 20).and_raise(Net::ReadTimeout)
-    allow(torrentio).to receive(:popular).with("show", limit: 20).and_return(ServiceResult.success([]))
-    allow(torrentio).to receive(:trending).and_return(ServiceResult.success([]))
+    allow(catalog).to receive(:popular).with("movie", limit: 20).and_raise(Net::ReadTimeout)
+    allow(catalog).to receive(:popular).with("show", limit: 20).and_return(ServiceResult.success([]))
+    allow(catalog).to receive(:trending).and_return(ServiceResult.success([]))
 
     result = service.call
 

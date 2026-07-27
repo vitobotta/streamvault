@@ -10,47 +10,33 @@ RSpec.describe RefreshRecommendationsJob, type: :job do
     ENV["TMDB_READ_ACCESS_TOKEN"] = old_token
   end
 
-  describe '#perform' do
-    it 'does nothing when the user does not exist' do
+  describe "#perform" do
+    it "does nothing when the user does not exist" do
       ENV["TMDB_READ_ACCESS_TOKEN"] = "test_token"
-      expect(RecommendationService).not_to receive(:recommendations)
+      expect(RecommendationService).not_to receive(:refresh)
+
       described_class.perform_now(999_999)
     end
 
-    it 'does nothing when TMDB_READ_ACCESS_TOKEN is blank' do
+    it "does nothing when TMDB is not configured" do
       ENV["TMDB_READ_ACCESS_TOKEN"] = nil
-      expect(RecommendationService).not_to receive(:recommendations)
+      expect(RecommendationService).not_to receive(:refresh)
+
       described_class.perform_now(user.id)
     end
 
-    it 'replaces recommendations when TMDB succeeds' do
+    it "refreshes the user's cache" do
       ENV["TMDB_READ_ACCESS_TOKEN"] = "test_token"
-      items = [
-        { tmdb_id: 1, imdb_id: 'tt0000001', title: 'A', poster_url: nil, type: 'movie', year: '2020' }
-      ]
-      result = ServiceResult.success(items)
-      allow(RecommendationService).to receive(:recommendations).with(user).and_return(result)
-      allow(Recommendation).to receive(:replace_recommendations)
+      allow(RecommendationService).to receive(:refresh).with(user)
 
       described_class.perform_now(user.id)
 
-      expect(Recommendation).to have_received(:replace_recommendations).with(user, items)
+      expect(RecommendationService).to have_received(:refresh).with(user)
     end
 
-    it 'uses an empty array when RecommendationService fails' do
+    it "contains unexpected provider errors" do
       ENV["TMDB_READ_ACCESS_TOKEN"] = "test_token"
-      allow(RecommendationService).to receive(:recommendations).with(user)
-        .and_return(ServiceResult.failure('TMDB down'))
-      allow(Recommendation).to receive(:replace_recommendations)
-
-      described_class.perform_now(user.id)
-
-      expect(Recommendation).to have_received(:replace_recommendations).with(user, [])
-    end
-
-    it 'swallows unexpected errors (does not raise)' do
-      ENV["TMDB_READ_ACCESS_TOKEN"] = "test_token"
-      allow(RecommendationService).to receive(:recommendations).and_raise(StandardError, 'boom')
+      allow(RecommendationService).to receive(:refresh).and_raise(StandardError, "boom")
 
       expect { described_class.perform_now(user.id) }.not_to raise_error
     end

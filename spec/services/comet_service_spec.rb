@@ -244,7 +244,7 @@ RSpec.describe StreamProvider do
       ENV["COMET_URL"] = ""
       providers = described_class.providers(rd_api_key: "key")
       expect(providers.length).to eq(1)
-      expect(providers.first).to be_a(TorrentioService)
+      expect(providers.first).to be_a(Streams::TorrentioProvider)
     end
 
     it "returns Comet then Torrentio when STREAM_PROVIDER=comet" do
@@ -253,7 +253,7 @@ RSpec.describe StreamProvider do
       providers = described_class.providers(rd_api_key: "key")
       expect(providers.length).to eq(2)
       expect(providers.first).to be_a(CometService)
-      expect(providers.last).to be_a(TorrentioService)
+      expect(providers.last).to be_a(Streams::TorrentioProvider)
     end
 
     it "returns Comet then Torrentio when STREAM_PROVIDER=auto and COMET_URL set" do
@@ -269,7 +269,7 @@ RSpec.describe StreamProvider do
       ENV["COMET_URL"] = ""
       providers = described_class.providers(rd_api_key: "key")
       expect(providers.length).to eq(1)
-      expect(providers.first).to be_a(TorrentioService)
+      expect(providers.first).to be_a(Streams::TorrentioProvider)
     end
   end
 

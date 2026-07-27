@@ -23,7 +23,7 @@ RSpec.describe "Search", type: :request do
         stub_request(:get, %r{v3-cinemeta\.strem\.io/catalog/movie/top/search=.*\.json})
           .to_return(
             status: 200,
-            body: { "metas" => [{ "id" => "tt1375666", "name" => "Inception", "releaseInfo" => "2010" }] }.to_json,
+            body: { "metas" => [ { "id" => "tt1375666", "name" => "Inception", "releaseInfo" => "2010" } ] }.to_json,
             headers: { 'Content-Type' => 'application/json' }
           )
 
@@ -98,7 +98,7 @@ RSpec.describe "Search", type: :request do
         stub_request(:get, %r{v3-cinemeta\.strem\.io/catalog/movie/top/search=.*\.json})
           .to_return(
             status: 200,
-            body: { "metas" => [{ "id" => "tt0000001", "name" => "<script>alert(1)</script>", "releaseInfo" => "2020" }] }.to_json,
+            body: { "metas" => [ { "id" => "tt0000001", "name" => "<script>alert(1)</script>", "releaseInfo" => "2020" } ] }.to_json,
             headers: { 'Content-Type' => 'application/json' }
           )
 

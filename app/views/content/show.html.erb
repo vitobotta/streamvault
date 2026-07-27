@@ -64,22 +64,18 @@
           <p class="text-sv-text-muted mt-2 text-sm"><span class="text-sv-text">Cast:</span> <%= @metadata[:actors] %></p>
         <% end %>
 
+        <% collection_params = { collection_entry: { content_type: @type, imdb_id: @imdb_id, title: @metadata[:title], poster_url: @metadata[:poster_url], year: @metadata[:year]&.to_i } }.to_query %>
         <div class="flex gap-3 mt-6">
-          <%# Library %>
-          <% lib_params = { library_entry: { content_type: @type, imdb_id: @imdb_id, title: @metadata[:title], poster_url: @metadata[:poster_url], year: @metadata[:year]&.to_i } }.to_query %>
           <button type="button"
                   class="w-8 h-8 bg-sv-surface rounded-lg hover:bg-sv-surface-hover flex items-center justify-center transition-colors cursor-pointer <%= @in_library ? 'text-sv-accent' : 'text-sv-text-muted hover:text-sv-accent' %>"
                   data-controller="toggle-button"
                   data-action="click->toggle-button#toggle"
-                  data-toggle-button-kind-value="library"
-                  data-toggle-button-add-url-value="<%= library_index_path %>"
-                  data-toggle-button-destroy-url-value="<%= @in_library && @library_entry ? library_path(@library_entry) : '' %>"
-                  data-toggle-button-add-title-value="Add to Library"
-                  data-toggle-button-added-title-value="In your library — click to remove"
-                  data-toggle-button-added-value="<%= @in_library %>"
+                  data-toggle-button-state-value="library"
+                  data-toggle-button-url-value="<%= collection_path %>"
+                  data-toggle-button-active-value="<%= @in_library %>"
                   data-toggle-button-status-url-value="<%= content_status_path(type: @type, imdb_id: @imdb_id) %>"
-                  data-toggle-button-params="<%= lib_params %>"
-                  title="<%= @in_library ? 'In your library — click to remove' : 'Add to Library' %>">
+                  data-toggle-button-params-value="<%= collection_params %>"
+                  title="<%= @in_library ? 'In your library — click to remove' : 'Add to library' %>">
             <% if @in_library %>
               <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
             <% else %>
@@ -87,26 +83,17 @@
             <% end %>
           </button>
 
-          <%# Wishlist %>
-          <% wish_params = { wishlist_entry: { content_type: @type, imdb_id: @imdb_id, title: @metadata[:title], poster_url: @metadata[:poster_url], year: @metadata[:year]&.to_i } }.to_query %>
           <button type="button"
                   class="w-8 h-8 bg-sv-surface rounded-lg hover:bg-sv-surface-hover flex items-center justify-center transition-colors cursor-pointer <%= @in_wishlist ? 'text-sv-accent' : 'text-sv-text-muted hover:text-sv-accent' %>"
                   data-controller="toggle-button"
                   data-action="click->toggle-button#toggle"
-                  data-toggle-button-kind-value="wishlist"
-                  data-toggle-button-add-url-value="<%= wishlist_index_path %>"
-                  data-toggle-button-destroy-url-value="<%= @in_wishlist && @wishlist_entry ? wishlist_path(@wishlist_entry) : '' %>"
-                  data-toggle-button-add-title-value="Add to Wishlist"
-                  data-toggle-button-added-title-value="In your wishlist — click to remove"
-                  data-toggle-button-added-value="<%= @in_wishlist %>"
+                  data-toggle-button-state-value="wishlist"
+                  data-toggle-button-url-value="<%= collection_path %>"
+                  data-toggle-button-active-value="<%= @in_wishlist %>"
                   data-toggle-button-status-url-value="<%= content_status_path(type: @type, imdb_id: @imdb_id) %>"
-                  data-toggle-button-params="<%= wish_params %>"
-                  title="<%= @in_wishlist ? 'In your wishlist — click to remove' : 'Add to Wishlist' %>">
-            <% if @in_wishlist %>
-              <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>
-            <% else %>
-              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>
-            <% end %>
+                  data-toggle-button-params-value="<%= collection_params %>"
+                  title="<%= @in_wishlist ? 'In your wishlist — click to remove' : 'Add to wishlist' %>">
+            <svg class="w-5 h-5" fill="<%= @in_wishlist ? 'currentColor' : 'none' %>" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>
           </button>
         </div>
       </div>
@@ -138,7 +125,7 @@
                 </div>
               </div>
               <div class="flex items-center gap-3 shrink-0">
-                <%= button_to "Watch", streaming_index_path, params: { imdb_id: @imdb_id, type: @type, title: @metadata[:title], poster_url: @metadata[:poster_url], duration: @metadata[:runtime_seconds], resolve_url: stream[:resolve_url], filename: stream[:filename], raw_size: stream[:raw_size], video_codec: stream[:video_codec], compatibility_score: stream[:compatibility_score] }, class: "btn-primary text-sm", data: { turbo: false } %>
+                <%= button_to "Watch", streaming_index_path, params: { imdb_id: @imdb_id, type: @type, title: @metadata[:title], poster_url: @metadata[:poster_url], duration: @metadata[:runtime_seconds], resolve_url: stream[:resolve_url], filename: stream[:filename], raw_size: stream[:raw_size], video_codec: stream[:video_codec], compatibility_score: stream[:compatibility_score] }, class: "btn-primary text-sm", data: { page_loader: "stream", page_loader_message: "Finding a working stream..." } %>
               </div>
             </div>
           <% end %>
@@ -165,9 +152,7 @@
       </div>
 
       <div class="space-y-2" data-controller="episode-picker"
-           data-episode-picker-url-value="<%= episode_streams_path(type: @type, imdb_id: @imdb_id) %>"
-           data-episode-picker-imdb-id-value="<%= @imdb_id %>"
-           data-episode-picker-show-title-value="<%= @metadata[:title] %>">
+           data-episode-picker-url-value="<%= episode_streams_path(type: @type, imdb_id: @imdb_id) %>">
         <% @metadata[:episodes].select { |e| e[:season] == @selected_season && e[:season] != 0 }.each do |ep| %>
           <% progress = @episode_progress&.dig([ep[:season], ep[:episode]]) %>
           <div class="bg-sv-surface rounded-lg hover:bg-sv-surface-hover transition-colors"
@@ -210,18 +195,4 @@
   <% else %>
     <p class="text-sv-text-muted">Content not found.</p>
   <% end %>
-</div>
-
-<div id="stream-resolve-loading"
-     class="hidden fixed inset-0 z-50 bg-black/80 flex items-center justify-center"
-     role="status"
-     aria-live="polite"
-     aria-hidden="true"
-     data-controller="stream-loading"
-     data-stream-loading-path-value="<%= streaming_index_path %>">
-  <div class="flex flex-col items-center gap-3 px-5 py-4 rounded-lg bg-sv-surface border border-sv-border shadow-xl">
-    <div class="w-10 h-10 border-4 border-white/20 border-t-indigo-500 rounded-full animate-spin"></div>
-    <div class="text-sm font-medium text-white">Finding a working stream</div>
-    <div class="text-xs text-sv-text-muted">Trying available sources...</div>
-  </div>
 </div>

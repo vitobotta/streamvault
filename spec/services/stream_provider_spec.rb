@@ -15,14 +15,14 @@ RSpec.describe StreamProvider, type: :service do
       ENV["STREAM_PROVIDER"] = nil
       providers = described_class.providers(rd_api_key: 'test_key')
       expect(providers.length).to eq(1)
-      expect(providers.first).to be_a(TorrentioService)
+      expect(providers.first).to be_a(Streams::TorrentioProvider)
     end
 
     it 'returns only Torrentio when explicitly set' do
       ENV["STREAM_PROVIDER"] = "torrentio"
       providers = described_class.providers(rd_api_key: 'test_key')
       expect(providers.length).to eq(1)
-      expect(providers.first).to be_a(TorrentioService)
+      expect(providers.first).to be_a(Streams::TorrentioProvider)
     end
 
     it 'returns Comet + Torrentio when set to comet' do
@@ -32,7 +32,7 @@ RSpec.describe StreamProvider, type: :service do
       providers = described_class.providers(rd_api_key: 'test_key')
       expect(providers.length).to eq(2)
       expect(providers.first).to be_a(CometService)
-      expect(providers.last).to be_a(TorrentioService)
+      expect(providers.last).to be_a(Streams::TorrentioProvider)
     end
 
     it 'falls back to Torrentio when auto and Comet is not configured' do
@@ -41,7 +41,7 @@ RSpec.describe StreamProvider, type: :service do
 
       providers = described_class.providers(rd_api_key: 'test_key')
       expect(providers.length).to eq(1)
-      expect(providers.first).to be_a(TorrentioService)
+      expect(providers.first).to be_a(Streams::TorrentioProvider)
     end
   end
 
@@ -49,7 +49,7 @@ RSpec.describe StreamProvider, type: :service do
     it 'includes torrentio URLs by default' do
       ENV["STREAM_PROVIDER"] = nil
       urls = described_class.resolve_base_urls
-      expect(urls).to include(TorrentioService::TORRENTIO_URL)
+      expect(urls).to include(Streams::TorrentioProvider::BASE_URL)
       expect(urls).to include('https://torrentio.strem.fun')
     end
 

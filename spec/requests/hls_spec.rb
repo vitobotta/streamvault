@@ -4,26 +4,32 @@ require "rails_helper"
 
 RSpec.describe "HLS streaming", type: :request do
   let(:user) { create(:user, realdebrid_api_key: "testkey") }
+  let(:media_url) { "https://download.real-debrid.com/d/test.mp4" }
+  let(:source_token) { signed_source_for(user, url: media_url, filename: "test.mp4") }
 
   before do
     sign_in user
+    allow(Addrinfo).to receive(:getaddrinfo).and_call_original
+    allow(Addrinfo).to receive(:getaddrinfo)
+      .with("download.real-debrid.com", nil, :UNSPEC, :STREAM)
+      .and_return([ Addrinfo.ip("199.115.115.1") ])
   end
 
   describe "POST /hls/start" do
-    context "with invalid URL" do
-      it "returns bad_request for private IP" do
-        post "/hls/start", params: { url: "http://127.0.0.1/test.mp4" }
+    context "with an invalid source" do
+      it "returns bad_request" do
+        post "/hls/start", params: { source: "tampered" }
         expect(response).to have_http_status(:bad_request)
-        expect(JSON.parse(response.body)["error"]).to eq("Invalid stream URL")
+        expect(response.parsed_body["error"]).to eq("Invalid stream source")
       end
     end
 
     context "with valid URL but ffmpeg failure" do
       it "returns bad_gateway when transcode fails" do
-        allow(TranscodeService).to receive(:transcode_to_hls)
-          .and_raise(TranscodeService::TranscodeError, "FFmpeg failed")
+        allow(Media::Transcoder).to receive(:transcode_to_hls)
+          .and_raise(Media::Transcoder::TranscodeError, "FFmpeg failed")
 
-        post "/hls/start", params: { url: "https://real-debrid.com/test.mp4" }
+        post "/hls/start", params: { source: source_token }
         expect(response).to have_http_status(:bad_gateway)
       end
     end
@@ -37,7 +43,8 @@ RSpec.describe "HLS streaming", type: :request do
 
     context "with a valid session" do
       let(:session_id) { SecureRandom.hex(16) }
-      let(:segment_dir) { Rails.root.join("tmp", "hls", session_id).to_s }
+      let!(:session) { create(:hls_session, user: user, session_id: session_id, pid: 99_999) }
+      let(:segment_dir) { session.storage_path }
       let(:playlist_content) do
         <<~PLAYLIST
           #EXTM3U
@@ -55,18 +62,11 @@ RSpec.describe "HLS streaming", type: :request do
         FileUtils.mkdir_p(segment_dir)
         File.write(File.join(segment_dir, "playlist.m3u8"), playlist_content)
         File.write(File.join(segment_dir, "0.ts"), "dummy_ts_data")
-
-        HlsSessionRecord.create!(
-          user: user,
-          session_id: session_id,
-          segment_dir: segment_dir,
-          pid: 99999
-        )
       end
 
       after do
         FileUtils.rm_rf(segment_dir)
-        HlsSessionRecord.find_by(session_id: session_id)&.destroy
+        session.destroy if session.persisted?
       end
 
       it "returns the playlist with correct Content-Type" do
@@ -93,24 +93,18 @@ RSpec.describe "HLS streaming", type: :request do
 
   describe "GET /hls/:id/:segment" do
     let(:session_id) { SecureRandom.hex(16) }
-    let(:segment_dir) { Rails.root.join("tmp", "hls", session_id).to_s }
+    let!(:session) { create(:hls_session, user: user, session_id: session_id, pid: 99_999) }
+    let(:segment_dir) { session.storage_path }
 
     before do
       FileUtils.mkdir_p(segment_dir)
       File.write(File.join(segment_dir, "playlist.m3u8"), "#EXTM3U\n")
       File.write(File.join(segment_dir, "0.ts"), "dummy_ts_segment_data")
-
-      HlsSessionRecord.create!(
-        user: user,
-        session_id: session_id,
-        segment_dir: segment_dir,
-        pid: 99999
-      )
     end
 
     after do
       FileUtils.rm_rf(segment_dir)
-      HlsSessionRecord.find_by(session_id: session_id)&.destroy
+      session.destroy if session.persisted?
     end
 
     it "returns the segment with correct Content-Type" do
@@ -140,24 +134,18 @@ RSpec.describe "HLS streaming", type: :request do
 
   describe "POST /hls/:id/stop" do
     let(:session_id) { SecureRandom.hex(16) }
-    let(:segment_dir) { Rails.root.join("tmp", "hls", session_id).to_s }
+    let!(:session) { create(:hls_session, user: user, session_id: session_id, pid: 99_999) }
+    let(:segment_dir) { session.storage_path }
 
     before do
       FileUtils.mkdir_p(segment_dir)
       File.write(File.join(segment_dir, "playlist.m3u8"), "#EXTM3U\n")
-
-      HlsSessionRecord.create!(
-        user: user,
-        session_id: session_id,
-        segment_dir: segment_dir,
-        pid: 99999
-      )
     end
 
     it "returns ok and removes the session" do
       post "/hls/#{session_id}/stop"
       expect(response).to have_http_status(:ok)
-      expect(HlsSessionRecord.find_by(session_id: session_id)).to be_nil
+      expect(HlsSession.find_by(session_id: session_id)).to be_nil
     end
   end
 end

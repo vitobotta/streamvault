@@ -37,16 +37,16 @@ RSpec.describe MediaProfileService do
   end
 
   before do
-    allow(TranscodeService).to receive(:probe_media_info).and_return(media_info)
+    allow(Media::Transcoder).to receive(:probe_media_info).and_return(media_info)
     allow(ExternalSubtitleService).to receive(:search).and_return([])
-    allow(TranscodeService).to receive(:selectable_subtitle_tracks) { |tracks| tracks }
+    allow(Media::Transcoder).to receive(:selectable_subtitle_tracks) { |tracks| tracks }
   end
 
   it "identifies a safe H.264 MP4 with AAC as direct and remux playable" do
     result = service.call
 
     expect(result).to be_success
-    expect(result.data).to include(
+    expect(result.data.to_h).to include(
       video_codec: "h264",
       video_codec_tag: "avc1",
       direct_playable: true,
@@ -91,6 +91,6 @@ RSpec.describe MediaProfileService do
     result = service.call
 
     expect(result.data[:subtitles]).to eq([ embedded, external ])
-    expect(TranscodeService).to have_received(:selectable_subtitle_tracks).with([ embedded, external ])
+    expect(Media::Transcoder).to have_received(:selectable_subtitle_tracks).with([ embedded, external ])
   end
 end

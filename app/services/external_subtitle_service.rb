@@ -30,13 +30,13 @@ class ExternalSubtitleService
     "#{STREAM_PREFIX}#{provider}:#{encoded}"
   end
 
-  def self.extract_subtitles(stream_id, start_seconds: 0, duration_seconds: TranscodeService::SUBTITLE_EXTRACTION_WINDOW_SECONDS)
+  def self.extract_subtitles(stream_id, start_seconds: 0, duration_seconds: Media::Subtitles::DEFAULT_WINDOW_SECONDS)
     provider, payload = parse_stream_id(stream_id)
     return subtitle_result(:invalid_stream, diagnostic: "invalid external subtitle stream") unless provider && payload
     return subtitle_result(:unsupported_track, diagnostic: "external subtitle provider is not available") unless provider == "subdl"
 
     cues_result = cached_cues(provider, payload)
-    return cues_result if cues_result.is_a?(TranscodeService::SubtitleExtractionResult)
+    return cues_result if cues_result.is_a?(Media::Subtitles::ExtractionResult)
 
     windowed_cues = cues_in_window(cues_result, start_seconds, duration_seconds)
     return subtitle_result(:empty_window, source: provider) if windowed_cues.empty?
@@ -202,17 +202,14 @@ class ExternalSubtitleService
 
   def self.normalized_duration_seconds(value)
     seconds = value.to_i
-    return TranscodeService::SUBTITLE_EXTRACTION_WINDOW_SECONDS unless seconds.positive?
+    return Media::Subtitles::DEFAULT_WINDOW_SECONDS unless seconds.positive?
 
-    seconds.clamp(
-      TranscodeService::MIN_SUBTITLE_EXTRACTION_WINDOW_SECONDS,
-      TranscodeService::MAX_SUBTITLE_EXTRACTION_WINDOW_SECONDS
-    )
+    seconds.clamp(Media::Subtitles::MIN_WINDOW_SECONDS, Media::Subtitles::MAX_WINDOW_SECONDS)
   end
   private_class_method :normalized_duration_seconds
 
   def self.subtitle_result(status, vtt: "", cue_count: 0, source: nil, diagnostic: nil)
-    TranscodeService::SubtitleExtractionResult.new(
+    Media::Subtitles.result(
       status: status,
       vtt: vtt.to_s,
       cue_count: cue_count.to_i,

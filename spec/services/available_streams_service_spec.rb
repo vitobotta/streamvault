@@ -6,8 +6,8 @@ RSpec.describe AvailableStreamsService do
   let(:provider) { double("provider") }
   subject(:service) { described_class.new(user, providers: [ provider ], cache: cache) }
 
-  def stream_result(filename = "movie.mp4")
-    ServiceResult.success([ { filename: filename, resolve_url: "https://provider.test/resolve/#{filename}" } ])
+  def stream_result(filename = "movie.mp4", resolve_url: "https://provider.test/resolve/#{filename}")
+    ServiceResult.success([ { filename: filename, resolve_url: resolve_url } ])
   end
 
   it "caches successful listings by content and language priority" do
@@ -52,5 +52,25 @@ RSpec.describe AvailableStreamsService do
     expect(english.data.pluck(:filename)).to eq([ "english.mp4" ])
     expect(french.data.pluck(:filename)).to eq([ "french.mp4" ])
     expect(provider).to have_received(:streams).twice
+  end
+
+  it "never shares credential-bearing stream listings between users" do
+    other_user = create(:user, realdebrid_api_key: "other_test_key")
+    other_provider = double("other provider")
+    allow(provider).to receive(:streams).and_return(
+      stream_result(resolve_url: "https://provider.test/resolve/test_key/movie.mp4")
+    )
+    allow(other_provider).to receive(:streams).and_return(
+      stream_result(resolve_url: "https://provider.test/resolve/other_test_key/movie.mp4")
+    )
+
+    first = service.call(imdb_id: "tt1375666", type: "movie")
+    second = described_class.new(other_user, providers: [ other_provider ], cache: cache)
+      .call(imdb_id: "tt1375666", type: "movie")
+
+    expect(first.data.first.resolve_url).to include("/test_key/")
+    expect(second.data.first.resolve_url).to include("/other_test_key/")
+    expect(provider).to have_received(:streams).once
+    expect(other_provider).to have_received(:streams).once
   end
 end

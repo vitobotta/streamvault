@@ -2,7 +2,7 @@ import { Controller } from "@hotwired/stimulus"
 
 export default class extends Controller {
   static targets = ["episode", "drawer", "drawerContent", "chevron"]
-  static values = { url: String, imdbId: String, showTitle: String }
+  static values = { url: String }
 
   connect() {
     this.openEpisode = null
@@ -57,7 +57,6 @@ export default class extends Controller {
       const params = new URLSearchParams({
         season: season,
         episode: episode,
-        show_title: this.showTitleValue
       })
       const response = await fetch(`${this.urlValue}?${params}`, {
         headers: { "Accept": "text/html" }
