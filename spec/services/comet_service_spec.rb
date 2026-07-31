@@ -215,6 +215,9 @@ RSpec.describe CometService do
       config = JSON.parse(Base64.urlsafe_decode64(captured_config))
       expect(config["debridService"]).to eq("realdebrid")
       expect(config["debridApiKey"]).to eq(rd_api_key)
+      expect(config["cachedOnly"]).to be true
+      expect(config["enableTorrent"]).to be false
+      expect(config["scrapeDebridAccountTorrents"]).to be true
     end
 
     it "omits the config segment when no RD key is provided" do

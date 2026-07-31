@@ -103,7 +103,10 @@ class CometService
 
     config = {
       "debridService" => "realdebrid",
-      "debridApiKey" => @rd_api_key
+      "debridApiKey" => @rd_api_key,
+      "cachedOnly" => true,
+      "enableTorrent" => false,
+      "scrapeDebridAccountTorrents" => true
     }
     # NOTE: Comet requires standard (padded) base64.  Using `padding: false`
     # produces unpadded base64, which Comet's config parser fails to decode —
