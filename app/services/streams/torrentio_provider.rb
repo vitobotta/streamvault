@@ -3,6 +3,8 @@
 module Streams
   class TorrentioProvider
     BASE_URL = ENV.fetch("TORRENTIO_API_BASE_URL", "https://torrentio.strem.fun")
+    REQUEST_TIMEOUT = 30
+    OPEN_TIMEOUT = 5
 
     def initialize(rd_api_key: nil, connection: nil, parser: ReleaseParser.new, logger: Rails.logger)
       @rd_api_key = rd_api_key
@@ -13,8 +15,8 @@ module Streams
         faraday.response :json
         faraday.response :follow_redirects
         faraday.adapter Faraday.default_adapter
-        faraday.options.timeout = 15
-        faraday.options.open_timeout = 5
+        faraday.options.timeout = REQUEST_TIMEOUT
+        faraday.options.open_timeout = OPEN_TIMEOUT
         faraday.proxy = ENV["TORRENTIO_PROXY"] if ENV["TORRENTIO_PROXY"].present?
       end
     end
