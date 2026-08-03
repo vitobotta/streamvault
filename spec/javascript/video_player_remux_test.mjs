@@ -333,4 +333,3 @@ test("remux startup falls back when native playback clamps the local seek", () =
   assert.equal(fallbackTarget, 125)
   assert.equal(playCount, 0)
 })
-
