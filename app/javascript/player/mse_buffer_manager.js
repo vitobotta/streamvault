@@ -157,7 +157,6 @@ export class MseBufferManager {
     this.player.evictOldBuffer()
     const actuallyWaiting = this.player.isStalled && !this.player.userPaused && !this.player.hasBufferedAhead(0.5)
     this.player.startStallWatchdog(actuallyWaiting ? REBUFFER_STALL_TIMEOUT_MS : STREAM_STALL_TIMEOUT_MS)
-    this.player.resetProgressBaseline()
     this.player.maybeStartPlayback()
     this.player.maybeHideBufferingOverlay()
     this.player.flushBufferQueue()

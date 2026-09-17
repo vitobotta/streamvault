@@ -29,11 +29,10 @@ export class HlsSessionClient {
         return
       }
 
-      this.player.videoTarget.autoplay = true
+      this.player.videoTarget.autoplay = false
       this.player.videoTarget.src = data.playlist_url
       this.player.videoTarget.load()
-      const playPromise = this.player.videoTarget.play()
-      if (playPromise?.catch) playPromise.catch((error) => this.player.handleAutoplayFailure(error))
+      void this.player.requestPlayback()
     } catch (error) {
       console.warn("HLS: start error", error)
     }
@@ -98,10 +97,12 @@ export class HlsSessionClient {
         return
       }
 
+      this.player.startSecondsValue = startSeconds
+      this.player.element.dataset.videoPlayerStartSecondsValue = startSeconds.toString()
+      this.player.playbackObservation = null
       this.player.videoTarget.src = data.playlist_url
       this.player.videoTarget.load()
-      const playPromise = this.player.videoTarget.play()
-      if (playPromise?.catch) playPromise.catch(() => {})
+      void this.player.requestPlayback()
 
       const onPlaying = () => {
         this.finishSeek()

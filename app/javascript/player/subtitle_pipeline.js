@@ -176,8 +176,7 @@ export class SubtitlePipeline {
     this.player.subtitlePlaybackHoldToken = null
     this.player.hideSeekingOverlay()
     if (this.player.userPaused) return
-    const playPromise = this.player.videoTarget.play()
-    if (playPromise?.catch) playPromise.catch(() => {})
+    void this.player.requestPlayback()
   }
 
   removeTextTrack() {

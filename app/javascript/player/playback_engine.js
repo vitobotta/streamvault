@@ -38,6 +38,7 @@ export class PlaybackEngine {
 
   setupMseSource(streamUrl) {
     const player = this.player
+    player.videoTarget.autoplay = false
     if (player.fetchController) {
       player.fetchController.abort()
       player.fetchController = null
@@ -58,7 +59,6 @@ export class PlaybackEngine {
     player.prematureEndRecoveryTimer = null
     player.playbackStarted = false
     player.isStalled = false
-    player.userPaused = false
     player.directPlayActive = false
     player.remuxDirectPlay = false
     player.bufferAheadDeadline = null
@@ -77,8 +77,7 @@ export class PlaybackEngine {
     if (!player.mseSupported) {
       player.videoTarget.src = streamUrl
       player.videoTarget.load()
-      const playPromise = player.videoTarget.play()
-      if (playPromise?.catch) playPromise.catch(() => {})
+      void player.requestPlayback()
       return
     }
 

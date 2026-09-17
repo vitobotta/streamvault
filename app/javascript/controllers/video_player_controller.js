@@ -48,7 +48,7 @@ export default class extends Controller {
     return [
       "video", "controls", "seekBar", "seekFilled", "seekBuffered", "seekHandle",
       "playButton", "playIcon", "pauseIcon", "currentTime", "durationDisplay",
-      "volumeIcon", "muteIcon", "startupOverlay", "startupStatus", "autoplayGuidance", "autoplayPlayButton",
+      "volumeIcon", "muteIcon", "enableSound", "startupOverlay", "startupStatus", "autoplayGuidance", "autoplayPlayButton",
       "seekingOverlay", "seekingOverlayMessage", "sourceInfo", "sourceToggle", "sourceDetails", "sourceUrl",
       "sourceFilename", "backButton", "audioControls", "audioMenu", "audioOptions", "audioButtonLabel",
       "subtitleControls", "subtitleMenu", "subtitleOptions", "subtitleButtonLabel", "subtitleOverlay"
@@ -66,6 +66,10 @@ export default class extends Controller {
   }
 
   connect() {
+    this.invalidatePlaybackRequest()
+    this.playbackDisconnected = false
+    this.autoplayMuted = false
+    this.userChoseSound = false
     this.progressInterval = null
     this.uiHideTimer = null
     this.knownDuration = this.validDuration(this.durationValue) ? this.durationValue : 0
@@ -81,6 +85,11 @@ export default class extends Controller {
     this.volumeChangeHandler = this.updateVolumeIcon.bind(this)
     this.videoWaitingHandler = () => this.onVideoWaiting()
     this.videoReadyHandler = () => this.onVideoReady()
+    this.playbackObservationResetHandler = () => {
+      this.playbackObservation = null
+      clearTimeout(this.bufferingOverlayTimer)
+      this.bufferingOverlayTimer = null
+    }
     this.audioTracks = []
     this.subtitleTracks = []
     this.selectedAudioStream = this.currentUrlParam("audio_stream")
@@ -132,6 +141,8 @@ export default class extends Controller {
     this.streamRecoveryActive = false
     this.playbackStarted = false
     this.isStalled = false
+    this.playbackEverStarted = false
+    this.playbackObservation = null
     // True when the user deliberately paused (button/spacebar). The
     // rebuffer gate in maybeStartPlayback must never auto-resume a
     // user pause — only a rebuffer pause (buffer ran dry).
@@ -164,9 +175,12 @@ export default class extends Controller {
     this.videoTarget.addEventListener("volumechange", this.volumeChangeHandler)
     this.videoTarget.addEventListener("waiting", this.videoWaitingHandler)
     this.videoTarget.addEventListener("playing", this.videoReadyHandler)
+    for (const event of ["seeking", "seeked", "emptied"]) {
+      this.videoTarget.addEventListener(event, this.playbackObservationResetHandler)
+    }
     // canplay is intentionally NOT listened to — it fires when the browser
     // has just one frame, which hides the buffering overlay prematurely
-    // during a stall.  Only "playing" (actual playback resuming) hides it.
+    // during a stall. Confirm playback through "playing" or forward motion.
     this.videoEndedHandler = () => this.onVideoEnded()
     this.videoTarget.addEventListener("ended", this.videoEndedHandler)
     this.videoErrorHandler = (e) => this.onVideoError(e)
@@ -194,6 +208,8 @@ export default class extends Controller {
   }
 
   disconnect() {
+    this.invalidatePlaybackRequest()
+    this.playbackDisconnected = true
     this.playbackCoordinator().disconnect()
     // Save progress only if navigateBack hasn't already done it.
     if (!this.navigatingAway) this.saveProgressSync()
@@ -226,6 +242,9 @@ export default class extends Controller {
     this.videoTarget.removeEventListener("volumechange", this.volumeChangeHandler)
     this.videoTarget.removeEventListener("waiting", this.videoWaitingHandler)
     this.videoTarget.removeEventListener("playing", this.videoReadyHandler)
+    for (const event of ["seeking", "seeked", "emptied"]) {
+      this.videoTarget.removeEventListener(event, this.playbackObservationResetHandler)
+    }
     this.videoTarget.removeEventListener("ended", this.videoEndedHandler)
     this.videoTarget.removeEventListener("error", this.videoErrorHandler)
     window.removeEventListener("beforeunload", this.beforeUnloadHandler)
@@ -393,10 +412,7 @@ export default class extends Controller {
     if (this.fetchController) { this.fetchController.abort(); this.fetchController = null }
 
     const directUrl = this.urlWithPlaybackId(this.directStreamUrlValue)
-    const play = () => {
-      const promise = this.videoTarget.play()
-      if (promise?.catch) promise.catch((error) => this.handleAutoplayFailure(error))
-    }
+    const play = () => { void this.requestPlayback() }
     const seekAndPlay = () => {
       if (this.startSecondsValue <= 0) {
         play()
@@ -557,8 +573,11 @@ export default class extends Controller {
     }
     const play = () => {
       if (token !== this.remuxLoadToken) return
-      const playPromise = video.play()
-      if (playPromise?.catch) playPromise.catch(() => {})
+      if (this.userPaused) {
+        this.completePausedSeek()
+        return
+      }
+      void this.requestPlayback()
     }
     const playAfterSeek = (expectedTime) => {
       if (token !== this.remuxLoadToken) return
@@ -733,17 +752,96 @@ export default class extends Controller {
     return this.hlsSessionClient().start()
   }
 
-  handleAutoplayFailure(error) {
-    const policyBlocked = error?.name === "NotAllowedError"
-    if (policyBlocked) {
-      console.info("Playback: Safari requires a tap to start audible playback")
-    } else {
-      console.warn("Playback: autoplay failed, showing play prompt", error)
-    }
+  invalidatePlaybackRequest() {
+    this.playRequestId = (this.playRequestId || 0) + 1
+    this.pendingAutoplayMuteCleanup?.()
+  }
 
-    this.showPlayPrompt({
-      explainAutoplay: policyBlocked && this.shouldShowSafariAutoplayGuidance()
-    })
+  async requestPlayback({ allowMutedFallback = true } = {}) {
+    const video = this.videoTarget
+    const blocked = () => this.userPaused || this.navigatingAway || this.playbackDisconnected ||
+      this.systemRebufferPaused || this.subtitlePlaybackHoldToken != null
+    if (blocked()) return false
+    this.invalidatePlaybackRequest()
+    const requestId = this.playRequestId
+    const source = video.src
+    const current = () => this.playRequestId === requestId &&
+      this.videoTarget === video && video.src === source && !blocked()
+    const originalMuted = video.muted
+    let restoreMuted = null
+
+    try {
+      try {
+        await video.play()
+      } catch (error) {
+        if (!current() || error?.name === "AbortError") return false
+        // Resource selection can set paused=false before failing. Only policy
+        // rejections may be ignored because the element is already unpaused.
+        if (error?.name !== "NotAllowedError") throw error
+        if (video.paused === false) return false
+        if (!allowMutedFallback ||
+            this.playbackEverStarted || this.userChoseSound || video.muted) throw error
+        // Only this request may undo its provisional mute. A newer request or
+        // user gesture cancels it synchronously, before choosing a sound state.
+        restoreMuted = () => {
+          if (this.pendingAutoplayMuteCleanup !== restoreMuted) return
+          this.pendingAutoplayMuteCleanup = null
+          video.muted = originalMuted
+          this.autoplayMuted = false
+          this.syncEnableSoundButton()
+        }
+        this.pendingAutoplayMuteCleanup = restoreMuted
+        this.autoplayMuted = true
+        video.muted = true
+        await video.play()
+      }
+      if (!current() || video.paused === true || video.seeking) return false
+      if (this.pendingAutoplayMuteCleanup === restoreMuted) this.pendingAutoplayMuteCleanup = null
+      this.playbackEverStarted = true
+      this.clearPlayPrompt()
+      this.hideStartupOverlay()
+      this.syncEnableSoundButton()
+      return true
+    } catch (error) {
+      if (!current()) return false
+      restoreMuted?.()
+      if (error?.name === "AbortError") return false
+      this.handleAutoplayFailure(error)
+      return false
+    } finally {
+      restoreMuted?.()
+    }
+  }
+
+  syncEnableSoundButton() {
+    if (!this.hasEnableSoundTarget) return
+    this.enableSoundTarget.classList.toggle("hidden", !(this.autoplayMuted && this.videoTarget.muted))
+  }
+
+  showPlaybackFailure(error) {
+    console.warn("Playback could not start:", error?.name || "UnknownError")
+    if (!this.hasStartupOverlayTarget) return
+    this.clearPlayPrompt()
+    this.clearStartupOverlayTimer()
+    const overlay = this.startupOverlayTarget
+    overlay.classList.remove("hidden", "opacity-0", "pointer-events-none")
+    overlay.setAttribute("aria-hidden", "false")
+    const spinner = overlay.querySelector(".animate-spin")
+    const label = overlay.querySelector("span.text-white")
+    const detail = overlay.querySelector("span.text-sv-text-muted")
+    if (spinner) spinner.style.display = "none"
+    if (label) label.textContent = "Unable to start playback"
+    if (detail) detail.textContent = "Go back and try another stream."
+  }
+
+  handleAutoplayFailure(error) {
+    if (error?.name === "AbortError") return
+    if (error?.name !== "NotAllowedError") {
+      this.showPlaybackFailure(error)
+      return
+    }
+    console.info("Playback: browser autoplay policy requires a user gesture")
+    this.showPlayPrompt({ explainAutoplay: this.shouldShowSafariAutoplayGuidance() })
   }
 
   shouldShowSafariAutoplayGuidance() {
@@ -768,6 +866,7 @@ export default class extends Controller {
 
   showPlayPrompt({ explainAutoplay = false } = {}) {
     if (!this.hasStartupOverlayTarget) return
+    this.clearStartupOverlayTimer()
 
     this.clearPlayPrompt()
     const overlay = this.startupOverlayTarget
@@ -821,18 +920,7 @@ export default class extends Controller {
       if (label) label.textContent = "Starting playback"
       if (sub) sub.textContent = "Loading stream..."
 
-      Promise.resolve(this.videoTarget.play()).then(() => {
-        // A resolved play() means the browser accepted and started playback.
-        // Safari can omit or delay the matching "playing" event, so do not
-        // leave the blocking startup overlay waiting on that event forever.
-        this.clearPlayPrompt()
-        this.hideStartupOverlay()
-      }).catch((playError) => {
-        console.warn("Playback: failed after user gesture", playError)
-        if (spinner) spinner.style.display = "none"
-        if (label) label.textContent = "Try again"
-        if (sub) sub.textContent = "Tap or press Enter to retry"
-      })
+      void this.requestPlayback({ allowMutedFallback: false })
     }
 
     interactiveTarget.addEventListener("click", attemptPlay)
@@ -994,6 +1082,16 @@ export default class extends Controller {
   // fires and the watchdog never triggers.
 
   onVideoWaiting() {
+    // Progress before this wait cannot prove that the new stall recovered.
+    this.playbackObservation = null
+    const waitingVideo = this.videoTarget
+    const waitingSource = waitingVideo.src
+    const waitIsCurrent = () => this.videoTarget === waitingVideo &&
+      waitingVideo.src === waitingSource && !this.userPaused &&
+      !this.navigatingAway && !waitingVideo.ended && !waitingVideo.seeking &&
+      this.subtitlePlaybackHoldToken == null
+    if (!waitIsCurrent()) return
+
     // In HLS mode (iOS), the MSE stall watchdog can't reconnect (no
     // MediaSource on iPhone).  Show the buffering overlay for user
     // feedback and arm the progress watchdog so a dead ffmpeg is
@@ -1003,6 +1101,7 @@ export default class extends Controller {
       const waitPos = this.videoTarget.currentTime
       this.bufferingOverlayTimer = setTimeout(() => {
         this.bufferingOverlayTimer = null
+        if (!waitIsCurrent()) return
         // Re-check: if currentTime advanced, the stall resolved.
         if (this.videoTarget.currentTime > waitPos + 0.1) return
         this.showBufferingOverlay()
@@ -1020,6 +1119,7 @@ export default class extends Controller {
       const waitPos = this.videoTarget.currentTime
       this.bufferingOverlayTimer = setTimeout(() => {
         this.bufferingOverlayTimer = null
+        if (!waitIsCurrent()) return
         if (this.videoTarget.currentTime > waitPos + 0.1) return
         if (this.hasBufferedAhead(2)) return
         this.isStalled = true
@@ -1040,6 +1140,7 @@ export default class extends Controller {
     const hadBufferedAheadAtWait = this.hasBufferedAhead(2)
     this.bufferingOverlayTimer = setTimeout(() => {
         this.bufferingOverlayTimer = null
+        if (!waitIsCurrent()) return
         const playbackAdvanced = this.videoTarget.currentTime > waitPos + 0.1
         // A wait that began with data is a decoder re-init and can resolve
         // through either playback progress or the existing buffer. A wait
@@ -1166,7 +1267,7 @@ export default class extends Controller {
     // Native direct play reloads the Range-capable source, then seeks back
     // to the absolute playhead after metadata is available.
     console.log(`[Player] Reconnecting direct play at ${targetSeconds}s`)
-    const play = () => this.videoTarget.play().catch(() => {})
+    const play = () => { void this.requestPlayback() }
     this.videoTarget.addEventListener("loadedmetadata", () => {
       if (targetSeconds > 0) {
         this.videoTarget.addEventListener("seeked", play, { once: true })
@@ -1336,10 +1437,14 @@ export default class extends Controller {
   // source: if the threshold isn't reached in time, we start with
   // whatever we have.
   maybeStartPlayback(deadlineTriggered = false) {
-
+    if (this.navigatingAway || this.playbackDisconnected || this.subtitlePlaybackHoldToken != null) return
     if (!this.sourceBuffer || this.sourceBuffer.buffered.length === 0) return
 
     const bufferedAhead = this.bufferedAheadOfCurrent()
+    if (this.userPaused) {
+      if (bufferedAhead >= 0.5) this.completePausedSeek()
+      return
+    }
 
     if (!this.playbackStarted) {
       const deadlineReached = deadlineTriggered ||
@@ -1349,8 +1454,7 @@ export default class extends Controller {
         this.bufferAheadDeadline = null
         clearTimeout(this.bufferAheadDeadlineTimer)
         this.bufferAheadDeadlineTimer = null
-        const playPromise = this.videoTarget.play()
-        if (playPromise?.catch) playPromise.catch(() => {})
+        void this.requestPlayback()
       }
       return
     }
@@ -1364,36 +1468,13 @@ export default class extends Controller {
       if (bufferedAhead >= REBUFFER_AHEAD_SECONDS || (deadlineReached && bufferedAhead >= 0.5)) {
         this.clearSystemRebufferGate()
         this.isStalled = false
-        const playPromise = this.videoTarget.play()
-        if (playPromise?.catch) playPromise.catch(() => {})
+        void this.requestPlayback()
       }
     }
   }
 
-  // Safety net for the hasBufferedAhead(2) gate in onVideoReady.
-  // When a rebuffer resume lands with < 2s of buffer, onVideoReady
-  // returns without hiding the buffering overlay — by design, to avoid
-  // a freeze-resume-freeze flicker.  But if the video then plays fine
-  // (data arrives fast enough to sustain playback without another
-  // stall), "playing" never fires again and the stall watchdog keeps
-  // getting reset by each onBufferUpdateEnd, so nothing re-checks
-  // whether the buffer has recovered — the "Buffering…" overlay stays
-  // forever.  This runs on every appendBuffer completion and hides the
-  // overlay once the video is actually playing with >= 2s of buffer.
   maybeHideBufferingOverlay() {
-    if (this.isSeeking) return
-    if (this.subtitlePlaybackHoldToken !== null) return
-    if (!this.playbackStarted || this.isStalled || this.userPaused) return
-    if (this.videoTarget.paused || this.videoTarget.ended) return
-    if (!this.hasBufferedAhead(2)) return
-    if (this.seekingOverlayTarget.classList.contains("hidden")) return
-    clearTimeout(this.bufferingOverlayTimer)
-    this.bufferingOverlayTimer = null
-    this.clearStallWatchdog()
-    this.streamRecoveryAttempts = 0
-    this.streamRecoveryActive = false
-    this.startProgressWatchdog()
-    this.hideSeekingOverlay()
+    this.observePlaybackProgress()
   }
 
   evictOldBuffer() {
@@ -1403,16 +1484,12 @@ export default class extends Controller {
   // ── Play / pause ──────────────────────────────────────────────────
 
   togglePlay() {
-    if (this.videoTarget.paused) {
+    if (this.videoTarget.paused && !this.systemRebufferPaused) {
       this.userPaused = false
-      if (this.systemRebufferPaused) {
-        this.maybeStartPlayback(true)
-        return
-      }
-      const playPromise = this.videoTarget.play()
-      if (playPromise?.catch) playPromise.catch(() => {})
+      void this.requestPlayback({ allowMutedFallback: false })
     } else {
       this.userPaused = true
+      this.invalidatePlaybackRequest()
       this.videoTarget.pause()
       this.clearStallWatchdog()
       this.stopProgressWatchdog()
@@ -1460,6 +1537,7 @@ export default class extends Controller {
   // loads.  The beforeunload handler is skipped to avoid a duplicate
   // save (navigateBack already saved).
   stopPlaybackForNavigation() {
+    this.invalidatePlaybackRequest()
     if (this.hasVideoTarget) { try { this.videoTarget.pause() } catch {} }
     this.playbackCoordinator().disconnect()
     this.saveProgressSync()
@@ -1510,7 +1588,7 @@ export default class extends Controller {
         this.hideSeekingOverlay()
         if (this.hlsSessionId) {
           video.load()
-          video.play().catch(() => {})
+          void this.requestPlayback({ allowMutedFallback: false })
         } else {
           this.startHlsPlayback()
         }
@@ -1589,87 +1667,54 @@ export default class extends Controller {
   }
 
   onVideoReady() {
-    // Only act when the video is actually playing.  If the video is
-    // paused (deliberate rebuffer gate in maybeStartPlayback), don't
-    // interfere — the "Buffering..." overlay should stay visible.
-    if (this.videoTarget.paused) return
+    const video = this.videoTarget
+    if (video.paused || video.ended || video.seeking || this.userPaused || this.navigatingAway) return
+    if (this.systemRebufferPaused || this.subtitlePlaybackHoldToken != null) return
 
-    // Always hide the startup overlay on first play — it's only shown
-    // before playback begins, and "playing" means playback has begun.
-    this.hideStartupOverlay()
-
-    // After a user seek, hide the seeking overlay as soon as playback
-    // resumes — the seeking overlay is not a buffering indicator, and
-    // the rebuffer gate handles buffer depth from here.  Only gate
-    // the buffering/stall-recovery overlay hide on buffer depth.
-    if (this.isSeeking) {
-      clearTimeout(this.bufferingOverlayTimer)
-      this.bufferingOverlayTimer = null
-      this.isStalled = false
-      this.clearStallWatchdog()
-      this.streamRecoveryAttempts = 0
-      this.streamRecoveryActive = false
-      this.startProgressWatchdog()
-      this.hideSeekingOverlay()
-      return
-    }
-
-    // For direct play (including remux), the browser manages its own
-    // buffering.  If "playing" fires, the video is actually playing —
-    // always hide the overlay.  The 2s buffer gate below is for MSE,
-    // where Chrome can fire "playing" on a trickle then immediately
-    // re-stall.  Direct play doesn't have this problem, and the gate
-    // causes the overlay to get stuck if the browser resumes with <2s
-    // of buffer (no onBufferUpdateEnd safety net exists for direct play).
-    if (this.isDirectPlay()) {
-      this.playbackStarted = true
-      clearTimeout(this.bufferingOverlayTimer)
-      this.bufferingOverlayTimer = null
-      this.isStalled = false
-      this.clearStallWatchdog()
-      this.streamRecoveryAttempts = 0
-      this.streamRecoveryActive = false
-      this.startProgressWatchdog()
-      this.hideSeekingOverlay()
-      return
-    }
-
-    // Don't hide the buffering overlay if the buffer is critically low.
-    // Chrome fires "playing" on a tiny trickle of data, then immediately
-    // stalls again — if we hide the overlay here, the user sees a rapid
-    // freeze-resume-freeze cycle with no spinner.  Keep the buffering
-    // overlay visible until there's at least 2s of buffer ahead.
-    if (!this.hasBufferedAhead(2)) return
-
+    this.playbackStarted = true
+    this.playbackEverStarted = true
     clearTimeout(this.bufferingOverlayTimer)
     this.bufferingOverlayTimer = null
     this.isStalled = false
     this.clearStallWatchdog()
     this.streamRecoveryAttempts = 0
     this.streamRecoveryActive = false
+    this.clearPlayPrompt()
+    this.hideStartupOverlay()
     this.startProgressWatchdog()
     this.hideSeekingOverlay()
   }
 
-  syncStartupOverlay() {
-    if (!this.hasStartupOverlayTarget) return
-
-    if (!this.videoTarget.paused && this.videoTarget.currentTime > 0) {
-      this.hideStartupOverlay()
+  observePlaybackProgress() {
+    const video = this.videoTarget
+    const blocked = video.paused || video.ended || video.seeking || this.userPaused ||
+      this.isSeeking || this.systemRebufferPaused || this.navigatingAway ||
+      this.subtitlePlaybackHoldToken != null
+    if (blocked) {
+      this.playbackObservation = null
       return
     }
 
-    this.clearStartupOverlayTimer()
-    this.startupOverlayHideTimer = setTimeout(() => {
-      if (!this.hasVideoTarget) return
-      if (!this.videoTarget.paused && this.videoTarget.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-        this.hideStartupOverlay()
-      }
-    }, 0)
+    const observation = { source: video.src, currentSource: video.currentSrc, position: video.currentTime }
+    const previous = this.playbackObservation
+    if (!previous || previous.source !== observation.source ||
+        previous.currentSource !== observation.currentSource || observation.position < previous.position) {
+      this.playbackObservation = observation
+      return
+    }
+    // Keep a baseline across small updates; downloads and appends aren't motion.
+    if (observation.position <= previous.position + 0.1) return
+    this.playbackObservation = observation
+    this.onVideoReady()
+  }
+
+  syncStartupOverlay() {
+    this.observePlaybackProgress()
   }
 
   hideStartupOverlay() {
     if (!this.hasStartupOverlayTarget) return
+    if (this.startupOverlayTarget.getAttribute?.("aria-hidden") === "true") return
 
     this.startupOverlayTarget.classList.add("opacity-0", "pointer-events-none")
     this.startupOverlayTarget.setAttribute("aria-hidden", "true")
@@ -1688,8 +1733,22 @@ export default class extends Controller {
 
   // ── Volume / mute ─────────────────────────────────────────────────
 
+  enableSound() {
+    this.invalidatePlaybackRequest()
+    this.autoplayMuted = false
+    this.userChoseSound = true
+    this.videoTarget.muted = false
+    this.syncEnableSoundButton()
+    return this.requestPlayback({ allowMutedFallback: false })
+  }
+
   toggleMute() {
-    this.videoTarget.muted = !this.videoTarget.muted
+    const muted = !this.videoTarget.muted
+    this.invalidatePlaybackRequest()
+    this.autoplayMuted = false
+    this.userChoseSound = true
+    this.videoTarget.muted = muted
+    this.syncEnableSoundButton()
   }
 
   updateVolumeIcon() {
@@ -1700,6 +1759,7 @@ export default class extends Controller {
       this.volumeIconTarget.classList.remove("hidden")
       this.muteIconTarget.classList.add("hidden")
     }
+    this.syncEnableSoundButton()
   }
 
   // ── Audio / subtitles ─────────────────────────────────────────────
@@ -2212,11 +2272,11 @@ export default class extends Controller {
   }
 
   restartPlaybackAt(targetSeconds) {
+    this.invalidatePlaybackRequest()
+    this.playbackObservation = null
     if (this.isHls()) {
       this.isSeeking = true
       this.showSeekingOverlay("Seeking...")
-      this.startSecondsValue = targetSeconds
-      this.element.dataset.videoPlayerStartSecondsValue = targetSeconds.toString()
       this.restartHlsSession(targetSeconds)
       return
     }
@@ -2311,24 +2371,8 @@ export default class extends Controller {
     // timeline shows lots of buffer ahead" — the timeline was lying.
     this.updateBufferBar()
 
-    // Safety net: if the "Buffering..." overlay is stuck (isStalled=true)
-    // but currentTime is actively advancing (video is playing), the stall
-    // has resolved.  "playing" may not have fired (browsers don't always
-    // emit it when resuming from buffered ranges), and "progress" may not
-    // fire (browser playing from buffer, not downloading).  "timeupdate"
-    // fires whenever currentTime changes, making it the most reliable
-    // signal that playback is alive.  Clear the overlay if there's buffer
-    // ahead — no point showing "Buffering..." when the video is moving.
-    if (this.isStalled && !this.systemRebufferPaused && !this.videoTarget.paused && !this.userPaused && !this.isSeeking && this.hasBufferedAhead(2)) {
-      clearTimeout(this.bufferingOverlayTimer)
-      this.bufferingOverlayTimer = null
-      this.isStalled = false
-      this.clearStallWatchdog()
-      this.streamRecoveryAttempts = 0
-      this.streamRecoveryActive = false
-      this.startProgressWatchdog()
-      this.hideSeekingOverlay()
-    }
+    // A moving playhead, not accumulated buffer depth, confirms playback.
+    this.observePlaybackProgress()
   }
 
   // Update the grey buffer bar to show from the playhead to the end of
@@ -2357,27 +2401,8 @@ export default class extends Controller {
   }
 
   onProgress() {
-    // Track when the browser last received data — used by the progress
-    // watchdog to detect download stalls for direct/remux play.
     this.lastProgressEventTime = Date.now()
-
-    // Safety net for direct play: if the "Buffering..." overlay is stuck
-    // (isStalled=true from a previous "waiting" event) but the browser
-    // has since buffered ahead and is actively playing, clear the overlay.
-    // For direct play there's no onBufferUpdateEnd → maybeHideBufferingOverlay
-    // safety net (no SourceBuffer), so without this the overlay can stay
-    // stuck forever if onVideoReady's 2s gate returned early.
-    if (this.isDirectPlay() && this.isStalled && !this.videoTarget.paused && !this.userPaused && this.hasBufferedAhead(2)) {
-      clearTimeout(this.bufferingOverlayTimer)
-      this.bufferingOverlayTimer = null
-      this.isStalled = false
-      this.clearStallWatchdog()
-      this.streamRecoveryAttempts = 0
-      this.streamRecoveryActive = false
-      this.startProgressWatchdog()
-      this.hideSeekingOverlay()
-    }
-
+    this.observePlaybackProgress()
     this.updateBufferBar()
   }
 
@@ -2441,6 +2466,14 @@ export default class extends Controller {
     // not a modal.
     this.seekingOverlayTarget.classList.add("pointer-events-none")
     this.seekingOverlayTarget.classList.remove("hidden")
+  }
+
+  // Called only after a replacement source is ready (including remux pre-roll).
+  // A deliberate pause must not wait for a playing event to release the UI.
+  completePausedSeek() {
+    if (!this.userPaused || !this.isSeeking || this.videoTarget.seeking ||
+        this.navigatingAway || this.playbackDisconnected || this.subtitlePlaybackHoldToken != null) return
+    this.hideSeekingOverlay()
   }
 
   hideSeekingOverlay() {
