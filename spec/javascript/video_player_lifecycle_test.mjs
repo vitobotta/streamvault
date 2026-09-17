@@ -57,12 +57,11 @@ function fixture(path = "mse") {
     hasStartupOverlayTarget: true, startupOverlayTarget: target(),
     hasSeekingOverlayMessageTarget: true, seekingOverlayMessageTarget: target(),
     seekingOverlayTarget: target(),
-    hasEnableSoundTarget: true, enableSoundTarget: target(["hidden"]),
     currentTimeTarget: { textContent: "" },
     subtitlePlaybackHoldToken: null, pendingSeekSeconds: null,
     isSeeking: false, userPaused: false, navigatingAway: false,
     systemRebufferPaused: false, isStalled: true, playbackStarted: true,
-    playbackEverStarted: false, streamRecoveryAttempts: 1, streamRecoveryActive: false,
+    streamRecoveryAttempts: 1, streamRecoveryActive: false,
     playPromptCleanup: null, startSecondsValue: 0,
     isDirectPlay: () => path === "direct" || path === "remux",
     isHls: () => path === "hls", isSafari: () => false, isIOS: () => false,
@@ -106,7 +105,6 @@ for (const path of ["direct", "remux", "hls", "mse"]) {
     assert.equal(player.seekingOverlayTarget.classes.has("hidden"), true)
     assert.equal(player.isStalled, false)
     assert.equal(player.playbackStarted, true)
-    assert.equal(player.playbackEverStarted, true)
   })
 
   test(`forward progress clears overlays without another playing event: ${path}`, () => {
@@ -209,14 +207,54 @@ test("repeated playback confirmation does not postpone the startup fade", () => 
   assert.equal(player.startupOverlayTarget.classes.has("hidden"), true)
 })
 
+test("startup keeps sound enabled even when muted autoplay would be allowed", async () => {
+  const { player, video } = fixture()
+  const muteStates = []
+  video.paused = true
+  video.play = () => {
+    muteStates.push(video.muted)
+    if (!video.muted) return Promise.reject({ name: "NotAllowedError" })
+    video.paused = false
+    return Promise.resolve()
+  }
+
+  await player.requestPlayback()
+
+  assert.equal(video.muted, false, "a policy rejection must not silently turn sound off")
+  assert.deepEqual(muteStates, [false], "do not replace audible playback with a muted retry")
+  assert.equal(video.paused, true)
+  assert.equal(player.startupOverlayTarget.label.textContent, "Play")
+})
+
+test("audible startup calls play synchronously without changing the sound state", async () => {
+  const { player, video } = fixture()
+  let calls = 0
+  let resolvePlay
+  video.paused = true
+  video.play = () => {
+    calls += 1
+    assert.equal(video.muted, false)
+    video.paused = false
+    return new Promise((resolve) => { resolvePlay = resolve })
+  }
+
+  const pending = player.requestPlayback()
+  assert.equal(calls, 1, "preserve any activation available in the caller's event")
+  resolvePlay()
+  assert.equal(await pending, true)
+  assert.equal(video.muted, false)
+  assert.equal(player.startupOverlayTarget.attributes.get("aria-hidden"), "true")
+})
+
 for (const browser of ["Chromium", "Safari"]) {
-  for (const mode of ["audible", "muted", "blocked", "abort", "unsupported"]) {
+  for (const mode of ["audible", "user-muted", "blocked", "abort", "unsupported"]) {
     test(`autoplay outcome ${browser}: ${mode}`, async () => {
       const { player, video } = fixture()
       const calls = []
       const prompts = []
       const failures = []
       video.paused = true
+      video.muted = mode === "user-muted"
       player.isSafari = () => browser === "Safari"
       player.showPlayPrompt = (options) => prompts.push(options)
       player.showPlaybackFailure = (error) => failures.push(error.name)
@@ -224,17 +262,17 @@ for (const browser of ["Chromium", "Safari"]) {
         calls.push(video.muted)
         if (mode === "abort") return Promise.reject({ name: "AbortError" })
         if (mode === "unsupported") return Promise.reject({ name: "NotSupportedError" })
-        if (mode === "blocked" || (mode === "muted" && !video.muted)) {
+        if (mode === "blocked") {
           return Promise.reject({ name: "NotAllowedError" })
         }
         video.paused = false
         return Promise.resolve()
       }
-      assert.equal(await player.requestPlayback(), mode === "audible" || mode === "muted")
-      assert.deepEqual(calls, mode === "muted" || mode === "blocked" ? [false, true] : [false])
+      assert.equal(await player.requestPlayback(), mode === "audible" || mode === "user-muted")
+      assert.deepEqual(calls, [mode === "user-muted"])
       assert.equal(prompts.length, mode === "blocked" ? 1 : 0)
       assert.deepEqual(failures, mode === "unsupported" ? ["NotSupportedError"] : [])
-      assert.equal(video.muted, mode === "muted")
+      assert.equal(video.muted, mode === "user-muted")
     })
   }
 }
@@ -270,7 +308,7 @@ test("recovery never silently mutes a previously started video", async () => {
   const { player, video } = fixture()
   let calls = 0
   let prompts = 0
-  player.playbackEverStarted = true
+  assert.equal(await player.requestPlayback(), true)
   video.paused = true
   player.showPlayPrompt = () => { prompts += 1 }
   video.play = () => { calls += 1; return Promise.reject({ name: "NotAllowedError" }) }
@@ -280,40 +318,35 @@ test("recovery never silently mutes a previously started video", async () => {
   assert.equal(prompts, 1)
 })
 
-test("an interrupted muted retry restores sound state without a prompt", async () => {
+test("an interrupted audible request preserves sound state without a prompt", async () => {
   const { player, video } = fixture()
   let prompts = 0
   video.paused = true
   player.showPlayPrompt = () => { prompts += 1 }
-  video.play = () => Promise.reject({ name: video.muted ? "AbortError" : "NotAllowedError" })
+  video.play = () => Promise.reject({ name: "AbortError" })
   assert.equal(await player.requestPlayback(), false)
   assert.equal(video.muted, false)
-  assert.equal(player.autoplayMuted, false)
   assert.equal(prompts, 0)
 })
 
 for (const change of ["source", "invalidate", "newRequest"]) {
-  test(`a pending muted retry cannot leak mute state after ${change}`, async () => {
+  test(`a pending audible request preserves sound state after ${change}`, async () => {
     const { player, video } = fixture()
-    let rejectMuted
+    let rejectPlay
     video.paused = true
-    video.play = () => video.muted ? new Promise((_resolve, reject) => { rejectMuted = reject }) :
-      Promise.reject({ name: "NotAllowedError" })
+    video.play = () => new Promise((_resolve, reject) => { rejectPlay = reject })
     const first = player.requestPlayback()
-    // The controller VM assimilates the host promise before starting retry.
-    await new Promise(setImmediate)
-    assert.equal(typeof rejectMuted, "function")
-    assert.equal(video.muted, true)
+    assert.equal(typeof rejectPlay, "function")
+    assert.equal(video.muted, false)
     if (change === "source") video.src = "blob:replacement"
     if (change === "invalidate") player.invalidatePlaybackRequest()
     if (change === "newRequest") {
       video.play = () => { assert.equal(video.muted, false); video.paused = false; return Promise.resolve() }
       assert.equal(await player.requestPlayback(), true)
     }
-    rejectMuted({ name: "NotAllowedError" })
+    rejectPlay({ name: "NotAllowedError" })
     assert.equal(await first, false)
     assert.equal(video.muted, false)
-    assert.equal(player.autoplayMuted, false)
     assert.equal(player.playPromptCleanup, null)
   })
 }
@@ -382,7 +415,7 @@ for (const outcome of ["unsupported", "abort", "replaced", "paused", "navigation
 
 test("all transport playback calls use the common policy helper", () => {
   const controller = readFileSync(new URL("../../app/javascript/controllers/video_player_controller.js", import.meta.url), "utf8")
-  const withoutHelper = controller.replace(/  async requestPlayback\([\s\S]*?\n  syncEnableSoundButton\(/, "  syncEnableSoundButton(")
+  const withoutHelper = controller.replace(/  async requestPlayback\([\s\S]*?\n  showPlaybackFailure\(/, "  showPlaybackFailure(")
   assert.doesNotMatch(withoutHelper, /\b(?:video|this\.videoTarget)\.play\(/)
   for (const file of ["playback_engine.js", "hls_session_client.js", "subtitle_pipeline.js"]) {
     const source = readFileSync(new URL(`../../app/javascript/player/${file}`, import.meta.url), "utf8")
@@ -407,7 +440,7 @@ for (const gesture of ["click", "Enter", " "]) {
     video.play = () => Promise.reject({ name: "NotAllowedError" })
     assert.equal(await player.requestPlayback(), false)
     let calls = 0
-    video.play = () => { calls += 1; video.paused = false; return Promise.resolve() }
+    video.play = () => { calls += 1; assert.equal(video.muted, false); video.paused = false; return Promise.resolve() }
     const type = gesture === "click" ? "click" : "keydown"
     player.startupOverlayTarget.listeners.get(type)({ type, key: gesture, preventDefault() {}, stopPropagation() {} })
     assert.equal(calls, 1)
@@ -417,42 +450,38 @@ for (const gesture of ["click", "Enter", " "]) {
   })
 }
 
-test("muted autoplay offers a nonblocking sound action", async () => {
+test("starting playback preserves the selected volume", async () => {
   const { player, video } = fixture()
   video.paused = true
+  video.volume = 0.35
   video.play = () => {
-    if (!video.muted) return Promise.reject({ name: "NotAllowedError" })
+    assert.equal(video.muted, false)
+    assert.equal(video.volume, 0.35)
     video.paused = false
     return Promise.resolve()
   }
   assert.equal(await player.requestPlayback(), true)
-  assert.equal(player.enableSoundTarget.classes.has("hidden"), false)
+  assert.equal(video.volume, 0.35)
   assert.equal(player.startupOverlayTarget.attributes.get("aria-hidden"), "true")
-  let mutedAtGesture = null
-  video.play = () => { mutedAtGesture = video.muted; return Promise.resolve() }
-  const gesture = player.enableSound()
-  assert.equal(mutedAtGesture, false)
-  assert.equal(await gesture, true)
-  assert.equal(player.autoplayMuted, false)
-  assert.equal(player.enableSoundTarget.classes.has("hidden"), true)
 })
 
-test("enabling sound on a deliberately paused video does not resume it", async () => {
+test("unmuting a deliberately paused video does not resume it", () => {
   const { player, video } = fixture()
   video.paused = true
   video.muted = true
   player.userPaused = true
-  player.autoplayMuted = true
   video.play = () => { assert.fail("must preserve the user pause") }
-  assert.equal(await player.enableSound(), false)
+  player.toggleMute()
   assert.equal(video.muted, false)
-  assert.equal(player.enableSoundTarget.classes.has("hidden"), true)
+  assert.equal(video.paused, true)
+  assert.equal(player.userPaused, true)
 })
 
-test("player template includes a keyboard-accessible sound action", () => {
+test("player keeps the mute control without requiring a separate sound opt-in", () => {
   const view = readFileSync(new URL("../../app/views/streaming/show.html.erb", import.meta.url), "utf8")
-  assert.match(view, /<button[^>]*type="button"[^>]*data-video-player-target="enableSound"[^>]*data-action="click->video-player#enableSound"/s)
-  assert.match(view, />\s*Enable sound\s*<\/button>/)
+  assert.match(view, /<button[^>]*data-action="click->video-player#toggleMute"/s)
+  assert.doesNotMatch(view, /enableSound|Enable sound/)
+  assert.doesNotMatch(view.match(/<video\b[^>]*>/s)?.[0] || "", /\bmuted\b/)
 })
 
 test("the video template cannot bypass controlled startup buffering", () => {
@@ -691,27 +720,27 @@ test("a genuine MSE startup pause is not consumed by the buffer gate", () => {
   assert.equal(player.playbackStarted, false)
 })
 
-test("ordinary user mute is not advertised as muted autoplay", async () => {
+test("starting playback respects a deliberate user mute", async () => {
   const { player, video } = fixture()
   video.paused = true
   video.muted = true
   assert.equal(await player.requestPlayback(), true)
   assert.equal(video.muted, true)
-  assert.equal(player.enableSoundTarget.classes.has("hidden"), true)
 })
 
-test("native unmute updates the sound affordance without changing playback", () => {
+test("native unmute updates the volume icon without changing playback", () => {
   const { player, video } = fixture()
   player.volumeIconTarget = target()
   player.muteIconTarget = target()
-  player.autoplayMuted = true
   video.muted = true
-  player.syncEnableSoundButton()
-  assert.equal(player.enableSoundTarget.classes.has("hidden"), false)
+  player.updateVolumeIcon()
+  assert.equal(player.muteIconTarget.classes.has("hidden"), false)
+  assert.equal(player.volumeIconTarget.classes.has("hidden"), true)
   video.muted = false
   video.play = () => { assert.fail("volumechange must not start playback") }
   player.updateVolumeIcon()
-  assert.equal(player.enableSoundTarget.classes.has("hidden"), true)
+  assert.equal(player.muteIconTarget.classes.has("hidden"), true)
+  assert.equal(player.volumeIconTarget.classes.has("hidden"), false)
 })
 
 for (const event of ["seeking", "seeked", "emptied"]) {

@@ -46,7 +46,7 @@ function fixture(t, path = "hls") {
   Object.assign(player, {
     videoTarget: video, hasVideoTarget: true,
     element: { dataset: { videoPlayerStartSecondsValue: "300" } },
-    startSecondsValue: 300, playbackStarted: true, playbackEverStarted: true,
+    startSecondsValue: 300, playbackStarted: true,
     playbackObservation: { source: video.src, position: video.currentTime },
     hlsSessionId: path === "hls" ? "old" : null,
     directPlayActive: false, remuxDirectPlay: false,
@@ -54,7 +54,7 @@ function fixture(t, path = "hls") {
     isStalled: false, systemRebufferPaused: false, subtitlePlaybackHoldToken: null,
     streamRecoveryActive: false, streamRecoveryAttempts: 0,
     pendingSeekSeconds: null, playPromptCleanup: null,
-    hasStartupOverlayTarget: false, hasEnableSoundTarget: false,
+    hasStartupOverlayTarget: false,
     seekingOverlayTarget: { classList: { add() {}, remove() {} } },
     cancelRemuxLoad() {}, clearSubtitleCues() {}, reloadTextSubtitlesAt() {},
     sourceToken: () => "test-owned-source",
@@ -251,7 +251,6 @@ test("confirmed HLS playback arms the real silent-freeze watchdog", (t) => {
   const { player, timers, advance } = fixture(t)
   const recoveryEvents = []
   player.playbackStarted = false
-  player.playbackEverStarted = false
   player.handleHlsStall = (event) => recoveryEvents.push(event)
   player.onVideoReady()
   assert.equal(player.playbackStarted, true)

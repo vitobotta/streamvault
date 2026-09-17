@@ -48,7 +48,7 @@ export default class extends Controller {
     return [
       "video", "controls", "seekBar", "seekFilled", "seekBuffered", "seekHandle",
       "playButton", "playIcon", "pauseIcon", "currentTime", "durationDisplay",
-      "volumeIcon", "muteIcon", "enableSound", "startupOverlay", "startupStatus", "autoplayGuidance", "autoplayPlayButton",
+      "volumeIcon", "muteIcon", "startupOverlay", "startupStatus", "autoplayGuidance", "autoplayPlayButton",
       "seekingOverlay", "seekingOverlayMessage", "sourceInfo", "sourceToggle", "sourceDetails", "sourceUrl",
       "sourceFilename", "backButton", "audioControls", "audioMenu", "audioOptions", "audioButtonLabel",
       "subtitleControls", "subtitleMenu", "subtitleOptions", "subtitleButtonLabel", "subtitleOverlay"
@@ -68,8 +68,6 @@ export default class extends Controller {
   connect() {
     this.invalidatePlaybackRequest()
     this.playbackDisconnected = false
-    this.autoplayMuted = false
-    this.userChoseSound = false
     this.progressInterval = null
     this.uiHideTimer = null
     this.knownDuration = this.validDuration(this.durationValue) ? this.durationValue : 0
@@ -141,7 +139,6 @@ export default class extends Controller {
     this.streamRecoveryActive = false
     this.playbackStarted = false
     this.isStalled = false
-    this.playbackEverStarted = false
     this.playbackObservation = null
     // True when the user deliberately paused (button/spacebar). The
     // rebuffer gate in maybeStartPlayback must never auto-resume a
@@ -754,10 +751,9 @@ export default class extends Controller {
 
   invalidatePlaybackRequest() {
     this.playRequestId = (this.playRequestId || 0) + 1
-    this.pendingAutoplayMuteCleanup?.()
   }
 
-  async requestPlayback({ allowMutedFallback = true } = {}) {
+  async requestPlayback() {
     const video = this.videoTarget
     const blocked = () => this.userPaused || this.navigatingAway || this.playbackDisconnected ||
       this.systemRebufferPaused || this.subtitlePlaybackHoldToken != null
@@ -767,55 +763,23 @@ export default class extends Controller {
     const source = video.src
     const current = () => this.playRequestId === requestId &&
       this.videoTarget === video && video.src === source && !blocked()
-    const originalMuted = video.muted
-    let restoreMuted = null
 
     try {
-      try {
-        await video.play()
-      } catch (error) {
-        if (!current() || error?.name === "AbortError") return false
-        // Resource selection can set paused=false before failing. Only policy
-        // rejections may be ignored because the element is already unpaused.
-        if (error?.name !== "NotAllowedError") throw error
-        if (video.paused === false) return false
-        if (!allowMutedFallback ||
-            this.playbackEverStarted || this.userChoseSound || video.muted) throw error
-        // Only this request may undo its provisional mute. A newer request or
-        // user gesture cancels it synchronously, before choosing a sound state.
-        restoreMuted = () => {
-          if (this.pendingAutoplayMuteCleanup !== restoreMuted) return
-          this.pendingAutoplayMuteCleanup = null
-          video.muted = originalMuted
-          this.autoplayMuted = false
-          this.syncEnableSoundButton()
-        }
-        this.pendingAutoplayMuteCleanup = restoreMuted
-        this.autoplayMuted = true
-        video.muted = true
-        await video.play()
-      }
+      // Start in the caller's event turn and preserve the user's sound state.
+      // A blocked audible attempt must not be replaced with silent playback.
+      await video.play()
       if (!current() || video.paused === true || video.seeking) return false
-      if (this.pendingAutoplayMuteCleanup === restoreMuted) this.pendingAutoplayMuteCleanup = null
-      this.playbackEverStarted = true
       this.clearPlayPrompt()
       this.hideStartupOverlay()
-      this.syncEnableSoundButton()
       return true
     } catch (error) {
-      if (!current()) return false
-      restoreMuted?.()
-      if (error?.name === "AbortError") return false
+      if (!current() || error?.name === "AbortError") return false
+      // Resource selection can unpause before failing. Suppress only policy
+      // rejections from an already unpaused element, not real media errors.
+      if (error?.name === "NotAllowedError" && video.paused === false) return false
       this.handleAutoplayFailure(error)
       return false
-    } finally {
-      restoreMuted?.()
     }
-  }
-
-  syncEnableSoundButton() {
-    if (!this.hasEnableSoundTarget) return
-    this.enableSoundTarget.classList.toggle("hidden", !(this.autoplayMuted && this.videoTarget.muted))
   }
 
   showPlaybackFailure(error) {
@@ -920,7 +884,7 @@ export default class extends Controller {
       if (label) label.textContent = "Starting playback"
       if (sub) sub.textContent = "Loading stream..."
 
-      void this.requestPlayback({ allowMutedFallback: false })
+      void this.requestPlayback()
     }
 
     interactiveTarget.addEventListener("click", attemptPlay)
@@ -1486,7 +1450,7 @@ export default class extends Controller {
   togglePlay() {
     if (this.videoTarget.paused && !this.systemRebufferPaused) {
       this.userPaused = false
-      void this.requestPlayback({ allowMutedFallback: false })
+      void this.requestPlayback()
     } else {
       this.userPaused = true
       this.invalidatePlaybackRequest()
@@ -1588,7 +1552,7 @@ export default class extends Controller {
         this.hideSeekingOverlay()
         if (this.hlsSessionId) {
           video.load()
-          void this.requestPlayback({ allowMutedFallback: false })
+          void this.requestPlayback()
         } else {
           this.startHlsPlayback()
         }
@@ -1672,7 +1636,6 @@ export default class extends Controller {
     if (this.systemRebufferPaused || this.subtitlePlaybackHoldToken != null) return
 
     this.playbackStarted = true
-    this.playbackEverStarted = true
     clearTimeout(this.bufferingOverlayTimer)
     this.bufferingOverlayTimer = null
     this.isStalled = false
@@ -1733,22 +1696,10 @@ export default class extends Controller {
 
   // ── Volume / mute ─────────────────────────────────────────────────
 
-  enableSound() {
-    this.invalidatePlaybackRequest()
-    this.autoplayMuted = false
-    this.userChoseSound = true
-    this.videoTarget.muted = false
-    this.syncEnableSoundButton()
-    return this.requestPlayback({ allowMutedFallback: false })
-  }
-
   toggleMute() {
     const muted = !this.videoTarget.muted
     this.invalidatePlaybackRequest()
-    this.autoplayMuted = false
-    this.userChoseSound = true
     this.videoTarget.muted = muted
-    this.syncEnableSoundButton()
   }
 
   updateVolumeIcon() {
@@ -1759,7 +1710,6 @@ export default class extends Controller {
       this.volumeIconTarget.classList.remove("hidden")
       this.muteIconTarget.classList.add("hidden")
     }
-    this.syncEnableSoundButton()
   }
 
   // ── Audio / subtitles ─────────────────────────────────────────────
