@@ -417,7 +417,8 @@ class Media::Transcoder
   # player needs both before choosing direct play, remux, or transcode; opening
   # the same remote file twice serially adds several seconds to every cold
   # start. Store the result in the existing per-URL probe cache so later audio,
-  # subtitle, and transcode decisions reuse it.
+  # subtitle, duration, and transcode decisions reuse it. Chapters and source
+  # duration come from this same container inspection, never another probe.
   def self.probe_media_info(input_url, headers: {})
     cached = cache_get(input_url)
     if cached&.key?(:media_tracks) && cached.key?(:video_stream)
@@ -428,9 +429,11 @@ class Media::Transcoder
     cmd = [ FFPROBE_PATH, "-v", "error" ]
     cmd += [ "-headers", header_str + "\r\n" ] if header_str.present?
     cmd += [
+      "-show_chapters",
       "-show_entries",
-      "stream=index,codec_type,codec_name,codec_tag_string,width,height,pix_fmt,has_b_frames,channels:" \
-        "stream_tags=language,title:stream_disposition=default,forced,hearing_impaired,comment,lyrics,karaoke",
+      "stream=index,codec_type,codec_name,codec_tag_string,width,height,pix_fmt,has_b_frames,channels,duration:" \
+        "stream_tags=language,title,DURATION,duration:stream_disposition=default,forced,hearing_impaired,comment,lyrics,karaoke:" \
+        "format=duration:format_tags=DURATION,duration:chapter=start_time,end_time:chapter_tags=title,TITLE",
       "-of",
       "json",
       input_url
@@ -445,7 +448,7 @@ class Media::Transcoder
       video_stream = {}
     end
 
-    cache_store(input_url, media_tracks: media_tracks, video_stream: video_stream)
+    cache_store(input_url, media_tracks: media_tracks, video_stream: video_stream, **media_tracks.slice(:duration))
     { media_tracks: media_tracks, video_stream: video_stream }
   rescue StandardError
     { media_tracks: empty_media_tracks, video_stream: {} }
@@ -459,8 +462,11 @@ class Media::Transcoder
     cmd = [ FFPROBE_PATH, "-v", "error" ]
     cmd += [ "-headers", header_str + "\r\n" ] if header_str.present?
     cmd += [
+      "-show_chapters",
       "-show_entries",
-      "stream=index,codec_type,codec_name,channels:stream_tags=language,title:stream_disposition=default,forced,hearing_impaired,comment,lyrics,karaoke",
+      "stream=index,codec_type,codec_name,channels,duration:" \
+        "stream_tags=language,title,DURATION,duration:stream_disposition=default,forced,hearing_impaired,comment,lyrics,karaoke:" \
+        "format=duration:format_tags=DURATION,duration:chapter=start_time,end_time:chapter_tags=title,TITLE",
       "-of",
       "json",
       input_url
@@ -468,10 +474,18 @@ class Media::Transcoder
 
     result = capture_command(cmd, timeout_seconds: 10)
     tracks = result.status&.success? ? extract_media_tracks(result.stdout) : empty_media_tracks
-    cache_store(input_url, media_tracks: tracks)
+    cache_store(input_url, media_tracks: tracks, **tracks.slice(:duration))
     tracks
   rescue StandardError
     empty_media_tracks
+  end
+
+  # The profile DTO covers playback compatibility; the tracks endpoint adds
+  # source metadata from its already-completed probe. A cache miss must not
+  # start a second remote inspection or delay playback.
+  def self.cached_source_metadata(input_url)
+    tracks = cache_get(input_url)&.fetch(:media_tracks, nil) || empty_media_tracks
+    { chapters: [] }.merge(tracks.slice(:chapters, :duration))
   end
 
   def self.extract_subtitles_to_vtt(input_url, headers: {}, subtitle_stream: nil, start_seconds: 0, duration_seconds: SUBTITLE_EXTRACTION_WINDOW_SECONDS)
@@ -1044,9 +1058,14 @@ class Media::Transcoder
 
   def self.extract_media_tracks(output)
     data = JSON.parse(output)
+    return empty_media_tracks unless data.is_a?(Hash)
+
     audio_position = 0
     subtitle_position = 0
     tracks = empty_media_tracks
+    duration = duration_from_probe_data(data)
+    tracks[:duration] = duration if duration.positive?
+    tracks[:chapters] = normalized_chapters(data["chapters"], duration: tracks[:duration])
 
     Array(data["streams"]).each do |stream|
       stream_index = non_negative_integer(stream["index"])
@@ -1070,6 +1089,24 @@ class Media::Transcoder
     empty_media_tracks
   end
   private_class_method :extract_media_tracks
+
+  def self.normalized_chapters(chapters, duration:)
+    return [] unless chapters.is_a?(Array)
+
+    chapters.filter_map do |chapter|
+      next unless chapter.is_a?(Hash)
+
+      start_time = finite_float(chapter["start_time"])
+      end_time = finite_float(chapter["end_time"])
+      next unless start_time && end_time && start_time >= 0 && end_time > start_time
+      next if duration && end_time > duration
+
+      tags = chapter["tags"].is_a?(Hash) ? chapter["tags"] : {}
+      title = tags["title"] || tags["TITLE"]
+      { title: title.is_a?(String) ? title.strip : "", start_time: start_time, end_time: end_time }
+    end
+  end
+  private_class_method :normalized_chapters
 
   def self.media_track(stream, stream_index, position)
     tags = stream["tags"] || {}
@@ -1205,7 +1242,7 @@ class Media::Transcoder
   private_class_method :normalized_stream_index
 
   def self.empty_media_tracks
-    { audio: [], subtitles: [] }
+    { audio: [], subtitles: [], chapters: [] }
   end
   private_class_method :empty_media_tracks
 
@@ -1345,27 +1382,30 @@ class Media::Transcoder
   private_class_method :normalized_subtitle_duration_seconds
 
   def self.extract_probe_duration(output)
-    data = JSON.parse(output)
-    durations = []
-    durations << data.dig("format", "duration")
-    durations << data.dig("format", "tags", "DURATION")
+    duration_from_probe_data(JSON.parse(output))
+  rescue JSON::ParserError
+    duration = parse_probe_duration_value(output)
+    valid_probe_duration?(duration) ? duration : 0
+  end
+  private_class_method :extract_probe_duration
 
-    Array(data["streams"]).each do |stream|
-      durations << stream["duration"]
-      tags = stream["tags"] || {}
-      durations << tags["DURATION"]
-      durations << tags["duration"]
+  def self.duration_from_probe_data(data)
+    return 0 unless data.is_a?(Hash)
+
+    streams = data["streams"].is_a?(Array) ? data["streams"] : []
+    durations = [ data["format"], *streams ].flat_map do |entry|
+      next [] unless entry.is_a?(Hash)
+
+      tags = entry["tags"].is_a?(Hash) ? entry["tags"] : {}
+      [ entry["duration"], tags["DURATION"], tags["duration"] ]
     end
 
     durations
       .filter_map { |value| parse_probe_duration_value(value) }
       .select { |duration| valid_probe_duration?(duration) }
       .max || 0
-  rescue JSON::ParserError
-    duration = parse_probe_duration_value(output)
-    valid_probe_duration?(duration) ? duration : 0
   end
-  private_class_method :extract_probe_duration
+  private_class_method :duration_from_probe_data
 
   def self.parse_probe_duration_value(value)
     text = value.to_s.strip

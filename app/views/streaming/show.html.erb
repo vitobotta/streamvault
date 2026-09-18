@@ -19,6 +19,8 @@
      data-video-player-seek-url-value="<%= transcode_seek_path %>"
      data-video-player-subtitles-url-value="<%= transcode_subtitles_path %>"
      data-video-player-progress-url-value="<%= progress_streaming_path("play") %>"
+     data-video-player-next-episode-url-value="<%= next_episode_streaming_path("play", playback: params[:playback]) if @type == "show" %>"
+     data-video-player-next-episode-prompt-seconds-value="<%= @next_episode_prompt_seconds %>"
      data-video-player-resume-url-value="<%= resume_streaming_index_path %>">
 
   <%# Back button %>
@@ -94,6 +96,20 @@
   </div>
 
   <%# Custom controls bar %>
+  <% if @type == "show" %>
+    <div data-video-player-target="nextEpisodePrompt"
+         class="hidden absolute z-10 max-w-xs text-right"
+         style="bottom: calc(env(safe-area-inset-bottom, 0px) + 9rem); right: calc(env(safe-area-inset-right, 0px) + 1rem);">
+      <button type="button" data-video-player-target="nextEpisodeButton"
+              data-action="click->video-player#skipToNextEpisode"
+              class="min-h-11 rounded-lg border border-white/20 bg-black/80 px-4 py-3 text-sm font-semibold text-white shadow-lg transition-colors hover:bg-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:ring-offset-2 focus:ring-offset-black disabled:cursor-wait disabled:opacity-70">
+        Skip to the next episode
+      </button>
+      <p data-video-player-target="nextEpisodeStatus" role="status" aria-live="polite"
+         class="mt-2 rounded bg-black/80 px-2 text-sm text-white"></p>
+    </div>
+  <% end %>
+
   <div data-video-player-target="controls"
        class="absolute bottom-0 left-0 right-0 z-10 bg-gradient-to-t from-black/90 via-black/50 to-transparent pt-16 pb-3 px-4 opacity-100 transition-opacity duration-500"
        style="padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.75rem); padding-left: calc(env(safe-area-inset-left, 0px) + 1rem); padding-right: calc(env(safe-area-inset-right, 0px) + 1rem);">

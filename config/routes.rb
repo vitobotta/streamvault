@@ -33,6 +33,7 @@ Rails.application.routes.draw do
     end
     member do
       patch :progress
+      get :next_episode
     end
   end
 

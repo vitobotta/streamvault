@@ -21,6 +21,9 @@ module Playback
       end
       following = index && episodes[index + 1]
       return ServiceResult.failure("No more episodes", :series_complete) unless following
+      if following[:released].present? && Date.parse(following[:released].to_s) > Date.current
+        return ServiceResult.failure("Next episode has not aired yet", :not_released)
+      end
 
       ServiceResult.success(
         ContentRef.new(

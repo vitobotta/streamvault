@@ -125,6 +125,171 @@ RSpec.describe Media::Transcoder do
     end
   end
 
+  shared_examples "source chapter metadata" do |probe_method|
+    let(:input_url) { "https://example.test/episode-chapters.mkv" }
+    let(:probe_data) do
+      {
+        "streams" => [
+          { "index" => 0, "codec_type" => "video", "codec_name" => "h264" },
+          { "index" => 1, "codec_type" => "audio", "codec_name" => "aac" }
+        ],
+        "format" => { "duration" => "1800.500000" },
+        "chapters" => [
+          { "start_time" => "0.000000", "end_time" => "42.250000", "tags" => { "title" => "Opening" } },
+          { "start_time" => "1740.125000", "end_time" => "1800.500000", "tags" => { "TITLE" => "End Credits" } }
+        ]
+      }
+    end
+    let(:tracks) do
+      result = described_class.public_send(probe_method, input_url, headers: { "Referer" => "https://example.test/" })
+      probe_method == :probe_media_info ? result.fetch(:media_tracks) : result
+    end
+
+    before do
+      allow(described_class).to receive(:capture_command) { capture_result(probe_data.to_json) }
+    end
+
+    it "normalizes source chapters and duration with the existing probe and reuses its cache" do
+      expect(tracks[:chapters]).to eq([
+        { title: "Opening", start_time: 0.0, end_time: 42.25 },
+        { title: "End Credits", start_time: 1740.125, end_time: 1800.5 }
+      ])
+      expect(tracks[:duration]).to eq(1800.5)
+      expect(tracks[:audio].first[:codec]).to eq("aac")
+      expect(described_class.probe_media_tracks(input_url)).to eq(tracks)
+      expect(described_class.probe_duration(input_url)).to eq(1800.5)
+      expect(described_class.cached_source_metadata(input_url)).to eq(tracks.slice(:chapters, :duration))
+      if probe_method == :probe_media_info
+        expect(described_class.probe_media_info(input_url)[:media_tracks]).to eq(tracks)
+        expect(described_class.probe_video_stream(input_url)[:codec_name]).to eq("h264")
+      end
+
+      expect(described_class).to have_received(:capture_command).once do |command, timeout_seconds:|
+        expect(command).to include("-show_chapters", "-of", "json", input_url, "Referer: https://example.test/\r\n")
+        entries = command.fetch(command.index("-show_entries") + 1).split(":")
+        expect(entries).to include("chapter=start_time,end_time", "chapter_tags=title,TITLE", "format=duration", "format_tags=DURATION,duration")
+        expect(entries.find { |entry| entry.start_with?("stream=") }.split(",")).to include("duration")
+        expect(entries.find { |entry| entry.start_with?("stream_tags=") }.split(",")).to include("DURATION", "duration")
+        expect(timeout_seconds).to eq(10)
+      end
+    end
+
+    it "keeps untitled chapters without classifying them" do
+      probe_data["chapters"] = [
+        { "start_time" => 10, "end_time" => 20 },
+        { "start_time" => "20", "end_time" => "30", "tags" => [] },
+        { "start_time" => "30", "end_time" => "40", "tags" => { "title" => { "bad" => "title" } } }
+      ]
+
+      expect(tracks[:chapters]).to eq([
+        { title: "", start_time: 10.0, end_time: 20.0 },
+        { title: "", start_time: 20.0, end_time: 30.0 },
+        { title: "", start_time: 30.0, end_time: 40.0 }
+      ])
+    end
+
+    it "drops malformed chapters and invalid bounds without losing valid tracks" do
+      probe_data["chapters"] += [
+        nil, [], "invalid", {},
+        { "start_time" => "N/A", "end_time" => "20" },
+        { "start_time" => "10", "end_time" => "NaN" },
+        { "start_time" => "Infinity", "end_time" => "20" },
+        { "start_time" => "1e309", "end_time" => "20" },
+        { "start_time" => "-1", "end_time" => "20" },
+        { "start_time" => "20", "end_time" => "20" },
+        { "start_time" => "30", "end_time" => "20" },
+        { "start_time" => [], "end_time" => "20" },
+        { "start_time" => "1800", "end_time" => "1801" }
+      ]
+
+      expect(tracks[:chapters].pluck(:title)).to eq([ "Opening", "End Credits" ])
+      expect(tracks[:audio].first[:codec]).to eq("aac")
+    end
+
+    it "returns an empty chapter list and no duration when metadata is absent" do
+      probe_data.delete("chapters")
+      probe_data.delete("format")
+
+      expect(tracks[:chapters]).to eq([])
+      expect(tracks).not_to have_key(:duration)
+      expect(tracks[:audio].first[:codec]).to eq("aac")
+      expect(described_class.probe_media_tracks(input_url)).to eq(tracks)
+      expect(described_class).to have_received(:capture_command).once
+    end
+
+    [ nil, {}, "invalid", 42 ].each do |chapters|
+      it "ignores a malformed chapter list #{chapters.inspect}" do
+        probe_data["chapters"] = chapters
+
+        expect(tracks[:chapters]).to eq([])
+        expect(tracks[:duration]).to eq(1800.5)
+        expect(tracks[:audio].first[:codec]).to eq("aac")
+      end
+    end
+
+    [ nil, [], "invalid", { "duration" => "NaN", "tags" => [] }, { "duration" => "0.1" }, { "duration" => "1e309" }, { "duration" => [ "1800" ] } ].each do |format|
+      it "ignores malformed or untrustworthy duration metadata #{format.inspect}" do
+        probe_data["format"] = format
+
+        expect(tracks).not_to have_key(:duration)
+        expect(tracks[:chapters].pluck(:title)).to eq([ "Opening", "End Credits" ])
+        expect(tracks[:audio].first[:codec]).to eq("aac")
+      end
+    end
+
+    it "uses the same source duration tag fallbacks as the duration probe" do
+      probe_data["format"] = { "duration" => "0.1", "tags" => { "DURATION" => "00:30:00.000" } }
+      probe_data["streams"].first["tags"] = { "DURATION" => "00:30:00.500" }
+
+      expect(tracks[:duration]).to eq(1800.5)
+      expect(described_class.probe_duration(input_url)).to eq(1800.5)
+      expect(described_class).to have_received(:capture_command).once
+    end
+
+    it "does not replace a known cached duration with missing metadata" do
+      described_class.send(:cache_store, input_url, duration: 1800.5)
+      probe_data.delete("format")
+
+      expect(tracks[:chapters].size).to eq(2)
+      expect(described_class.probe_duration(input_url)).to eq(1800.5)
+      expect(described_class).to have_received(:capture_command).once
+    end
+
+    it "returns empty chapters when ffprobe fails" do
+      allow(described_class).to receive(:capture_command).and_return(capture_result("", success: false))
+
+      expect(tracks).to eq(audio: [], subtitles: [], chapters: [])
+    end
+
+    it "returns empty chapters when ffprobe returns invalid JSON" do
+      allow(described_class).to receive(:capture_command).and_return(capture_result("invalid JSON"))
+
+      expect(tracks).to eq(audio: [], subtitles: [], chapters: [])
+    end
+  end
+
+  describe "source chapter metadata" do
+    it_behaves_like "source chapter metadata", :probe_media_tracks
+    it_behaves_like "source chapter metadata", :probe_media_info
+  end
+
+  describe ".cached_source_metadata" do
+    it "never starts a probe on a cache miss" do
+      expect(described_class).not_to receive(:capture_command)
+
+      expect(described_class.cached_source_metadata("https://example.test/uncached.mkv")).to eq(chapters: [])
+    end
+
+    it "never starts a probe when the completed profile has expired" do
+      input_url = "https://example.test/expired.mkv"
+      described_class.send(:cache_store, input_url, media_tracks: { chapters: [], duration: 1800 })
+      described_class.instance_variable_get(:@probe_cache).fetch(input_url)[:expires_at] = 0
+      expect(described_class).not_to receive(:capture_command)
+
+      expect(described_class.cached_source_metadata(input_url)).to eq(chapters: [])
+    end
+  end
+
   describe ".probe_remux_seek" do
     it "keeps the keyframe timeline while seeking FFmpeg to the exact target" do
       output = { "frames" => [ { "best_effort_timestamp_time" => "10.0" } ] }.to_json

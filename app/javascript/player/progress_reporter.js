@@ -3,6 +3,7 @@ export class ProgressReporter {
     this.player = player
     this.fetcher = fetcher
     this.documentRoot = documentRoot
+    this.pendingSave = null
   }
 
   start() {
@@ -24,29 +25,48 @@ export class ProgressReporter {
   }
 
   async save(completed = false) {
+    if (this.player.playbackDisconnected || this.player.navigatingAway ||
+        (!completed && this.player.advancingEpisode)) return false
+    if (this.pendingSave) {
+      if (!completed) return this.pendingSave
+      await this.pendingSave
+      if (this.player.playbackDisconnected || this.player.navigatingAway) return false
+    }
     const payload = this.payload(completed)
-    if (!payload) return
+    if (!payload) return false
 
-    if (this.player.progressAbortController) this.player.progressAbortController.abort()
-    this.player.progressAbortController = new AbortController()
-
+    const controller = new AbortController()
+    this.player.progressAbortController = controller
+    const request = this.send(payload, controller)
+    this.pendingSave = request
     try {
-      await this.fetcher("/streaming/play/progress", {
+      return await request
+    } finally {
+      if (this.pendingSave === request) this.pendingSave = null
+      if (this.player.progressAbortController === controller) this.player.progressAbortController = null
+    }
+  }
+
+  async send(payload, controller) {
+    const timeout = setTimeout(() => controller.abort(), 10000)
+    try {
+      const response = await this.fetcher("/streaming/play/progress", {
         method: "PATCH",
         headers: this.headers(),
         body: JSON.stringify(payload),
-        signal: this.player.progressAbortController.signal
+        signal: controller.signal
       })
+      return response.ok
     } catch (error) {
       if (error.name !== "AbortError") console.warn("Progress save failed:", error)
+      return false
     } finally {
-      if (this.player.progressAbortController?.signal.aborted) {
-        this.player.progressAbortController = null
-      }
+      clearTimeout(timeout)
     }
   }
 
   saveSync() {
+    if (this.player.advancingEpisode || this.player.navigatingAway) return
     const payload = this.payload()
     if (!payload) return
 

@@ -7,6 +7,7 @@ import { PlaybackRecoveryMonitor } from "../../../app/javascript/player/playback
 import { ProgressReporter } from "../../../app/javascript/player/progress_reporter.js"
 import { SubtitlePipeline } from "../../../app/javascript/player/subtitle_pipeline.js"
 import { WebVttParser } from "../../../app/javascript/player/web_vtt_parser.js"
+import { nextEpisodePromptStart } from "../../../app/javascript/player/next_episode_prompt.js"
 
 const playerModuleContext = vm.createContext({
   HlsSessionClient,
@@ -42,6 +43,7 @@ export function createVideoPlayerHarness() {
     ProgressReporter,
     SubtitlePipeline,
     WebVttParser,
+    nextEpisodePromptStart,
     AbortController,
     URL,
     URLSearchParams,

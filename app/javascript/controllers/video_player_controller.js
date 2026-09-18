@@ -1,6 +1,7 @@
 import { Controller } from "@hotwired/stimulus"
 import { WebVttParser } from "player/web_vtt_parser"
 import { PlaybackCoordinator } from "player/playback_coordinator"
+import { nextEpisodePromptStart } from "player/next_episode_prompt"
 
 const MIN_VALID_DURATION_SECONDS = 60
 const SUBTITLE_STARTUP_WINDOW_SECONDS = 5
@@ -51,7 +52,8 @@ export default class extends Controller {
       "volumeIcon", "muteIcon", "startupOverlay", "startupStatus", "autoplayGuidance", "autoplayPlayButton",
       "seekingOverlay", "seekingOverlayMessage", "sourceInfo", "sourceToggle", "sourceDetails", "sourceUrl",
       "sourceFilename", "backButton", "audioControls", "audioMenu", "audioOptions", "audioButtonLabel",
-      "subtitleControls", "subtitleMenu", "subtitleOptions", "subtitleButtonLabel", "subtitleOverlay"
+      "subtitleControls", "subtitleMenu", "subtitleOptions", "subtitleButtonLabel", "subtitleOverlay",
+      "nextEpisodePrompt", "nextEpisodeButton", "nextEpisodeStatus"
     ]
   }
   static get values() {
@@ -61,13 +63,18 @@ export default class extends Controller {
       season: String, episode: String, resumeAt: String, startSeconds: Number,
       title: String, duration: Number, posterUrl: String,
       defaultLanguage: String, preferredLanguages: String,
-      tracksUrl: String, seekUrl: String, subtitlesUrl: String, resumeUrl: String
+      tracksUrl: String, seekUrl: String, subtitlesUrl: String, resumeUrl: String,
+      nextEpisodeUrl: String, nextEpisodePromptSeconds: { type: Number, default: 90 }
     }
   }
 
   connect() {
     this.invalidatePlaybackRequest()
     this.playbackDisconnected = false
+    this.nextEpisode = null
+    this.nextEpisodeRequest = null
+    this.nextEpisodeAbortController = null
+    this.advancingEpisode = false
     this.progressInterval = null
     this.uiHideTimer = null
     this.knownDuration = this.validDuration(this.durationValue) ? this.durationValue : 0
@@ -87,6 +94,7 @@ export default class extends Controller {
       this.playbackObservation = null
       clearTimeout(this.bufferingOverlayTimer)
       this.bufferingOverlayTimer = null
+      this.updateNextEpisodePrompt()
     }
     this.audioTracks = []
     this.subtitleTracks = []
@@ -196,6 +204,7 @@ export default class extends Controller {
     this.syncStartupOverlay()
     this.playbackCoordinator().connect()
     this.probeDuration()
+    void this.loadNextEpisode()
 
     // Save progress on page unload — but skip if navigateBack already
     // saved (navigatingAway flag prevents a duplicate save).
@@ -207,6 +216,8 @@ export default class extends Controller {
   disconnect() {
     this.invalidatePlaybackRequest()
     this.playbackDisconnected = true
+    this.nextEpisodeAbortController?.abort()
+    this.updateNextEpisodePrompt()
     this.playbackCoordinator().disconnect()
     // Save progress only if navigateBack hasn't already done it.
     if (!this.navigatingAway) this.saveProgressSync()
@@ -1514,18 +1525,79 @@ export default class extends Controller {
   // Auto-advance to the next episode when the current one finishes.
   // Only applies to shows — movies just stop (progress already saved).
   async onVideoEnded() {
-    if (this.typeValue !== "show") return
+    if (this.typeValue !== "show" || this.advancingEpisode || this.navigatingAway || this.playbackDisconnected) return
+    await this.loadNextEpisode()
+    if (this.playbackDisconnected || this.navigatingAway) return
+    if (this.nextEpisode?.url) {
+      await this.skipToNextEpisode()
+    } else {
+      await this.saveProgress(true)
+    }
+  }
 
-    // Persist the known duration as the final position so an actual media
-    // end always crosses the 98% episode-completion threshold.
-    await this.saveProgress(true)
+  async loadNextEpisode() {
+    if (this.typeValue !== "show" || !this.nextEpisodeUrlValue || this.playbackDisconnected) return
+    if (this.nextEpisodeRequest) return this.nextEpisodeRequest
 
-    if (this.resumeUrlValue) {
-      const url = new URL(this.resumeUrlValue, window.location.origin)
-      url.searchParams.set("type", "show")
-      url.searchParams.set("imdb_id", this.imdbIdValue)
-      url.searchParams.set("autoplay", "1")
-      window.location.href = url.toString()
+    const controller = new AbortController()
+    this.nextEpisodeAbortController = controller
+    const timeout = setTimeout(() => controller.abort(), 10000)
+    this.nextEpisodeRequest = (async () => {
+      try {
+        const response = await fetch(this.nextEpisodeUrlValue, {
+          headers: { Accept: "application/json" }, signal: controller.signal
+        })
+        if (!response.ok) throw new Error("Next episode lookup failed")
+        const data = await response.json()
+        if (controller.signal.aborted || this.playbackDisconnected || this.navigatingAway) return
+        this.nextEpisode = data.available && data.url ? data : null
+        this.updateNextEpisodePrompt()
+      } catch {
+        // A metadata outage must not interrupt the current episode. Allow an
+        // end-of-playback retry, but never poll on every timeupdate event.
+        if (this.nextEpisodeAbortController === controller) this.nextEpisodeRequest = null
+      } finally {
+        clearTimeout(timeout)
+      }
+    })()
+    return this.nextEpisodeRequest
+  }
+
+  updateNextEpisodePrompt() {
+    if (!this.hasNextEpisodePromptTarget) return
+    const start = nextEpisodePromptStart({
+      duration: this.effectiveDuration(), chapters: this.tracksData?.chapters,
+      fallbackSeconds: this.nextEpisodePromptSecondsValue
+    })
+    const visible = this.typeValue === "show" && !!this.nextEpisode?.url &&
+      this.playbackStarted && !this.playbackDisconnected && !this.navigatingAway &&
+      !this.isSeeking && !this.videoTarget.seeking && start !== null &&
+      this.currentPlaybackPosition() >= start
+    this.nextEpisodePromptTarget.classList.toggle("hidden", !visible)
+    this.nextEpisodeButtonTarget.disabled = !!this.advancingEpisode
+  }
+
+  async skipToNextEpisode() {
+    if (this.typeValue !== "show" || !this.nextEpisode?.url || this.advancingEpisode ||
+        this.navigatingAway || this.playbackDisconnected) return
+
+    this.advancingEpisode = true
+    this.updateNextEpisodePrompt()
+    if (this.hasNextEpisodeStatusTarget) this.nextEpisodeStatusTarget.textContent = "Starting next episode…"
+    try {
+      // Wait for older progress writes before persisting completion. Suppress
+      // periodic/unload saves so they cannot overwrite it with the credits position.
+      if (!await this.saveProgress(true)) throw new Error("Completion save failed")
+      if (this.playbackDisconnected || this.navigatingAway) return
+      this.stopPlaybackForNavigation()
+      window.location.href = this.nextEpisode.url
+    } catch {
+      if (this.hasNextEpisodeStatusTarget) {
+        this.nextEpisodeStatusTarget.textContent = "Could not save progress. Please try again."
+      }
+    } finally {
+      if (!this.navigatingAway) this.advancingEpisode = false
+      this.updateNextEpisodePrompt()
     }
   }
 
@@ -1730,6 +1802,12 @@ export default class extends Controller {
 
       const data = await response.json()
       this.tracksData = data
+      const sourceDuration = Number(data.duration)
+      if (this.validDuration(sourceDuration)) {
+        this.knownDuration = sourceDuration
+        this.updateDurationDisplay()
+      }
+      this.updateNextEpisodePrompt()
       this.mediaTracksLoaded = true
       this.audioTracks = Array.isArray(data.audio) ? data.audio : []
       this.subtitleTracks = Array.isArray(data.subtitles) ? data.subtitles : []
@@ -2323,6 +2401,7 @@ export default class extends Controller {
 
     // A moving playhead, not accumulated buffer depth, confirms playback.
     this.observePlaybackProgress()
+    this.updateNextEpisodePrompt()
   }
 
   // Update the grey buffer bar to show from the playhead to the end of

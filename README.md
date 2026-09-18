@@ -80,6 +80,7 @@ StreamVault (Rails app)
 - **Season & episode browser** — Browse seasons and episodes with air dates, overviews, and progress tracking per episode.
 - **Episode streaming** — Stream individual episodes with the same quality and language options as movies.
 - **Auto-advance** — When an episode finishes, the next one is ready to go.
+- **Skip to the next episode** — An optional button appears at a labelled closing-credits chapter, or during the last 90 seconds if no usable marker exists (capped to the final 10% of short episodes). Only shown for TV episodes with a following catalogue episode that is not known to be unreleased. No countdown or automatic skip during credits; seek backwards to hide it. Chapter timing follows the selected video file, while the fallback is only a near-end estimate. Stream availability is resolved when advancing.
 
 ### Streaming & playback
 - **Adaptive playback paths** — Uses native direct play when possible, low-cost video remuxing when safe, and full transcoding only when required.
@@ -225,6 +226,7 @@ docker compose up -d --build
 | `ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT` | Key derivation salt (generate with `openssl rand -hex 32`) | Required |
 | `APP_DOMAIN` | Domain the app is served from (recommended for Rails host authorisation in public deployments) | Optional |
 | `ENABLE_SIGNUPS` | Set to `true` to allow new user registration | `false` |
+| `NEXT_EPISODE_PROMPT_SECONDS` | Near-end fallback window for the TV next-episode button (0–600 seconds, capped to the final 10% of the episode). `0` disables the estimate but keeps credits chapter markers. Restart/redeploy after changing. | `90` |
 | `POSTGRES_USER` | PostgreSQL database user | `streamvault` |
 | `POSTGRES_PASSWORD` | PostgreSQL database password (generate with `openssl rand -hex 16`) | Required |
 | `POSTGRES_DB` | PostgreSQL database name | `streamvault` |

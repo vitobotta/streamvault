@@ -161,19 +161,20 @@ test("completed MSE response finalizes the media source", () => {
   assert.equal(player.mseFetchEnded, false)
 })
 
-test("ended shows save completion before navigating to autoplay resume", async () => {
+test("ended shows save completion before navigating to their explicit next episode", async () => {
   const player = new VideoPlayerController()
   let completedSave
   context.window.location.href = ""
   player.typeValue = "show"
   player.imdbIdValue = "tt0903747"
-  player.resumeUrlValue = "/streaming/resume"
-  player.saveProgress = async (completed) => { completedSave = completed }
+  player.nextEpisode = { url: "/streaming/resume?after=signed-playback&autoplay=1" }
+  player.saveProgress = async (completed) => { completedSave = completed; return true }
+  player.stopPlaybackForNavigation = () => { player.navigatingAway = true }
 
   await player.onVideoEnded()
 
   assert.equal(completedSave, true)
-  assert.match(context.window.location.href, /imdb_id=tt0903747/)
+  assert.match(context.window.location.href, /after=signed-playback/)
   assert.match(context.window.location.href, /autoplay=1/)
 })
 

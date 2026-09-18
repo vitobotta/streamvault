@@ -26,16 +26,16 @@ class TranscodeTracksController < ApplicationController
     ).call
 
     unless result.success?
-      render json: { audio: [], subtitles: [], error: result.error_message }, status: :bad_gateway
+      render json: { audio: [], subtitles: [], chapters: [], error: result.error_message }, status: :bad_gateway
       return
     end
 
-    render json: result.data.to_h.merge(
+    render json: result.data.to_h.merge(Media::Transcoder.cached_source_metadata(source.url)).merge(
       direct_stream_url: direct_stream_url,
       remux_direct_url: remux_direct_url
     )
   rescue ResolvedSource::Invalid
-    render json: { audio: [], subtitles: [] }, status: :bad_request
+    render json: { audio: [], subtitles: [], chapters: [] }, status: :bad_request
   end
 
   # Return a keyframe-aligned remux start plus the short local pre-roll

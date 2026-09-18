@@ -58,6 +58,7 @@ class StreamingController < ApplicationController
     @default_language = current_user.default_stream_language
     @preferred_languages = current_user.preferred_stream_languages
     @direct_play_hint = descriptor.direct_play_hint
+    @next_episode_prompt_seconds = (Integer(ENV.fetch("NEXT_EPISODE_PROMPT_SECONDS", "90"), exception: false) || 90).clamp(0, 600)
 
     @direct_stream_url = direct_stream_path(source: @source_token)
     transcode_params = { source: @source_token }
@@ -71,6 +72,26 @@ class StreamingController < ApplicationController
   # start, then redirect to the player page. Single entry point used by home
   # "Continue Watching" cards and the player's auto-advance.
   def resume
+    if params[:after].present?
+      descriptor = PlaybackDescriptor.resolve(token: params[:after], user: current_user)
+      return head :bad_request unless descriptor.content_ref.show?
+
+      next_episode = Playback::EpisodeSequence.new.next_after(descriptor.content_ref)
+      unless next_episode.success?
+        return head :no_content if [ :series_complete, :not_released ].include?(next_episode.error_code)
+
+        redirect_to streaming_path("play", playback: params[:after]), alert: next_episode.error_message
+        return
+      end
+
+      target = {
+        season: next_episode.data.season, episode: next_episode.data.episode,
+        resume_at: 0, duration_seconds: 0, title: descriptor.title, poster_url: descriptor.poster_url
+      }
+      start_resume(descriptor.content_ref.imdb_id, "show", target)
+      return
+    end
+
     type = params[:type].presence || "show"
 
     imdb_id = params[:imdb_id]
@@ -90,17 +111,29 @@ class StreamingController < ApplicationController
       return
     end
 
-    result = PlaybackStartService.new(current_user).resume(
-      imdb_id: imdb_id,
-      type: type,
-      target: target
-    )
+    start_resume(imdb_id, type, target)
+  rescue ApplicationToken::Invalid
+    redirect_to root_path, alert: "Playback link is invalid or expired."
+  end
 
+  # Background lookup: never resolve a stream or delay the current player's startup.
+  def next_episode
+    descriptor = PlaybackDescriptor.resolve(token: params[:playback], user: current_user)
+    return render json: { available: false } unless descriptor.content_ref.show?
+
+    result = Playback::EpisodeSequence.new.next_after(descriptor.content_ref)
     if result.success?
-      redirect_to streaming_path("play", playback: result.data.to_token(user: current_user))
+      render json: {
+        available: true, season: result.data.season, episode: result.data.episode,
+        url: resume_streaming_index_path(after: params[:playback], autoplay: "1")
+      }
+    elsif [ :series_complete, :not_released ].include?(result.error_code)
+      render json: { available: false }
     else
-      redirect_back fallback_location: root_path, alert: result.error_message
+      render json: { available: false }, status: :service_unavailable
     end
+  rescue ApplicationToken::Invalid
+    render json: { available: false }, status: :bad_request
   end
 
   # PATCH /streaming/:id/progress — save watch progress
@@ -134,6 +167,15 @@ class StreamingController < ApplicationController
   end
 
   private
+
+  def start_resume(imdb_id, type, target)
+    result = PlaybackStartService.new(current_user).resume(imdb_id: imdb_id, type: type, target: target)
+    if result.success?
+      redirect_to streaming_path("play", playback: result.data.to_token(user: current_user))
+    else
+      redirect_back fallback_location: root_path, alert: result.error_message
+    end
+  end
 
   def verify_realdebrid_key!
     unless current_user.has_realdebrid_key?
