@@ -63,6 +63,8 @@ class ContentRef
     raise ArgumentError, "invalid content type" unless TYPES.include?(type)
     raise ArgumentError, "movies cannot have an episode" if movie? && (season || episode)
     raise ArgumentError, "season and episode must be provided together" if season.nil? != episode.nil?
-    raise ArgumentError, "season and episode must be positive" if season && (!season.positive? || !episode.positive?)
+    raise ArgumentError, "season must be positive" if season && !season.positive?
+    # Catalogues can number a season premiere or crossover as episode zero.
+    raise ArgumentError, "episode must be non-negative" if episode&.negative?
   end
 end
