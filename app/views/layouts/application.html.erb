@@ -127,6 +127,14 @@
               </div>
             <% end %>
 
+            <% if parental_rating_sources_missing? %>
+              <div class="flash-alert mb-6" role="status">
+                This account is limited to age <%= current_user.max_rating_age %>, but no film rating source is
+                configured, so every title counts as unrated and is hidden. Set
+                <code>OMDB_API_KEY</code> or <code>TMDB_READ_ACCESS_TOKEN</code> and restart the app.
+              </div>
+            <% end %>
+
             <%= yield %>
           </main>
         </div>

@@ -22,6 +22,13 @@ module ParentalControls
     # resolved ages (cached for up to a week) cannot outlive a fix.
     CACHE_VERSION = 2
 
+    # True when at least one certification source can actually be queried.
+    # Without one, every title resolves to UNKNOWN_AGE and a child account sees
+    # an empty catalogue, which looks like a bug rather than a configuration gap.
+    def self.sources_configured?
+      Catalog::OmdbClient.new.configured? || ENV["TMDB_READ_ACCESS_TOKEN"].present?
+    end
+
     def initialize(omdb: Catalog::OmdbClient.new, tmdb: :auto, cache: Rails.cache, logger: Rails.logger)
       @omdb = omdb
       @tmdb = tmdb == :auto ? build_tmdb_service : tmdb
