@@ -59,6 +59,10 @@ class StreamingController < ApplicationController
     @season = content_ref.season
     @episode = content_ref.episode
     @title = descriptor.title || "Now Playing"
+    presentation = Playback::EpisodeLabel.present(@title)
+    @display_title = presentation[:title] || @title
+    @display_subtitle = presentation[:subtitle]
+    @position = presentation[:position]
     @poster_url = descriptor.poster_url
     @resume_at = descriptor.resume_at
     @duration = descriptor.duration
@@ -83,7 +87,7 @@ class StreamingController < ApplicationController
       descriptor = PlaybackDescriptor.resolve(token: params[:after], user: current_user)
       return head :bad_request unless descriptor.content_ref.show?
 
-      next_episode = Playback::EpisodeSequence.new.next_after(descriptor.content_ref)
+      next_episode = Playback::EpisodeSequence.new.next_episode_after(descriptor.content_ref)
       unless next_episode.success?
         return head :no_content if [ :series_complete, :not_released ].include?(next_episode.error_code)
 
@@ -93,7 +97,8 @@ class StreamingController < ApplicationController
 
       target = {
         season: next_episode.data.season, episode: next_episode.data.episode,
-        resume_at: 0, duration_seconds: 0, title: descriptor.title, poster_url: descriptor.poster_url
+        resume_at: 0, duration_seconds: next_episode.data.duration_seconds.to_i,
+        title: next_episode.data.label, poster_url: descriptor.poster_url
       }
       start_resume(descriptor.content_ref.imdb_id, "show", target)
       return
@@ -128,10 +133,12 @@ class StreamingController < ApplicationController
     descriptor = PlaybackDescriptor.resolve(token: params[:playback], user: current_user)
     return render json: { available: false } unless descriptor.content_ref.show?
 
-    result = Playback::EpisodeSequence.new.next_after(descriptor.content_ref)
+    result = Playback::EpisodeSequence.new.next_episode_after(descriptor.content_ref)
     if result.success?
       render json: {
         available: true, season: result.data.season, episode: result.data.episode,
+        position: Playback::EpisodeLabel.position(result.data.season, result.data.episode),
+        title: result.data.label,
         url: resume_streaming_index_path(after: params[:playback], autoplay: "1")
       }
     elsif [ :series_complete, :not_released ].include?(result.error_code)

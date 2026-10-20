@@ -64,20 +64,35 @@ module Playback
       )
       progress = entry.progress_seconds
       duration = entry.duration_seconds
+      label = entry.title
+      show_title = nil
+      episode_title = nil
 
       if entry.episode? && PlaybackCompletionPolicy.episode_finished?(entry)
-        following = @episode_sequence.next_after(content_ref)
+        following = @episode_sequence.next_episode_after(content_ref)
         return if following.error_code == :series_complete
         if following.success?
-          content_ref = following.data
+          content_ref = following.data.content_ref
           progress = 0
           duration = 0
+          # The card must describe the episode the user will actually play,
+          # not the one that just finished.
+          label = following.data.label.presence || entry.title
+          show_title = following.data.show_title
+          episode_title = following.data.title
         end
+      end
+
+      if entry.episode?
+        parts = label_parts(label)
+        show_title ||= parts[:show_title]
+        episode_title ||= parts[:episode_title]
       end
 
       {
         imdb_id: content_ref.imdb_id,
-        title: entry.title,
+        title: show_title.presence || label,
+        episode_title: episode_title,
         poster_url: entry.poster_url,
         content_type: entry.content_type,
         season: content_ref.season,
@@ -87,6 +102,17 @@ module Playback
         progress_percentage: percentage(progress, duration),
         last_watched: entry.watched_at,
         history_id: entry.id
+      }
+    end
+
+    # Splits a canonical "Show · S01E02 · Name" label back into its parts, so
+    # cards can render a compact "S01E02 · Name" subtitle without another
+    # catalogue lookup.
+    def label_parts(label)
+      parts = label.to_s.split(Playback::EpisodeLabel::SEPARATOR)
+      {
+        show_title: parts.first.presence,
+        episode_title: parts.length >= 3 ? parts.last.presence : nil
       }
     end
 

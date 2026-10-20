@@ -103,21 +103,29 @@ RSpec.describe Playback::ContinueWatchingQuery do
     expect(item.slice(:season, :episode, :progress_seconds)).to eq(season: 1, episode: 1, progress_seconds: 2_340)
   end
 
-  it "advances a completed episode" do
+  it "advances a completed episode and labels the successor" do
     create(:playback_progress, :episode, user: user, imdb_id: "tt0903747",
       progress_seconds: 2_352, duration_seconds: 2_400)
-    next_ref = ContentRef.new(imdb_id: "tt0903747", type: "show", season: 1, episode: 2)
-    allow(episode_sequence).to receive(:next_after).and_return(ServiceResult.success(next_ref))
+    next_episode = Playback::EpisodeSequence::Next.new(
+      content_ref: ContentRef.new(imdb_id: "tt0903747", type: "show", season: 1, episode: 2),
+      show_title: "Breaking Bad",
+      title: "Cat's in the Bag...",
+      label: "Breaking Bad · S01E02 · Cat's in the Bag...",
+      duration_seconds: 2_400
+    )
+    allow(episode_sequence).to receive(:next_episode_after).and_return(ServiceResult.success(next_episode))
 
     item = query.call.data.first
 
     expect(item.slice(:season, :episode, :progress_seconds)).to eq(season: 1, episode: 2, progress_seconds: 0)
+    expect(item.slice(:title, :episode_title))
+      .to eq(title: "Breaking Bad", episode_title: "Cat's in the Bag...")
   end
 
   it "removes only a completed series finale" do
     create(:playback_progress, :episode, user: user, imdb_id: "tt0903747",
       progress_seconds: 2_400, duration_seconds: 2_400)
-    allow(episode_sequence).to receive(:next_after)
+    allow(episode_sequence).to receive(:next_episode_after)
       .and_return(ServiceResult.failure("No more episodes", :series_complete))
 
     expect(query.call.data).to be_empty
@@ -129,13 +137,19 @@ RSpec.describe Playback::ContinueWatchingQuery do
         progress_seconds: 2_400, duration_seconds: 2_400,
         watched_at: (index + 1).minutes.ago)
     end
-    next_ref = ContentRef.new(imdb_id: "tt0903747", type: "show", season: 1, episode: 2)
-    allow(episode_sequence).to receive(:next_after).and_return(ServiceResult.success(next_ref))
+    next_episode = Playback::EpisodeSequence::Next.new(
+      content_ref: ContentRef.new(imdb_id: "tt0903747", type: "show", season: 1, episode: 2),
+      show_title: "Breaking Bad",
+      title: "Cat's in the Bag...",
+      label: "Breaking Bad · S01E02 · Cat's in the Bag...",
+      duration_seconds: 2_400
+    )
+    allow(episode_sequence).to receive(:next_episode_after).and_return(ServiceResult.success(next_episode))
 
     items = query.call.data
 
     expect(items.length).to eq(described_class::LIMIT)
-    expect(episode_sequence).to have_received(:next_after)
+    expect(episode_sequence).to have_received(:next_episode_after)
       .at_most(described_class::LIMIT + described_class::RESOLUTION_BATCH - 1).times
     expect(items.map { |item| item[:last_watched] }).to eq(items.map { |item| item[:last_watched] }.sort.reverse)
   end

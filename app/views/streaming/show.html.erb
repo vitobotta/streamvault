@@ -23,15 +23,25 @@
      data-video-player-next-episode-prompt-seconds-value="<%= @next_episode_prompt_seconds %>"
      data-video-player-resume-url-value="<%= resume_streaming_index_path %>">
 
-  <%# Back button %>
-  <div class="absolute top-4 left-4 z-50 opacity-100 transition-opacity duration-500" data-video-player-target="backButton"
-       style="top: calc(env(safe-area-inset-top, 0px) + 1rem); left: calc(env(safe-area-inset-left, 0px) + 1rem);">
+  <%# Top bar: back affordance plus the episode headline.  The episode name is
+      the headline and the "Show · S01E02" line is the context, so an episode
+      title is never hidden behind a back button. %>
+  <div class="absolute inset-x-0 top-0 z-50 flex items-start gap-2 bg-gradient-to-b from-black/85 via-black/35 to-transparent px-3 pb-10 opacity-100 transition-opacity duration-500"
+       data-video-player-target="backButton"
+       style="padding-top: calc(env(safe-area-inset-top, 0px) + 0.6rem); padding-left: calc(env(safe-area-inset-left, 0px) + 0.6rem);">
     <%= link_to content_path(type: @type, imdb_id: @imdb_id, season: @season),
-          class: "flex items-center gap-2 px-3 py-2 bg-black/60 rounded-lg text-white hover:bg-black/80 transition-colors",
+          class: "-ml-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-white/90 transition-colors hover:bg-white/10 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60",
+          aria: { label: "Back to title" },
           data: { action: "click->video-player#navigateBack" } do %>
-      <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
-      <span class="text-sm"><%= @title %></span>
+      <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
     <% end %>
+
+    <div class="min-w-0 pt-1.5">
+      <% if @display_subtitle.present? %>
+        <p data-video-player-target="positionLabel" class="truncate text-[11px] font-medium uppercase tracking-[0.14em] text-white/60"><%= @display_subtitle %></p>
+      <% end %>
+      <h1 data-video-player-target="titleLabel" class="truncate text-base font-semibold leading-tight text-white drop-shadow sm:text-lg"><%= @display_title %></h1>
+    </div>
   </div>
 
   <%# Source info (top right, auto-hides) %>
@@ -100,6 +110,8 @@
     <div data-video-player-target="nextEpisodePrompt"
          class="hidden absolute z-10 max-w-xs text-right"
          style="bottom: calc(env(safe-area-inset-bottom, 0px) + 9rem); right: calc(env(safe-area-inset-right, 0px) + 1rem);">
+      <p data-video-player-target="nextEpisodeLabel"
+         class="mb-2 truncate text-[11px] font-semibold uppercase tracking-[0.14em] text-white/70"></p>
       <button type="button" data-video-player-target="nextEpisodeButton"
               data-action="click->video-player#skipToNextEpisode"
               class="min-h-11 rounded-lg border border-white/20 bg-black/80 px-4 py-3 text-sm font-semibold text-white shadow-lg transition-colors hover:bg-iris-600 focus:outline-none focus:ring-2 focus:ring-iris-300 focus:ring-offset-2 focus:ring-offset-black disabled:cursor-wait disabled:opacity-70">
@@ -125,10 +137,31 @@
 
     <%# Controls row %>
     <div class="flex items-center gap-3 text-white text-sm">
+      <%# Skip back 10s %>
+      <button type="button" data-action="click->video-player#seekBy" data-seek-offset="-10"
+              class="relative flex h-9 w-9 shrink-0 items-center justify-center text-white transition-colors hover:text-indigo-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+              aria-label="Back 10 seconds">
+        <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3.5 12a8.5 8.5 0 1 0 2.8-6.3"/>
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3.4 3.8v5h5"/>
+        </svg>
+        <span class="pointer-events-none absolute text-[9px] font-bold leading-none">10</span>
+      </button>
+
       <%# Play/pause %>
-      <button data-action="click->video-player#togglePlay" data-video-player-target="playButton" class="hover:text-iris-400 transition-colors">
-        <svg data-video-player-target="playIcon" class="w-6 h-6 hidden" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+      <button data-action="click->video-player#togglePlay" data-video-player-target="playButton" class="shrink-0 hover:text-iris-400 transition-colors" aria-label="Play or pause">        <svg data-video-player-target="playIcon" class="w-6 h-6 hidden" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
         <svg data-video-player-target="pauseIcon" class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+      </button>
+
+      <%# Skip forward 10s %>
+      <button type="button" data-action="click->video-player#seekBy" data-seek-offset="10"
+              class="relative flex h-9 w-9 shrink-0 items-center justify-center text-white transition-colors hover:text-indigo-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+              aria-label="Forward 10 seconds">
+        <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M20.5 12a8.5 8.5 0 1 1-2.8-6.3"/>
+          <path stroke-linecap="round" stroke-linejoin="round" d="M20.6 3.8v5h-5"/>
+        </svg>
+        <span class="pointer-events-none absolute text-[9px] font-bold leading-none">10</span>
       </button>
 
       <%# Time display %>
@@ -138,9 +171,28 @@
 
       <div class="flex-1"></div>
 
+      <%# Playback speed %>
+      <div data-video-player-target="speedControls" class="relative">
+        <button type="button" data-action="click->video-player#toggleSpeedMenu"
+                class="rounded px-2 py-1 text-xs font-semibold tabular-nums text-white/85 transition-colors hover:bg-white/10 hover:text-white"
+                aria-label="Playback speed" aria-haspopup="true">
+          <span data-video-player-target="speedButtonLabel">1×</span>
+        </button>
+        <div data-video-player-target="speedMenu" role="menu"
+             class="hidden absolute z-20 space-y-0.5 rounded-lg border border-white/20 bg-black/85 p-1.5 text-xs text-white/85"
+             style="right: 0; bottom: 2.25rem; min-width: 6.5rem;">
+          <% [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].each do |rate| %>
+            <button type="button" role="menuitemradio" data-action="click->video-player#selectSpeed"
+                    data-speed="<%= rate %>" data-video-player-speed="<%= rate %>"
+                    class="block w-full rounded px-2 py-1.5 text-left tabular-nums transition-colors hover:bg-white/10">
+              <%= rate %>×
+            </button>
+          <% end %>
+        </div>
+      </div>
+
       <%# Volume %>
-      <button data-action="click->video-player#toggleMute" class="hover:text-iris-400 transition-colors">
-        <svg data-video-player-target="volumeIcon" class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
+      <button data-action="click->video-player#toggleMute" class="hover:text-iris-400 transition-colors" aria-label="Mute or unmute">        <svg data-video-player-target="volumeIcon" class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
         <svg data-video-player-target="muteIcon" class="w-5 h-5 hidden" fill="currentColor" viewBox="0 0 24 24"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>
       </button>
 

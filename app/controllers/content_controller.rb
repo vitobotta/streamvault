@@ -74,6 +74,15 @@ class ContentController < ApplicationController
       @episode_duration_seconds = ep&.dig(:runtime_seconds)
     end
 
+    # Canonical label for the play button in the episode drawer.  Built here
+    # (not in the view) so the same formatter is used by every playback path.
+    @episode_label = Playback::EpisodeLabel.build(
+      show_title: @show_title,
+      season: @season,
+      episode: @episode,
+      episode_title: @episode_title
+    )
+
     filter_title = "#{@show_title} #{@episode_title}"
     streams_result = AvailableStreamsService.new(current_user).call(
       imdb_id: @imdb_id,

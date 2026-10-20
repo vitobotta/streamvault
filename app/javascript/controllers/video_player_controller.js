@@ -53,7 +53,8 @@ export default class extends Controller {
       "seekingOverlay", "seekingOverlayMessage", "sourceInfo", "sourceToggle", "sourceDetails", "sourceUrl",
       "sourceFilename", "backButton", "audioControls", "audioMenu", "audioOptions", "audioButtonLabel",
       "subtitleControls", "subtitleMenu", "subtitleOptions", "subtitleButtonLabel", "subtitleOverlay",
-      "nextEpisodePrompt", "nextEpisodeButton", "nextEpisodeStatus"
+      "nextEpisodePrompt", "nextEpisodeButton", "nextEpisodeStatus", "nextEpisodeLabel",
+      "titleLabel", "positionLabel", "speedControls", "speedMenu", "speedButtonLabel"
     ]
   }
   static get values() {
@@ -76,6 +77,7 @@ export default class extends Controller {
     this.nextEpisodeAbortController = null
     this.advancingEpisode = false
     this.progressInterval = null
+    this.playbackRate = 1
     this.uiHideTimer = null
     this.knownDuration = this.validDuration(this.durationValue) ? this.durationValue : 0
     this.isSeeking = false
@@ -1465,6 +1467,22 @@ export default class extends Controller {
 
   // ── Play / pause ──────────────────────────────────────────────────
 
+  // Relative seeks (skip buttons and arrow keys) reuse performSeek so remux
+  // streams, transcodes, and direct play all take their normal seek path.
+  seekRelative(offset) {
+    const duration = this.knownDuration
+    if (!(duration > 0) || !Number.isFinite(offset) || offset === 0) return
+
+    const target = Math.max(0, Math.min(duration, this.currentPlaybackPosition() + offset))
+    this.performSeek(target / duration)
+  }
+
+  seekBy(event) {
+    event.preventDefault()
+    this.seekRelative(Number(event.currentTarget.dataset.seekOffset))
+    this.showOverlayUi()
+  }
+
   togglePlay() {
     if (this.videoTarget.paused && !this.systemRebufferPaused) {
       this.userPaused = false
@@ -1486,12 +1504,34 @@ export default class extends Controller {
   }
 
   onKeyDown(event) {
-    if (event.key !== " " && event.key !== "Spacebar") return
     if (event.repeat || this.isInteractiveElement(event.target)) return
 
-    event.preventDefault()
-    this.togglePlay()
-    this.showOverlayUi()
+    switch (event.key) {
+      case " ":
+      case "Spacebar":
+        event.preventDefault()
+        this.togglePlay()
+        this.showOverlayUi()
+        return
+      case "ArrowLeft":
+      case "ArrowRight":
+        event.preventDefault()
+        this.seekRelative(event.key === "ArrowLeft" ? -10 : 10)
+        this.showOverlayUi()
+        return
+      case "f":
+      case "F":
+        event.preventDefault()
+        this.toggleFullscreen()
+        return
+      case "m":
+      case "M":
+        event.preventDefault()
+        this.toggleMute()
+        this.showOverlayUi()
+        return
+      default:
+    }
   }
 
   isInteractiveElement(element) {
@@ -1582,6 +1622,9 @@ export default class extends Controller {
       this.currentPlaybackPosition() >= start
     this.nextEpisodePromptTarget.classList.toggle("hidden", !visible)
     this.nextEpisodeButtonTarget.disabled = !!this.advancingEpisode
+    if (this.hasNextEpisodeLabelTarget) {
+      this.nextEpisodeLabelTarget.textContent = this.nextEpisode?.title || ""
+    }
   }
 
   async skipToNextEpisode() {
@@ -2172,6 +2215,50 @@ export default class extends Controller {
     if (!this.subtitleMenuTarget.classList.contains("hidden")) this.prefetchLikelyExternalSubtitle()
   }
 
+  toggleSpeedMenu(event) {
+    event.stopPropagation()
+    if (this.hasAudioMenuTarget) this.audioMenuTarget.classList.add("hidden")
+    if (this.hasSubtitleMenuTarget) this.subtitleMenuTarget.classList.add("hidden")
+    this.toggleTrackMenu(this.speedMenuTarget, null)
+  }
+
+  selectSpeed(event) {
+    event.preventDefault()
+    const rate = Number(event.currentTarget.dataset.speed)
+    if (!Number.isFinite(rate) || rate <= 0) return
+
+    this.applyPlaybackRate(rate)
+    this.closeTrackMenus()
+  }
+
+  // defaultPlaybackRate survives the src reloads used when seeking a remux or
+  // transcode, so the chosen speed sticks across a seek.
+  applyPlaybackRate(rate) {
+    const video = this.videoTarget
+    this.playbackRate = rate
+    video.defaultPlaybackRate = rate
+    video.playbackRate = rate
+    this.updateSpeedLabel()
+    this.markSpeedOptions()
+  }
+
+  updateSpeedLabel() {
+    if (!this.hasSpeedButtonLabelTarget) return
+
+    this.speedButtonLabelTarget.textContent = `${this.playbackRate || 1}×`
+  }
+
+  markSpeedOptions() {
+    if (!this.hasSpeedMenuTarget) return
+
+    this.speedMenuTarget.querySelectorAll("[data-video-player-speed]").forEach((option) => {
+      const selected = Number(option.dataset.videoPlayerSpeed) === this.playbackRate
+      option.setAttribute("aria-checked", selected ? "true" : "false")
+      option.classList.toggle("bg-white/15", selected)
+      option.classList.toggle("font-semibold", selected)
+    })
+  }
+
   toggleTrackMenu(menu, otherMenu) {
     otherMenu?.classList.add("hidden")
     menu.classList.toggle("hidden")
@@ -2182,18 +2269,21 @@ export default class extends Controller {
   closeTrackMenus() {
     if (this.hasAudioMenuTarget) this.audioMenuTarget.classList.add("hidden")
     if (this.hasSubtitleMenuTarget) this.subtitleMenuTarget.classList.add("hidden")
+    if (this.hasSpeedMenuTarget) this.speedMenuTarget.classList.add("hidden")
     this.scheduleUiHide()
   }
 
   trackMenuOpen() {
     return (this.hasAudioMenuTarget && !this.audioMenuTarget.classList.contains("hidden")) ||
-      (this.hasSubtitleMenuTarget && !this.subtitleMenuTarget.classList.contains("hidden"))
+      (this.hasSubtitleMenuTarget && !this.subtitleMenuTarget.classList.contains("hidden")) ||
+      (this.hasSpeedMenuTarget && !this.speedMenuTarget.classList.contains("hidden"))
   }
 
   onDocumentClick(event) {
     if (!this.trackMenuOpen()) return
     if (this.hasAudioControlsTarget && this.audioControlsTarget.contains(event.target)) return
     if (this.hasSubtitleControlsTarget && this.subtitleControlsTarget.contains(event.target)) return
+    if (this.hasSpeedControlsTarget && this.speedControlsTarget.contains(event.target)) return
 
     this.closeTrackMenus()
   }

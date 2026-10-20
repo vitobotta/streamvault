@@ -34,7 +34,7 @@ class PlaybackStartService
       playback_descriptor(
         stream: stream_result.data,
         content_ref: content_ref,
-        title: title,
+        title: canonical_title(content_ref, title),
         poster_url: poster_url,
         resume_at: progress_entry&.progress_seconds,
         duration: duration
@@ -61,7 +61,7 @@ class PlaybackStartService
       playback_descriptor(
         stream: stream_result.data,
         content_ref: content_ref,
-        title: target[:title],
+        title: canonical_title(content_ref, target[:title]),
         poster_url: target[:poster_url],
         resume_at: target[:resume_at],
         duration: target[:duration_seconds]
@@ -88,6 +88,30 @@ class PlaybackStartService
   # Child accounts may never start playback of titles above their rating
   # limit, whatever entry point (start/resume) requested it.  Returns a
   # failure result when restricted, nil when playback may proceed.
+  # The player label is server-owned.  Any entry point that forgets to send a
+  # title, or that still carries the previous episode's title (auto-advance),
+  # gets the catalogue label for the episode actually being played.  Catalogue
+  # responses are cached for an hour, so this is normally a cache hit.
+  def canonical_title(content_ref, requested_title)
+    requested = requested_title.to_s.presence
+    return requested unless content_ref.show?
+
+    # A label that already carries this episode's position is the one a
+    # previous lookup produced — trust it so resume and auto-advance stay off
+    # the metadata path entirely.  Only blank or bare show titles are resolved.
+    position = Playback::EpisodeLabel.position(content_ref.season, content_ref.episode)
+    return requested if position && requested&.include?(position)
+
+    context = Playback::EpisodeContext.new(catalog: @catalog).call(
+      imdb_id: content_ref.imdb_id,
+      season: content_ref.season,
+      episode: content_ref.episode
+    )
+    return requested unless context.success?
+
+    context.data[:label].presence || requested
+  end
+
   def reject_restricted_content(content_ref)
     return nil if @parental.allowed?(content_ref.imdb_id)
 

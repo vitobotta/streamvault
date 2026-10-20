@@ -3,7 +3,11 @@ require "rails_helper"
 RSpec.describe "Next episode playback", type: :request do
   let(:user) { create(:user, realdebrid_api_key: "test_key") }
   let(:episodes) do
-    [ { season: 1, episode: 1 }, { season: 1, episode: 2 }, { season: 2, episode: 1 } ]
+    [
+      { season: 1, episode: 1, title: "Pilot", runtime_seconds: 2_400 },
+      { season: 1, episode: 2, title: "Cat's in the Bag...", runtime_seconds: 2_400 },
+      { season: 2, episode: 1, title: "Seven Thirty-Seven", runtime_seconds: 2_400 }
+    ]
   end
   let(:catalog) { instance_double(Catalog::CinemetaClient) }
   let(:playback) do
@@ -15,7 +19,7 @@ RSpec.describe "Next episode playback", type: :request do
     sign_in user
     allow(Catalog::CinemetaClient).to receive(:new).and_return(catalog)
     allow(catalog).to receive(:metadata).with("tt0903747", "show", include_ratings: false)
-      .and_return(ServiceResult.success(episodes: episodes))
+      .and_return(ServiceResult.success(title: "Breaking Bad", episodes: episodes))
   end
 
   def lookup(token = playback)
@@ -127,8 +131,9 @@ RSpec.describe "Next episode playback", type: :request do
     allow(PlaybackStartService).to receive(:new).with(user).and_return(starter)
     expect(starter).to receive(:resume).with(
       imdb_id: "tt0903747", type: "show",
-      target: { season: 1, episode: 2, resume_at: 0, duration_seconds: 0,
-                title: "Breaking Bad", poster_url: "https://img.example.com/show.jpg" }
+      target: { season: 1, episode: 2, resume_at: 0, duration_seconds: 2_400,
+                title: "Breaking Bad · S01E02 · Cat's in the Bag...",
+                poster_url: "https://img.example.com/show.jpg" }
     ).and_return(ServiceResult.success(next_descriptor))
 
     lookup

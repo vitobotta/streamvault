@@ -7,15 +7,14 @@
       type: "show",
       season: @season,
       episode: @episode,
-      title: "#{@show_title} S#{@season.to_s.rjust(2, '0')}E#{@episode.to_s.rjust(2, '0')}",
+      title: @episode_label,
       poster_url: @poster_url,
       duration: @episode_duration_seconds
     }
   %>
   <div class="space-y-0.5">
     <% @streams.each do |stream| %>
-      <%= render "shared/stream_row", stream: stream, play_params: episode_play_params, button_class: "btn-secondary btn-sm" %>
-    <% end %>
+      <%= render "shared/stream_row", stream: stream, play_params: episode_play_params, button_class: "btn-secondary btn-sm" %>    <% end %>
   </div>
 <% else %>
   <p class="text-sm text-ink-400">No releases found for this episode.</p>

@@ -25,12 +25,16 @@ Rails.application.configure do
   # Assume all access to the app is happening through a SSL-terminating
   # reverse proxy (Caddy / kamal-proxy), so request.ssl? reflects the
   # upstream scheme even though Rails sees plain HTTP on the socket.
-  config.assume_ssl = true
+  # Set ASSUME_SSL=false when Rails is reached directly rather than through a
+  # proxy that speaks X-Forwarded-Proto.
+  config.assume_ssl = ENV.fetch("ASSUME_SSL", "true") != "false"
 
   # Force all access over SSL, set HSTS, and mark cookies secure. The
   # app carries session cookies and RealDebrid API keys in requests, so
   # transport encryption is required end-to-end.
-  config.force_ssl = true
+  # Set FORCE_SSL=false to run on a trusted network without a TLS terminator
+  # (a LAN address, a home server, or the container's published HTTP port).
+  config.force_ssl = ENV.fetch("FORCE_SSL", "true") != "false"
 
   # Skip http-to-https redirect for the default health check endpoint.
   config.ssl_options = { redirect: { exclude: ->(request) { request.path == "/up" } } }
