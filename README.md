@@ -22,6 +22,12 @@
   <a href="#testing">Development</a>
 </p>
 
+<p align="center">
+  <a href="https://github.com/sponsors/vitobotta"><img src="https://img.shields.io/badge/Sponsor-%E2%9D%A4-ea4aaa?style=for-the-badge&amp;logo=github" alt="Sponsor on GitHub"></a>
+</p>
+
+> **StreamVault is built and maintained by one developer.** If it replaced a subscription for you, sponsoring is the most direct way to keep it moving — and it funds the same person behind [hetzner-k3s](https://github.com/vitobotta/hetzner-k3s).
+
 ---
 
 ## What is StreamVault?
@@ -413,6 +419,13 @@ app/
 ### Authorisation
 
 Every user-owned query is scoped through `current_user` associations. Playback and media URLs use signed, expiring, user-bound tokens; raw RealDebrid URLs never cross the server/browser boundary. API keys are encrypted at rest with Active Record Encryption.
+
+## Support
+
+- ⭐ Star the repo — it's how other self-hosters find it
+- 🐛 Report bugs with logs and a description of your setup
+- 💬 Answer questions in [Discussions](https://github.com/vitobotta/streamvault/discussions)
+- ❤️ [Sponsor on GitHub](https://github.com/sponsors/vitobotta) — from $5/month
 
 ## License
 
