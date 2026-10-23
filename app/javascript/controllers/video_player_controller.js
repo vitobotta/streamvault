@@ -35,6 +35,9 @@ const MSE_FORWARD_BUFFER_LOW_SECONDS = 30
 const MSE_PENDING_BUFFER_HIGH_BYTES = 16 * 1024 * 1024
 const MSE_PENDING_BUFFER_LOW_BYTES = 8 * 1024 * 1024
 const MSE_CAPACITY_POLL_MS = 250
+// A capacity wait shorter than this is ordinary loop noise; anything
+// longer means the read loop was genuinely parked (client backpressure).
+const MSE_READ_PAUSE_RECORD_MS = 5
 const MSE_MIME_TYPE = 'video/mp4; codecs="avc1.640028,mp4a.40.2"'
 const REMUX_PRESENTATION_PROBE_SECONDS = 0.001
 const REMUX_PRESENTATION_PROBE_TIMEOUT_MS = 500
@@ -961,6 +964,15 @@ export default class extends Controller {
     // trigger recovery is this watchdog — neither onBufferUpdateEnd nor
     // a fresh "waiting" event will fire when no data ever arrives.
     this.startStallWatchdog()
+    // Per-stream diagnostics.  These are what separate a transport
+    // failure (bytes stopped arriving) from an application stall (reads
+    // parked on the capacity gate) in the telemetry we actually read.
+    this.streamBytesRead = 0
+    this.streamStartedAt = Date.now()
+    this.readPausedMs = 0
+    this.readPauseCount = 0
+    let firstChunk = true
+    let lastChunkAt = Date.now()
     try {
       const response = await fetch(this.urlWithPlaybackId(url), { signal: fetchController.signal })
       if (!response.ok) {
@@ -968,17 +980,27 @@ export default class extends Controller {
         // A 502 means ffmpeg couldn't open the source (expired link,
         // auth failure).  Trigger recovery instead of leaving the
         // video frozen on "Buffering…".
+        this.reportStall("stream_error", {
+          fetch_error: `http_${response.status}`,
+          first_chunk: firstChunk,
+          last_chunk_age_ms: Math.max(0, Date.now() - lastChunkAt)
+        })
         this.handleStreamStall()
         return
       }
       const reader = response.body.getReader()
-      let firstChunk = true
       while (true) {
         // No per-chunk timeout: ffmpeg transcodes in bursts, and
         // pausing between bursts is normal. The stall watchdog on the
         // video element detects true playback stalls (buffer ran dry
         // with no new data arriving).
+        const capacityWaitStartedAt = Date.now()
         const capacityAvailable = await this.waitForMseReadCapacity(fetchController.signal)
+        const capacityWaited = Date.now() - capacityWaitStartedAt
+        if (capacityWaited >= MSE_READ_PAUSE_RECORD_MS) {
+          this.readPausedMs += capacityWaited
+          this.readPauseCount += 1
+        }
         if (!capacityAvailable) return
         const { done, value } = await reader.read()
         if (done) {
@@ -987,10 +1009,15 @@ export default class extends Controller {
           // is not actually near the end, recover by reconnecting.
           // Record the moment the body ended: the buffer state here says
           // whether the cushion was still healthy when the stream died.
-          this.reportStall("stream_end")
+          this.reportStall("stream_end", {
+            first_chunk: firstChunk,
+            last_chunk_age_ms: Math.max(0, Date.now() - lastChunkAt)
+          })
           this.handlePrematureStreamEnd()
           break
         }
+        this.streamBytesRead += value?.byteLength || 0
+        lastChunkAt = Date.now()
         if (firstChunk) {
           firstChunk = false
           this.streamRecoveryAttempts = 0
@@ -1011,10 +1038,16 @@ export default class extends Controller {
     } catch (e) {
       if (e.name === "AbortError") return
       console.warn("Stream fetch failed:", e)
-      this.reportStall("stream_error", { fetch_error: e?.name || "unknown" })
+      this.reportStall("stream_error", {
+        fetch_error: e?.name || "unknown",
+        // The name alone cannot tell a transport reset from a bug in
+        // this loop; keep the browser's own message (bounded, no URLs).
+        fetch_error_message: String(e?.message || "").slice(0, 120),
+        first_chunk: firstChunk,
+        last_chunk_age_ms: Math.max(0, Date.now() - lastChunkAt)
+      })
       this.handlePrematureStreamEnd()
-    }
-    finally {
+    } finally {
       if (this.fetchController === fetchController) this.fetchController = null
     }
   }
@@ -1146,12 +1179,23 @@ export default class extends Controller {
     this.stopProgressWatchdog()
     this.isStalled = true
     this.systemRebufferPaused = true
+    // Everything below is per-hold state for the rebuffer telemetry: the
+    // durations are the only way to tell this hold apart from a session
+    // swap in the logs, and they pair with the eviction counters.
+    this.rebufferStartedAt = Date.now()
+    this.rebufferAheadAtBegin = this.bufferedAheadOfCurrent()
+    this.rebufferDeadlineFired = false
+    this.reportStall("rebuffer_begin", {
+      ahead_at_begin: Math.round(this.rebufferAheadAtBegin * 10) / 10,
+      had_buffered_ahead: this.hasBufferedAhead(2)
+    })
     this.showBufferingOverlay()
     this.videoTarget.pause()
     this.rebufferDeadline = Date.now() + REBUFFER_MAX_WAIT_MS
     clearTimeout(this.rebufferDeadlineTimer)
     this.rebufferDeadlineTimer = setTimeout(() => {
       this.rebufferDeadlineTimer = null
+      this.rebufferDeadlineFired = true
       this.maybeStartPlayback(true)
     }, REBUFFER_MAX_WAIT_MS)
   }
@@ -1161,6 +1205,22 @@ export default class extends Controller {
     this.rebufferDeadlineTimer = null
     this.rebufferDeadline = null
     this.systemRebufferPaused = false
+
+    // Report only a hold we deliberately started. setupMseSource,
+    // togglePlay and disconnect also clear this gate and must not
+    // manufacture a rebuffer that never happened.
+    const startedAt = this.rebufferStartedAt
+    if (startedAt == null) return
+    this.rebufferStartedAt = null
+    const aheadAtEnd = this.bufferedAheadOfCurrent()
+    this.reportStall("rebuffer_end", {
+      duration_ms: Math.max(0, Date.now() - startedAt),
+      ahead_at_begin: Math.round((this.rebufferAheadAtBegin ?? 0) * 10) / 10,
+      ahead_at_end: Math.round(aheadAtEnd * 10) / 10,
+      deadline_fired: this.rebufferDeadlineFired === true
+    })
+    this.rebufferAheadAtBegin = null
+    this.rebufferDeadlineFired = false
   }
 
   // Returns true if there's at least `minSeconds` (default 0.5s) of
@@ -1310,6 +1370,13 @@ export default class extends Controller {
   async reconnectFromCurrentPosition() {
     const targetSeconds = Math.floor(this.currentPlaybackPosition())
     const savedAttempts = this.streamRecoveryAttempts
+    // Record what the swap costs before it happens: the cushion is how
+    // much healthy playback the old session still had, and failure_age
+    // is how long the player waited before reconnecting.
+    this.reportStall("mse_swap", {
+      cushion_seconds: Math.round(this.bufferedAheadOfCurrent() * 10) / 10,
+      failure_age_ms: this.lastStallReportedAt ? Math.max(0, Date.now() - this.lastStallReportedAt) : 0
+    })
 
     // Backoff before the 2nd and 3rd reconnect attempts so a transient
     // upstream throttle has time to clear before we hammer the same RD

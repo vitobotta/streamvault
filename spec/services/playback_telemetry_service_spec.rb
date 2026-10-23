@@ -54,4 +54,54 @@ RSpec.describe PlaybackTelemetryService do
 
     expect(payload[:buffered_ranges].length).to eq(8)
   end
+
+  it "logs the stall counters that attribute a pause to its cause" do
+    payload = service.record(
+      user_id: 7,
+      attributes: {
+        event: "rebuffer_begin",
+        fetch_error_message: "network\nerror while reading",
+        first_chunk: "false",
+        last_chunk_age_ms: "4321",
+        bytes_read: 12.gigabytes,
+        stream_age_ms: "61000",
+        read_paused_ms: "15000",
+        read_pause_count: "4",
+        evictions_count: "2",
+        evicted_seconds_total: "62.25",
+        last_eviction_age_ms: "-1",
+        ahead_at_begin: "0.4",
+        ahead_at_end: "12.5",
+        had_buffered_ahead: "false",
+        duration_ms: "1500",
+        deadline_fired: "true",
+        cushion_seconds: "27.5",
+        failure_age_ms: "21000",
+        removed_seconds: "31",
+        kind: "back"
+      }
+    )
+
+    expect(payload).to include(
+      fetch_error_message: "network error while reading",
+      first_chunk: false,
+      last_chunk_age_ms: 4_321,
+      bytes_read: 4.gigabytes,
+      stream_age_ms: 61_000,
+      read_paused_ms: 15_000,
+      read_pause_count: 4,
+      evictions_count: 2,
+      evicted_seconds_total: 62.25,
+      last_eviction_age_ms: -1,
+      ahead_at_begin: 0.4,
+      ahead_at_end: 12.5,
+      had_buffered_ahead: false,
+      duration_ms: 1_500,
+      deadline_fired: true,
+      cushion_seconds: 27.5,
+      failure_age_ms: 21_000,
+      removed_seconds: 31,
+      eviction_kind: "back"
+    )
+  end
 end
