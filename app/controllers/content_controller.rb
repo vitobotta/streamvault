@@ -29,6 +29,7 @@ class ContentController < ApplicationController
     @collection_entry = current_user.collection_entries.find_by(imdb_id: @imdb_id)
     @in_library = @collection_entry&.library? || false
     @in_wishlist = @collection_entry&.wishlist? || false
+    @playlists = current_user.playlists.order(:name)
 
     if @type == "show"
       @episode_progress = current_user.playback_progresses.for_show(@imdb_id)

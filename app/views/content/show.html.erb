@@ -152,6 +152,30 @@
               <span data-toggle-label><%= @in_wishlist ? "On wishlist" : "Wishlist" %></span>
             </button>
           </div>
+
+          <details class="mt-4">
+            <summary class="cursor-pointer select-none text-xs text-ink-300 transition-colors hover:text-ink-50">Add to playlist</summary>
+            <div class="mt-3 flex flex-col gap-2">
+              <% if @playlists.any? %>
+                <div class="flex flex-wrap gap-1.5">
+                  <% @playlists.each do |playlist| %>
+                    <%= button_to playlist.name, playlist_playlist_items_path(playlist),
+                          params: { playlist_item: { imdb_id: @imdb_id, content_type: @type, title: @metadata[:title], poster_url: @metadata[:poster_url], year: @metadata[:year] } },
+                          class: "chip transition-colors hover:border-ink-400 hover:text-ink-50" %>
+                  <% end %>
+                </div>
+              <% end %>
+              <%= form_with url: playlists_path, method: :post, class: "flex flex-col sm:flex-row gap-2" do %>
+                <input type="hidden" name="playlist_item[imdb_id]" value="<%= @imdb_id %>">
+                <input type="hidden" name="playlist_item[content_type]" value="<%= @type %>">
+                <input type="hidden" name="playlist_item[title]" value="<%= @metadata[:title] %>">
+                <input type="hidden" name="playlist_item[poster_url]" value="<%= @metadata[:poster_url] %>">
+                <input type="hidden" name="playlist_item[year]" value="<%= @metadata[:year] %>">
+                <input type="text" name="playlist[name]" class="input-field" placeholder="New playlist name" maxlength="80" required>
+                <button type="submit" class="btn-secondary whitespace-nowrap text-sm">Create &amp; add</button>
+              <% end %>
+            </div>
+          </details>
         </div>
       </div>
     </section>

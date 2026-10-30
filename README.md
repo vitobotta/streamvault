@@ -103,7 +103,10 @@ StreamVault (Rails app)
 - **Library**: Add movies and shows to your personal library. Track what you've watched and what's pending.
 - **Wishlist**: Save content for later. Move items to your library when you're ready to watch.
 - **Watch History**: See everything you've watched, with progress indicators. Clear history anytime.
+- **Playlists**: Queue films and shows in your own order, add titles from their detail page, and reorder or remove them later.
 - **Continue Watching**: Resume any title from where you left off, right from the home page.
+
+The one-feature-per-PR Jellyfin parity backlog is tracked in [docs/jellyfin-parity.md](docs/jellyfin-parity.md).
 
 ### TV show support
 - **Season & episode browser**: Browse seasons and episodes with air dates, overviews, and progress tracking per episode.
