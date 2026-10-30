@@ -1,0 +1,55 @@
+<div class="px-6 py-8">
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-3xl font-bold text-white">Playlists</h1>
+      <p class="text-sm text-sv-text-muted mt-1">Queue films and shows to watch in the order you choose.</p>
+    </div>
+  </div>
+
+  <div class="bg-sv-surface rounded-xl p-5 border border-sv-border mb-8">
+    <h2 class="text-lg font-semibold text-white mb-3">New playlist</h2>
+    <%= form_with model: @playlist, url: playlists_path, class: "flex flex-col sm:flex-row gap-3" do |f| %>
+      <div class="flex-1">
+        <%= f.text_field :name, class: "input-field", placeholder: "Playlist name", maxlength: 80, required: true %>
+        <% if @playlist.errors[:name].any? %>
+          <p class="text-xs text-red-400 mt-1"><%= @playlist.errors[:name].to_sentence %></p>
+        <% end %>
+      </div>
+      <div class="flex-1">
+        <%= f.text_field :description, class: "input-field", placeholder: "Description (optional)" %>
+      </div>
+      <%= f.submit "Create playlist", class: "btn-primary cursor-pointer whitespace-nowrap" %>
+    <% end %>
+  </div>
+
+  <% if @playlists.any? %>
+    <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      <% @playlists.each do |playlist| %>
+        <%= link_to playlist_path(playlist), class: "block bg-sv-surface rounded-xl p-5 border border-sv-border hover:border-sv-accent/60 hover:bg-sv-surface-hover transition-colors", data: { page_loader: "link" } do %>
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <h2 class="text-lg font-semibold text-white truncate"><%= playlist.name %></h2>
+              <p class="text-sm text-sv-text-muted mt-1">
+                <%= pluralize(playlist.playlist_items.size, "title") %>
+              </p>
+            </div>
+            <svg class="w-8 h-8 shrink-0 text-sv-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.7">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h10M4 12h10M4 18h7m6-9v8m0 0l-3-3m3 3l3-3"/>
+            </svg>
+          </div>
+          <% if playlist.description.present? %>
+            <p class="text-sm text-sv-text-muted mt-3 line-clamp-2"><%= playlist.description %></p>
+          <% end %>
+        <% end %>
+      <% end %>
+    </div>
+  <% else %>
+    <div class="text-center py-16">
+      <svg class="w-16 h-16 text-sv-text-muted mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M4 6h10M4 12h10M4 18h7m6-9v8m0 0l-3-3m3 3l3-3"/>
+      </svg>
+      <p class="text-sv-text-muted mb-2">You have no playlists yet.</p>
+      <p class="text-sm text-sv-text-muted">Create one above, then add titles from their detail page.</p>
+    </div>
+  <% end %>
+</div>
