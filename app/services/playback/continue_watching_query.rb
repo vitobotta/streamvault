@@ -68,7 +68,7 @@ module Playback
 
       if entry.episode? && PlaybackCompletionPolicy.episode_finished?(entry)
         following = @episode_sequence.next_after(content_ref)
-        return if following.error_code == :series_complete
+        return if [ :series_complete, :not_released ].include?(following.error_code)
         if following.success?
           content_ref = following.data
           progress = 0

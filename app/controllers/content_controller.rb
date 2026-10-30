@@ -36,6 +36,7 @@ class ContentController < ApplicationController
       @episode_finished = @episode_progress.transform_values do |progress|
         PlaybackCompletionPolicy.episode_finished?(progress)
       end
+      @series_watched = series_watched?(@metadata)
       @selected_season = params[:season]&.to_i || 1
     else
       @movie_progress = current_user.playback_progresses.movies_only.find_by(imdb_id: @imdb_id)
@@ -88,6 +89,25 @@ class ContentController < ApplicationController
   end
 
   private
+
+  # A series is watched only when every episode that has already aired is
+  # watched. Specials and unreleased episodes do not block that state.
+  def series_watched?(metadata)
+    episodes = Array(metadata&.dig(:episodes)).select do |episode|
+      episode[:season].to_i.positive? && released_episode?(episode)
+    end
+    episodes.any? && episodes.all? do |episode|
+      @episode_finished[[ episode[:season].to_i, episode[:episode].to_i ]]
+    end
+  end
+
+  def released_episode?(episode)
+    return true if episode[:released].blank?
+
+    Date.parse(episode[:released].to_s) <= Date.current
+  rescue ArgumentError
+    true
+  end
 
   # Child accounts may not access titles above their rating limit — never
   # return their metadata or streams, even via a direct item URL.

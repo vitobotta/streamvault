@@ -3,6 +3,25 @@ require 'rails_helper'
 RSpec.describe "Content", type: :request do
   let(:user) { create(:user) }
 
+  def stub_show_metadata
+    stub_request(:get, "https://v3-cinemeta.strem.io/meta/series/tt0903747.json")
+      .to_return(
+        status: 200,
+        body: {
+          "meta" => {
+            "id" => "tt0903747",
+            "name" => "Breaking Bad",
+            "year" => "2008",
+            "videos" => [
+              { "id" => "tt0903747:1:1", "season" => 1, "episode" => 1, "name" => "Pilot", "released" => "2008-01-20" },
+              { "id" => "tt0903747:1:2", "season" => 1, "episode" => 2, "name" => "Cat's in the Bag...", "released" => "2008-01-27" }
+            ]
+          }
+        }.to_json,
+        headers: { "Content-Type" => "application/json" }
+      )
+  end
+
   around do |ex|
     ENV["STREAM_PROVIDER"] = "torrentio"
     ex.run
@@ -34,6 +53,26 @@ RSpec.describe "Content", type: :request do
         expect(response).to have_http_status(:ok)
         expect(response.body).to include('data-controller="page-loader"')
         expect(response.body).not_to include('data-controller="stream-loading"')
+      end
+
+      it "shows series watched when every released episode is complete" do
+        create(:playback_progress, :episode, user: user, imdb_id: "tt0903747", season_number: 1, episode_number: 1, completed: true)
+        create(:playback_progress, :episode, user: user, imdb_id: "tt0903747", season_number: 1, episode_number: 2, completed: true)
+        stub_show_metadata
+
+        get content_path(type: "show", imdb_id: "tt0903747")
+
+        expect(response.body).to include("Series watched")
+        expect(response.body).not_to include("Continue S01E01")
+      end
+
+      it "offers to mark a partially watched series watched" do
+        create(:playback_progress, :episode, user: user, imdb_id: "tt0903747", season_number: 1, episode_number: 1, completed: true)
+        stub_show_metadata
+
+        get content_path(type: "show", imdb_id: "tt0903747")
+
+        expect(response.body).to include("Mark series watched")
       end
 
       it "shows the watched state for a completed movie" do

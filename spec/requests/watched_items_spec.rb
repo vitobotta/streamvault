@@ -50,6 +50,47 @@ RSpec.describe "WatchedItems", type: :request do
       expect(response).to redirect_to(content_path(type: "show", imdb_id: "tt0903747"))
     end
 
+    context "with a series" do
+      let(:catalog) { instance_double(Catalog::CinemetaClient) }
+      let(:episodes) do
+        [
+          { season: 0, episode: 1, runtime_seconds: 600, released: "2008-01-01" },
+          { season: 1, episode: 1, runtime_seconds: 2_400, released: "2008-01-20" },
+          { season: 1, episode: 2, runtime_seconds: 2_400, released: "2008-01-27" },
+          { season: 2, episode: 1, runtime_seconds: 2_400, released: Date.tomorrow.iso8601 }
+        ]
+      end
+
+      before do
+        allow(Catalog::CinemetaClient).to receive(:new).and_return(catalog)
+        allow(catalog).to receive(:metadata).with("tt0903747", "show", include_ratings: false)
+          .and_return(ServiceResult.success(title: "Breaking Bad", poster_url: "https://img.example/bb.jpg", episodes: episodes))
+      end
+
+      it "marks every released episode watched" do
+        expect {
+          patch content_watched_path(type: "show", imdb_id: "tt0903747"),
+                params: { watched: true, title: "Breaking Bad" },
+                headers: { "HTTP_REFERER" => content_path(type: "show", imdb_id: "tt0903747") }
+        }.to change(user.playback_progresses, :count).by(2)
+
+        expect(response).to redirect_to(content_path(type: "show", imdb_id: "tt0903747"))
+        expect(flash[:notice]).to eq("Marked as watched.")
+        expect(user.playback_progresses.for_show("tt0903747")).to all(be_completed)
+      end
+
+      it "removes every episode when marked unwatched" do
+        create(:playback_progress, :episode, user: user, imdb_id: "tt0903747", season_number: 1, episode_number: 1)
+        create(:playback_progress, :episode, user: user, imdb_id: "tt0903747", season_number: 1, episode_number: 2)
+
+        expect {
+          patch content_watched_path(type: "show", imdb_id: "tt0903747"),
+                params: { watched: false },
+                headers: { "HTTP_REFERER" => content_path(type: "show", imdb_id: "tt0903747") }
+        }.to change(user.playback_progresses, :count).by(-2)
+      end
+    end
+
     it "does not change another user's progress" do
       other_entry = create(:playback_progress, :movie, user: create(:user), imdb_id: "tt1375666")
 

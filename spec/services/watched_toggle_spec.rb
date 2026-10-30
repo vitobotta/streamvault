@@ -97,9 +97,64 @@ RSpec.describe Playback::WatchedToggle do
       expect(user.playback_progresses.for_show("tt0903747").pluck(:id)).to eq([ second.id ])
       expect(PlaybackProgress.where(id: first.id)).to be_empty
     end
+  end
 
-    it "rejects a show without an episode" do
-      expect(service.call(imdb_id: "tt0903747", type: "show", watched: true)).to be_failure
+  describe "series" do
+    let(:catalog) { instance_double(Catalog::CinemetaClient) }
+    subject(:service) { described_class.new(user, catalog: catalog) }
+    let(:episodes) do
+      [
+        { season: 0, episode: 1, title: "Special", runtime_seconds: 600, released: "2008-01-01" },
+        { season: 1, episode: 1, title: "Pilot", runtime_seconds: 2_400, released: "2008-01-20" },
+        { season: 1, episode: 2, title: "Cat's in the Bag...", runtime_seconds: 2_400, released: "2008-01-27" },
+        { season: 2, episode: 1, title: "Future", runtime_seconds: 2_400, released: Date.tomorrow.iso8601 }
+      ]
+    end
+
+    before do
+      allow(catalog).to receive(:metadata).with("tt0903747", "show", include_ratings: false)
+        .and_return(ServiceResult.success(title: "Breaking Bad", poster_url: "https://img.example/bb.jpg", episodes: episodes))
+    end
+
+    it "marks every released episode and skips specials and unreleased episodes" do
+      result = service.call(imdb_id: "tt0903747", type: "show", watched: true, title: "Breaking Bad")
+
+      expect(result).to be_success
+      expect(result.data).to eq(2)
+      rows = user.playback_progresses.for_show("tt0903747").order(:season_number, :episode_number)
+      expect(rows.map { |row| [ row.season_number, row.episode_number ] }).to eq([ [ 1, 1 ], [ 1, 2 ] ])
+      expect(rows).to all(be_completed)
+      expect(rows.map(&:title)).to eq([ "Breaking Bad S01E01", "Breaking Bad S01E02" ])
+      expect(rows.map(&:duration_seconds)).to eq([ 2_400, 2_400 ])
+      expect(rows.map(&:poster_url).uniq).to eq([ "https://img.example/bb.jpg" ])
+    end
+
+    it "is idempotent when the series is marked watched again" do
+      service.call(imdb_id: "tt0903747", type: "show", watched: true, title: "Breaking Bad")
+
+      expect {
+        service.call(imdb_id: "tt0903747", type: "show", watched: true, title: "Breaking Bad")
+      }.not_to change(PlaybackProgress, :count)
+    end
+
+    it "removes every episode when the series is marked unwatched" do
+      service.call(imdb_id: "tt0903747", type: "show", watched: true, title: "Breaking Bad")
+      other_show = create(:playback_progress, :episode, user: user, imdb_id: "tt0944947")
+
+      expect {
+        service.call(imdb_id: "tt0903747", type: "show", watched: false)
+      }.to change(user.playback_progresses, :count).by(-2)
+
+      expect(user.playback_progresses).to contain_exactly(other_show)
+    end
+
+    it "fails closed when the episode list cannot be loaded" do
+      allow(catalog).to receive(:metadata).and_return(ServiceResult.failure("Unavailable"))
+
+      result = service.call(imdb_id: "tt0903747", type: "show", watched: true)
+
+      expect(result).to be_failure
+      expect(user.playback_progresses).to be_empty
     end
   end
 end

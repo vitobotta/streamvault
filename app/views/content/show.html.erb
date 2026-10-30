@@ -20,7 +20,7 @@
 
   # Highest-confidence source: RealDebrid-cached first, then compatibility.
   best_stream = @streams.present? ? @streams.max_by { |s| [s[:rd_plus] ? 1 : 0, s[:compatibility_score].to_i] } : nil
-  resume_episode = @type == "show" ? @episode_progress&.keys&.first : nil
+  resume_episode = @type == "show" && !@series_watched ? @episode_progress&.keys&.first : nil
 %>
 
 <% if @metadata %>
@@ -161,6 +161,18 @@
                             title: @movie_watched ? "Mark this film unwatched" : "Mark this film watched" do %>
                 <span><%= icon :check %></span>
                 <span><%= @movie_watched ? "Watched" : "Mark watched" %></span>
+              <% end %>
+            <% end %>
+
+            <% if @type == "show" %>
+              <%= button_to content_watched_path(type: @type, imdb_id: @imdb_id),
+                            method: :patch,
+                            params: { watched: !@series_watched, title: @metadata[:title], poster_url: @metadata[:poster_url] },
+                            class: "collection-btn #{'collection-btn--active' if @series_watched}",
+                            aria: { pressed: @series_watched },
+                            title: @series_watched ? "Mark every episode unwatched" : "Mark every released episode watched" do %>
+                <span><%= icon :check %></span>
+                <span><%= @series_watched ? "Series watched" : "Mark series watched" %></span>
               <% end %>
             <% end %>
           </div>

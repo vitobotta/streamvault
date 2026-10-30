@@ -122,6 +122,15 @@ RSpec.describe Playback::ContinueWatchingQuery do
     expect(item.slice(:season, :episode, :progress_seconds)).to eq(season: 1, episode: 2, progress_seconds: 0)
   end
 
+  it "drops a completed episode whose next episode has not aired" do
+    create(:playback_progress, :episode, user: user, imdb_id: "tt0903747",
+      progress_seconds: 2_400, duration_seconds: 2_400, completed: true)
+    allow(episode_sequence).to receive(:next_after)
+      .and_return(ServiceResult.failure("Next episode has not aired yet", :not_released))
+
+    expect(query.call.data).to be_empty
+  end
+
   it "keeps the current episode below the exact completion threshold" do
     create(:playback_progress, :episode, user: user, imdb_id: "tt0903747",
       progress_seconds: 2_340, duration_seconds: 2_400)
