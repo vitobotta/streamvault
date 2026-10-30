@@ -34,6 +34,25 @@ RSpec.describe "Library", type: :request do
       expect(response.body).to include("MOVIE_TITLE")
       expect(response.body).not_to include("SHOW_TITLE")
     end
+
+    it "renders the watched toggle on movie cards" do
+      entry = create(:collection_entry, user: user, content_type: :movie, title: "MOVIE_TITLE")
+      create(:playback_progress, :movie, user: user, imdb_id: entry.imdb_id, completed: true)
+      sign_in user
+
+      get library_index_path
+
+      expect(response.body).to include("Mark MOVIE_TITLE unwatched")
+    end
+
+    it "leaves series cards without a single watched toggle" do
+      create(:collection_entry, :show, user: user, title: "SHOW_TITLE")
+      sign_in user
+
+      get library_index_path
+
+      expect(response.body).not_to include("Mark SHOW_TITLE")
+    end
   end
 
   describe "PATCH /collection" do

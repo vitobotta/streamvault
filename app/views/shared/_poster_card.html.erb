@@ -12,6 +12,9 @@
   remove_label = local_assigns.fetch(:remove_label, "Remove #{title}")
   play_label = local_assigns.fetch(:play_label, "Open #{title}")
   priority = local_assigns.fetch(:priority, false)
+  watch_path = local_assigns[:watch_path]
+  watch_params = local_assigns.fetch(:watch_params, {})
+  watched = local_assigns.fetch(:watched, false)
 %>
 <article class="poster-card group">
   <%= link_to link_path, class: "block", data: { page_loader: "link" }, aria: { label: play_label } do %>
@@ -39,8 +42,16 @@
     </div>
   <% end %>
 
-  <% if controls.present? || remove_path.present? %>
+  <% if controls.present? || remove_path.present? || watch_path.present? %>
     <div class="poster-card__controls">
+      <% if watch_path.present? %>
+        <%= button_to watch_path, method: :patch, params: watch_params,
+                      class: "card-action #{'card-action--active' if watched}",
+                      title: watched ? "Mark #{title} unwatched" : "Mark #{title} watched",
+                      aria: { label: watched ? "Mark #{title} unwatched" : "Mark #{title} watched", pressed: watched } do %>
+          <%= icon :check %>
+        <% end %>
+      <% end %>
       <% if controls == :wishlist %>
         <%= button_to collection_path, method: :patch, params: { state: "library", collection_entry: { imdb_id: imdb_id } }, class: "card-action", title: "Move to library", aria: { label: "Move #{title} to library" } do %>
           <%= icon :library %>

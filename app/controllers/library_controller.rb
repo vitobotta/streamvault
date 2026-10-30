@@ -19,5 +19,8 @@ class LibraryController < ApplicationController
     @progress_map = progress_rows.group_by(&:imdb_id).transform_values do |rows|
       rows.map(&:progress_percentage).max.to_i
     end
+    @movie_watched_map = progress_rows.select(&:movie?).group_by(&:imdb_id).transform_values do |rows|
+      rows.any?(&:watched?)
+    end
   end
 end

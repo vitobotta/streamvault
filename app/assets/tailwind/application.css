@@ -662,6 +662,7 @@
 
 .card-action svg { width: 0.8125rem; height: 0.8125rem; }
 .card-action:hover { background-color: var(--color-iris-600); color: var(--color-on-accent); }
+.card-action--active { background-color: var(--color-iris-600); color: var(--color-on-accent); }
 .card-action--danger:hover { background-color: var(--color-rust-500); color: var(--color-ink-50); }
 
 .card-progress {

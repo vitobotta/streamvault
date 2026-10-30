@@ -39,5 +39,12 @@ RSpec.describe PlaybackProgress, type: :model do
 
       expect(entry.progress_percentage).to eq(100)
     end
+
+    it "reports watched state for completed and nearly finished entries" do
+      expect(build(:playback_progress, completed: true).watched?).to be(true)
+      expect(build(:playback_progress, progress_seconds: 6_900, duration_seconds: 7_200).watched?).to be(true)
+      expect(build(:playback_progress, :episode, progress_seconds: 2_352, duration_seconds: 2_400).watched?).to be(true)
+      expect(build(:playback_progress, :episode, progress_seconds: 2_300, duration_seconds: 2_400).watched?).to be(false)
+    end
   end
 end

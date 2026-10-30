@@ -28,4 +28,8 @@ class PlaybackProgress < ApplicationRecord
 
     ((progress_seconds.to_f / duration_seconds) * 100).round.clamp(0, 100)
   end
+
+  def watched?
+    episode? ? PlaybackCompletionPolicy.episode_finished?(self) : PlaybackCompletionPolicy.movie_finished?(self)
+  end
 end
