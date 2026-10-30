@@ -266,11 +266,16 @@
 
         <div class="season-tabs mb-4" role="group" aria-label="Choose a season">
           <% seasons.each do |s| %>
+            <% watched = @season_watched_map[s] %>
             <%= link_to content_path(type: @type, imdb_id: @imdb_id, season: s),
                         class: "season-tab #{@selected_season == s ? 'season-tab--active' : ''}",
                         "aria-current": (@selected_season == s ? "true" : nil),
+                        "aria-label": (watched ? "Season #{s}, watched" : nil),
                         data: { page_loader: "link" } do %>
               Season <%= s %>
+              <% if watched %>
+                <span class="season-tab__status"><%= icon :check, css: "w-3.5 h-3.5" %></span>
+              <% end %>
             <% end %>
           <% end %>
         </div>

@@ -3,7 +3,11 @@ require 'rails_helper'
 RSpec.describe "Content", type: :request do
   let(:user) { create(:user) }
 
-  def stub_show_metadata
+  def stub_show_metadata(videos: nil)
+    videos ||= [
+      { "id" => "tt0903747:1:1", "season" => 1, "episode" => 1, "name" => "Pilot", "released" => "2008-01-20" },
+      { "id" => "tt0903747:1:2", "season" => 1, "episode" => 2, "name" => "Cat's in the Bag...", "released" => "2008-01-27" }
+    ]
     stub_request(:get, "https://v3-cinemeta.strem.io/meta/series/tt0903747.json")
       .to_return(
         status: 200,
@@ -12,10 +16,7 @@ RSpec.describe "Content", type: :request do
             "id" => "tt0903747",
             "name" => "Breaking Bad",
             "year" => "2008",
-            "videos" => [
-              { "id" => "tt0903747:1:1", "season" => 1, "episode" => 1, "name" => "Pilot", "released" => "2008-01-20" },
-              { "id" => "tt0903747:1:2", "season" => 1, "episode" => 2, "name" => "Cat's in the Bag...", "released" => "2008-01-27" }
-            ]
+            "videos" => videos
           }
         }.to_json,
         headers: { "Content-Type" => "application/json" }
@@ -64,6 +65,7 @@ RSpec.describe "Content", type: :request do
 
         expect(response.body).to include("Series watched")
         expect(response.body).to include("Season watched")
+        expect(response.body).to include("Season 1, watched")
         expect(response.body).not_to include("Continue S01E01")
       end
 
@@ -75,6 +77,23 @@ RSpec.describe "Content", type: :request do
 
         expect(response.body).to include("Mark series watched")
         expect(response.body).to include("Mark season watched")
+        expect(response.body).not_to include("Season 1, watched")
+      end
+
+      it "marks a completed season on its tab while the series is still partial" do
+        create(:playback_progress, :episode, user: user, imdb_id: "tt0903747", season_number: 1, episode_number: 1, completed: true)
+        create(:playback_progress, :episode, user: user, imdb_id: "tt0903747", season_number: 1, episode_number: 2, completed: true)
+        stub_show_metadata(videos: [
+          { "id" => "tt0903747:1:1", "season" => 1, "episode" => 1, "name" => "Pilot", "released" => "2008-01-20" },
+          { "id" => "tt0903747:1:2", "season" => 1, "episode" => 2, "name" => "Cat's in the Bag...", "released" => "2008-01-27" },
+          { "id" => "tt0903747:2:1", "season" => 2, "episode" => 1, "name" => "Seven Thirty-Seven", "released" => "2009-03-08" }
+        ])
+
+        get content_path(type: "show", imdb_id: "tt0903747")
+
+        expect(response.body).to include("Mark series watched")
+        expect(response.body).to include("Season 1, watched")
+        expect(response.body).not_to include("Season 2, watched")
       end
 
       it "shows the watched state for a completed movie" do

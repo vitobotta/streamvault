@@ -1443,6 +1443,7 @@ details[open] > .source-more svg { transform: rotate(180deg); }
 .season-tab {
   display: inline-flex;
   align-items: center;
+  gap: 0.3125rem;
   height: 2rem;
   padding: 0 0.8125rem;
   border-radius: 999px;
@@ -1461,6 +1462,14 @@ details[open] > .source-more svg { transform: rotate(180deg); }
   border-color: var(--color-ink-100);
   color: var(--color-ink-950);
 }
+
+.season-tab__status {
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-sage-400);
+}
+
+.season-tab--active .season-tab__status { color: var(--color-sage-950); }
 
 .episode {
   border-bottom: 1px solid oklch(1 0 0 / 0.06);
