@@ -151,6 +151,18 @@
               <span data-toggle-icon><%= icon :wishlist %></span>
               <span data-toggle-label><%= @in_wishlist ? "On wishlist" : "Wishlist" %></span>
             </button>
+
+            <% if @type != "show" %>
+              <%= button_to content_watched_path(type: @type, imdb_id: @imdb_id),
+                            method: :patch,
+                            params: { watched: !@movie_watched, title: @metadata[:title], poster_url: @metadata[:poster_url], duration_seconds: @metadata[:runtime_seconds] },
+                            class: "collection-btn #{'collection-btn--active' if @movie_watched}",
+                            aria: { pressed: @movie_watched },
+                            title: @movie_watched ? "Mark this film unwatched" : "Mark this film watched" do %>
+                <span><%= icon :check %></span>
+                <span><%= @movie_watched ? "Watched" : "Mark watched" %></span>
+              <% end %>
+            <% end %>
           </div>
         </div>
       </div>
@@ -255,7 +267,10 @@
                 <span class="episode__body">
                   <span class="flex items-center gap-2">
                     <span class="episode__title"><%= ep[:title] || "Episode #{ep[:episode]}" %></span>
-                    <% if progress && progress.progress_percentage.positive? %>
+                    <% finished = @episode_finished&.dig([ ep[:season], ep[:episode] ]) %>
+                    <% if finished %>
+                      <span class="chip chip--sage shrink-0"><%= icon :check, css: "w-3 h-3" %> Watched</span>
+                    <% elsif progress && progress.progress_percentage.positive? %>
                       <span class="chip chip--accent shrink-0"><%= progress.progress_percentage %>%</span>
                     <% end %>
                   </span>
@@ -282,6 +297,16 @@
                     <span class="h-4 w-4 rounded-full border-2 border-white/15 border-t-iris-500 animate-spin"></span>
                     Loading sources
                   </div>
+                </div>
+                <div class="flex flex-wrap items-center justify-between gap-3 border-t border-white/8 px-4 py-3">
+                  <p class="text-xs text-ink-400">
+                    <%= finished ? "This episode is marked watched." : "Finished this episode?" %>
+                  </p>
+                  <%= button_to finished ? "Mark unwatched" : "Mark watched",
+                                content_watched_path(type: @type, imdb_id: @imdb_id),
+                                method: :patch,
+                                params: { watched: !finished, season: ep[:season], episode: ep[:episode], title: ep[:title], poster_url: @metadata[:poster_url], duration_seconds: ep[:runtime_seconds] },
+                                class: "chip transition-colors hover:border-ink-400 hover:text-ink-50" %>
                 </div>
               </div>
             </div>

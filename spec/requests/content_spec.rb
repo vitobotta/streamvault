@@ -36,6 +36,22 @@ RSpec.describe "Content", type: :request do
         expect(response.body).not_to include('data-controller="stream-loading"')
       end
 
+      it "shows the watched state for a completed movie" do
+        create(:playback_progress, :movie, user: user, imdb_id: "tt1375666", completed: true)
+        stub_request(:get, "https://v3-cinemeta.strem.io/meta/movie/tt1375666.json")
+          .to_return(
+            status: 200,
+            body: { "meta" => { "id" => "tt1375666", "name" => "Inception", "year" => "2010" } }.to_json,
+            headers: { 'Content-Type' => 'application/json' }
+          )
+        stub_request(:get, %r{torrentio\.strem\.fun/([^/]+/)?stream/movie/tt1375666\.json})
+          .to_return(status: 200, body: { "streams" => [] }.to_json, headers: { 'Content-Type' => 'application/json' })
+
+        get content_path(type: "movie", imdb_id: "tt1375666")
+
+        expect(response.body).to include("Mark this film unwatched")
+      end
+
       it "rejects an invalid imdb_id format (SEC-09)" do
         get content_path(type: "movie", imdb_id: "not_an_imdb_id")
         expect(response).to redirect_to(root_path)

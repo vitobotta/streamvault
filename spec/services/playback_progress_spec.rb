@@ -46,6 +46,16 @@ RSpec.describe Playback::ProgressWriter do
   it "rejects progress that has not started" do
     expect(writer.call(content_ref: movie, progress_seconds: 0, duration_seconds: 120)).to be_failure
   end
+
+  it "clears a manual completion when real playback progress is saved" do
+    entry = create(:playback_progress, :movie, user: user, imdb_id: movie.imdb_id,
+      progress_seconds: 7_200, duration_seconds: 7_200, completed: true)
+
+    writer.call(content_ref: movie, progress_seconds: 600, duration_seconds: 7_200, title: "Inception")
+
+    expect(entry.reload).not_to be_completed
+    expect(entry.progress_percentage).to eq(8)
+  end
 end
 
 RSpec.describe Playback::EpisodeSequence do
@@ -92,6 +102,24 @@ RSpec.describe Playback::ContinueWatchingQuery do
       season: nil,
       episode: nil
     )
+  end
+
+  it "drops a manually watched movie" do
+    create(:playback_progress, :movie, user: user, imdb_id: "tt1375666",
+      progress_seconds: 0, duration_seconds: 0, completed: true)
+
+    expect(query.call.data).to be_empty
+  end
+
+  it "advances a manually watched episode" do
+    create(:playback_progress, :episode, user: user, imdb_id: "tt0903747",
+      progress_seconds: 0, duration_seconds: 0, completed: true)
+    next_ref = ContentRef.new(imdb_id: "tt0903747", type: "show", season: 1, episode: 2)
+    allow(episode_sequence).to receive(:next_after).and_return(ServiceResult.success(next_ref))
+
+    item = query.call.data.first
+
+    expect(item.slice(:season, :episode, :progress_seconds)).to eq(season: 1, episode: 2, progress_seconds: 0)
   end
 
   it "keeps the current episode below the exact completion threshold" do

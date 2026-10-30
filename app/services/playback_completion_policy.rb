@@ -5,6 +5,8 @@ class PlaybackCompletionPolicy
   EPISODE_RATIO = 0.98
 
   def self.movie_finished?(entry_or_percentage)
+    return true if entry_or_percentage.respond_to?(:completed?) && entry_or_percentage.completed?
+
     percentage = if entry_or_percentage.respond_to?(:progress_percentage)
       entry_or_percentage.progress_percentage
     else
@@ -16,6 +18,7 @@ class PlaybackCompletionPolicy
 
   def self.episode_finished?(entry)
     return false unless entry
+    return true if entry.completed?
 
     duration = entry.duration_seconds.to_i
     duration.positive? && entry.progress_seconds.to_f.fdiv(duration) >= EPISODE_RATIO

@@ -33,5 +33,11 @@ RSpec.describe PlaybackProgress, type: :model do
       expect(build(:playback_progress, progress_seconds: 120, duration_seconds: 60).progress_percentage).to eq(100)
       expect(build(:playback_progress, progress_seconds: 12, duration_seconds: 0).progress_percentage).to eq(1)
     end
+
+    it "treats a manual completion as fully watched even without a runtime" do
+      entry = build(:playback_progress, progress_seconds: 0, duration_seconds: 0, completed: true)
+
+      expect(entry.progress_percentage).to eq(100)
+    end
   end
 end
