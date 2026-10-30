@@ -1,7 +1,8 @@
 # frozen_string_literal: true
 
 module Playback
-  # Applies an explicit watched/unwatched decision from the title page.
+  # Applies an explicit watched/unwatched decision from the title page, a
+  # library card, or a watch-history row.
   #
   # "Watched" is stored as an authoritative completed flag rather than a
   # percentage, because catalogue metadata sometimes has no runtime.  Playback
@@ -18,6 +19,10 @@ module Playback
 
     def call(imdb_id:, type:, watched:, season: nil, episode: nil,
              title: nil, poster_url: nil, duration_seconds: nil)
+      if season_level?(type, season, episode)
+        return mark_season(imdb_id, season, watched: watched, title: title, poster_url: poster_url)
+      end
+
       content_ref = ContentRef.new(imdb_id: imdb_id, type: type, season: season, episode: episode)
       if content_ref.show? && !content_ref.episode?
         return mark_series_watched(content_ref, title: title, poster_url: poster_url) if watched
@@ -41,6 +46,29 @@ module Playback
     end
 
     private
+
+    # A season is addressed as show + season without an episode.  ContentRef
+    # deliberately requires the pair, so season actions are validated here
+    # before they reach it.
+    def season_level?(type, season, episode)
+      type.to_s == "show" && season.present? && episode.blank?
+    end
+
+    def mark_season(imdb_id, season, watched:, title:, poster_url:)
+      return ServiceResult.failure("Invalid content ID") unless ContentRef::IMDB_ID_PATTERN.match?(imdb_id.to_s)
+
+      season_number = Integer(season, exception: false)
+      return ServiceResult.failure("Season must be positive") unless season_number&.positive?
+      return mark_season_unwatched(imdb_id, season_number) unless watched
+
+      show, failure = load_show(imdb_id)
+      return failure if failure
+
+      episodes = released_episodes(show).select { |episode| episode[:season].to_i == season_number }
+      return ServiceResult.failure("No released episodes found for this season") if episodes.empty?
+
+      persist_episodes(imdb_id, episodes, show: show, title: title, poster_url: poster_url)
+    end
 
     def find_entry(content_ref)
       @user.playback_progresses.find_by(
@@ -76,15 +104,41 @@ module Playback
     # from its released episodes. Specials and episodes that have not aired
     # yet are left alone.
     def mark_series_watched(content_ref, title:, poster_url:)
-      result = @catalog.metadata(content_ref.imdb_id, "show", include_ratings: false)
-      return ServiceResult.failure("Could not load the episode list for this series") if result.failure?
+      show, failure = load_show(content_ref.imdb_id)
+      return failure if failure
 
-      show = result.data
-      episodes = Array(show[:episodes])
-        .select { |episode| episode[:season].to_i.positive? && released?(episode) }
-        .sort_by { |episode| [ episode[:season].to_i, episode[:episode].to_i ] }
+      episodes = released_episodes(show)
       return ServiceResult.failure("No released episodes found for this series") if episodes.empty?
 
+      persist_episodes(content_ref.imdb_id, episodes, show: show, title: title, poster_url: poster_url)
+    end
+
+    def mark_series_unwatched(content_ref)
+      deleted = @user.playback_progresses.for_show(content_ref.imdb_id).delete_all
+      ServiceResult.success(deleted)
+    end
+
+    def mark_season_unwatched(imdb_id, season_number)
+      deleted = @user.playback_progresses.episodes_only
+        .where(imdb_id: imdb_id, season_number: season_number)
+        .delete_all
+      ServiceResult.success(deleted)
+    end
+
+    def load_show(imdb_id)
+      result = @catalog.metadata(imdb_id, "show", include_ratings: false)
+      return [ nil, ServiceResult.failure("Could not load the episode list for this show") ] if result.failure?
+
+      [ result.data, nil ]
+    end
+
+    def released_episodes(show)
+      Array(show[:episodes])
+        .select { |episode| episode[:season].to_i.positive? && released?(episode) }
+        .sort_by { |episode| [ episode[:season].to_i, episode[:episode].to_i ] }
+    end
+
+    def persist_episodes(imdb_id, episodes, show:, title:, poster_url:)
       show_title = title.presence || show[:title].presence || "Unknown"
       show_poster = poster_url.presence || show[:poster_url]
       watched_at = Time.current
@@ -93,7 +147,7 @@ module Playback
         episodes.map do |episode|
           duration = episode[:runtime_seconds].to_i
           entry = @user.playback_progresses.find_or_initialize_by(
-            imdb_id: content_ref.imdb_id,
+            imdb_id: imdb_id,
             content_type: :episode,
             season_number: episode[:season].to_i,
             episode_number: episode[:episode].to_i
@@ -111,11 +165,6 @@ module Playback
       end
 
       ServiceResult.success(entries.size)
-    end
-
-    def mark_series_unwatched(content_ref)
-      deleted = @user.playback_progresses.for_show(content_ref.imdb_id).delete_all
-      ServiceResult.success(deleted)
     end
 
     # Unwatched removes the local progress row for this title (or this one

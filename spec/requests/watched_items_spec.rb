@@ -89,6 +89,27 @@ RSpec.describe "WatchedItems", type: :request do
                 headers: { "HTTP_REFERER" => content_path(type: "show", imdb_id: "tt0903747") }
         }.to change(user.playback_progresses, :count).by(-2)
       end
+
+      it "marks only the requested season watched" do
+        patch content_watched_path(type: "show", imdb_id: "tt0903747", season: 1),
+              params: { watched: true, title: "Breaking Bad" },
+              headers: { "HTTP_REFERER" => content_path(type: "show", imdb_id: "tt0903747") }
+
+        rows = user.playback_progresses.for_show("tt0903747")
+        expect(rows.map(&:season_number).uniq).to eq([ 1 ])
+        expect(rows.map { |row| row.episode_number }.sort).to eq([ 1, 2 ])
+      end
+
+      it "removes only the requested season when marked unwatched" do
+        create(:playback_progress, :episode, user: user, imdb_id: "tt0903747", season_number: 1, episode_number: 1)
+        season_two = create(:playback_progress, :episode, user: user, imdb_id: "tt0903747", season_number: 2, episode_number: 1)
+
+        patch content_watched_path(type: "show", imdb_id: "tt0903747", season: 1),
+              params: { watched: false },
+              headers: { "HTTP_REFERER" => content_path(type: "show", imdb_id: "tt0903747") }
+
+        expect(user.playback_progresses.for_show("tt0903747")).to contain_exactly(season_two)
+      end
     end
 
     it "does not change another user's progress" do

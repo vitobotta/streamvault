@@ -156,5 +156,37 @@ RSpec.describe Playback::WatchedToggle do
       expect(result).to be_failure
       expect(user.playback_progresses).to be_empty
     end
+
+    describe "a single season" do
+      let(:episodes) do
+        [
+          { season: 0, episode: 1, runtime_seconds: 600, released: "2008-01-01" },
+          { season: 1, episode: 1, runtime_seconds: 2_400, released: "2008-01-20" },
+          { season: 1, episode: 2, runtime_seconds: 2_400, released: "2008-01-27" },
+          { season: 2, episode: 1, runtime_seconds: 2_400, released: "2009-03-08" },
+          { season: 2, episode: 2, runtime_seconds: 2_400, released: Date.tomorrow.iso8601 }
+        ]
+      end
+
+      it "marks only the released episodes in that season" do
+        result = service.call(imdb_id: "tt0903747", type: "show", season: 1, watched: true, title: "Breaking Bad")
+
+        expect(result).to be_success
+        expect(result.data).to eq(2)
+        rows = user.playback_progresses.for_show("tt0903747").order(:season_number, :episode_number)
+        expect(rows.map { |row| [ row.season_number, row.episode_number ] }).to eq([ [ 1, 1 ], [ 1, 2 ] ])
+        expect(rows).to all(be_completed)
+      end
+
+      it "removes only that season when marked unwatched" do
+        season_one = create(:playback_progress, :episode, user: user, imdb_id: "tt0903747", season_number: 1, episode_number: 1)
+        season_two = create(:playback_progress, :episode, user: user, imdb_id: "tt0903747", season_number: 2, episode_number: 1)
+
+        service.call(imdb_id: "tt0903747", type: "show", season: 1, watched: false)
+
+        expect(user.playback_progresses.where(id: season_one.id)).to be_empty
+        expect(user.playback_progresses.find(season_two.id)).to eq(season_two)
+      end
+    end
   end
 end

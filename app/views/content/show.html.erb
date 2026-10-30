@@ -250,7 +250,18 @@
             <p class="kicker mb-2">Episodes</p>
             <h2 class="t-section">Season <%= @selected_season %></h2>
           </div>
-          <p class="text-xs text-ink-400"><span class="t-num"><%= season_episodes.size %></span> episodes</p>
+          <div class="flex flex-wrap items-center gap-2">
+            <p class="text-xs text-ink-400"><span class="t-num"><%= season_episodes.size %></span> episodes</p>
+            <% unless @season_watched.nil? %>
+              <%= button_to @season_watched ? "Season watched" : "Mark season watched",
+                            content_watched_path(type: @type, imdb_id: @imdb_id, season: @selected_season),
+                            method: :patch,
+                            params: { watched: !@season_watched },
+                            class: "chip transition-colors hover:border-ink-400 hover:text-ink-50",
+                            aria: { pressed: @season_watched },
+                            title: @season_watched ? "Mark every released episode in this season unwatched" : "Mark every released episode in this season watched" %>
+            <% end %>
+          </div>
         </div>
 
         <div class="season-tabs mb-4" role="group" aria-label="Choose a season">

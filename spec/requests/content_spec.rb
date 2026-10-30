@@ -63,6 +63,7 @@ RSpec.describe "Content", type: :request do
         get content_path(type: "show", imdb_id: "tt0903747")
 
         expect(response.body).to include("Series watched")
+        expect(response.body).to include("Season watched")
         expect(response.body).not_to include("Continue S01E01")
       end
 
@@ -73,6 +74,7 @@ RSpec.describe "Content", type: :request do
         get content_path(type: "show", imdb_id: "tt0903747")
 
         expect(response.body).to include("Mark series watched")
+        expect(response.body).to include("Mark season watched")
       end
 
       it "shows the watched state for a completed movie" do

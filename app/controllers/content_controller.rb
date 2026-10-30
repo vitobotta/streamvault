@@ -36,8 +36,9 @@ class ContentController < ApplicationController
       @episode_finished = @episode_progress.transform_values do |progress|
         PlaybackCompletionPolicy.episode_finished?(progress)
       end
-      @series_watched = series_watched?(@metadata)
       @selected_season = params[:season]&.to_i || 1
+      @season_watched = season_watched?(@metadata, @selected_season)
+      @series_watched = series_watched?(@metadata)
     else
       @movie_progress = current_user.playback_progresses.movies_only.find_by(imdb_id: @imdb_id)
       @movie_watched = @movie_progress.present? && PlaybackCompletionPolicy.movie_finished?(@movie_progress)
@@ -93,11 +94,24 @@ class ContentController < ApplicationController
   # A series is watched only when every episode that has already aired is
   # watched. Specials and unreleased episodes do not block that state.
   def series_watched?(metadata)
-    episodes = Array(metadata&.dig(:episodes)).select do |episode|
-      episode[:season].to_i.positive? && released_episode?(episode)
-    end
+    episodes = released_episodes(metadata)
     episodes.any? && episodes.all? do |episode|
       @episode_finished[[ episode[:season].to_i, episode[:episode].to_i ]]
+    end
+  end
+
+  def season_watched?(metadata, season)
+    episodes = released_episodes(metadata).select { |episode| episode[:season].to_i == season.to_i }
+    return if episodes.empty?
+
+    episodes.all? do |episode|
+      @episode_finished[[ episode[:season].to_i, episode[:episode].to_i ]]
+    end
+  end
+
+  def released_episodes(metadata)
+    Array(metadata&.dig(:episodes)).select do |episode|
+      episode[:season].to_i.positive? && released_episode?(episode)
     end
   end
 
