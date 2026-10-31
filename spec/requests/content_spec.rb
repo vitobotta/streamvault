@@ -66,6 +66,8 @@ RSpec.describe "Content", type: :request do
         expect(response.body).to include("Series watched")
         expect(response.body).to include("Season watched")
         expect(response.body).to include("Season 1, watched")
+        expect(response.body).to include("data-series-progress")
+        expect(Nokogiri::HTML(response.body).text.squish).to include("2 of 2 episodes watched")
         expect(response.body).not_to include("Continue S01E01")
       end
 
@@ -80,6 +82,9 @@ RSpec.describe "Content", type: :request do
         expect(response.body).not_to include("Season 1, watched")
         expect(response.body).to include("Season 1, 1 of 2 episodes watched")
         expect(response.body).to include("1/2")
+        expect(response.body).to include("data-series-progress")
+        expect(response.body).to include("aria-valuenow=\"1\"")
+        expect(response.body).to include("aria-valuemax=\"2\"")
       end
 
       it "marks a completed season on its tab while the series is still partial" do
@@ -88,7 +93,8 @@ RSpec.describe "Content", type: :request do
         stub_show_metadata(videos: [
           { "id" => "tt0903747:1:1", "season" => 1, "episode" => 1, "name" => "Pilot", "released" => "2008-01-20" },
           { "id" => "tt0903747:1:2", "season" => 1, "episode" => 2, "name" => "Cat's in the Bag...", "released" => "2008-01-27" },
-          { "id" => "tt0903747:2:1", "season" => 2, "episode" => 1, "name" => "Seven Thirty-Seven", "released" => "2009-03-08" }
+          { "id" => "tt0903747:2:1", "season" => 2, "episode" => 1, "name" => "Seven Thirty-Seven", "released" => "2009-03-08" },
+          { "id" => "tt0903747:2:2", "season" => 2, "episode" => 2, "name" => "Grilled", "released" => Date.tomorrow.iso8601 }
         ])
 
         get content_path(type: "show", imdb_id: "tt0903747")
@@ -97,6 +103,9 @@ RSpec.describe "Content", type: :request do
         expect(response.body).to include("Season 1, watched")
         expect(response.body).not_to include("Season 2, watched")
         expect(response.body).not_to include("0/1")
+        expect(response.body).to include("aria-valuenow=\"2\"")
+        expect(response.body).to include("aria-valuemax=\"3\"")
+        expect(Nokogiri::HTML(response.body).text.squish).to include("2 of 3 episodes watched")
       end
 
       it "shows the watched state for a completed movie" do

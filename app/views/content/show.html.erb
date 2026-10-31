@@ -70,6 +70,20 @@
             <% end %>
           </div>
 
+          <% if @type == "show" && @series_total_episodes.positive? %>
+            <div class="mt-4 flex flex-wrap items-center gap-2.5" data-series-progress>
+              <span class="progress-track w-28"
+                    role="progressbar"
+                    aria-label="Episodes watched"
+                    aria-valuemin="0"
+                    aria-valuemax="<%= @series_total_episodes %>"
+                    aria-valuenow="<%= @series_watched_episodes %>">
+                <span class="progress-fill block" style="width: <%= @series_progress_percentage %>%"></span>
+              </span>
+              <span class="text-xs text-ink-300"><span class="t-num"><%= @series_watched_episodes %> of <%= @series_total_episodes %></span> episodes watched</span>
+            </div>
+          <% end %>
+
           <% if @metadata[:rated].present? || @metadata[:imdb_rating].present? || @metadata[:rt_rating].present? || @metadata[:metascore].present? %>
             <div class="mt-4 flex flex-wrap items-center gap-1.5">
               <% if @metadata[:rated].present? %>

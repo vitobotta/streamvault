@@ -42,6 +42,13 @@ class ContentController < ApplicationController
       @season_watched = selected_season && selected_season[:watched] == selected_season[:total]
       @series_watched = @season_progress.any? &&
                         @season_progress.values.all? { |season| season[:watched] == season[:total] }
+      @series_watched_episodes = @season_progress.values.sum { |season| season[:watched] }
+      @series_total_episodes = @season_progress.values.sum { |season| season[:total] }
+      @series_progress_percentage = if @series_total_episodes.positive?
+        ((@series_watched_episodes.to_f / @series_total_episodes) * 100).round
+      else
+        0
+      end
     else
       @movie_progress = current_user.playback_progresses.movies_only.find_by(imdb_id: @imdb_id)
       @movie_watched = @movie_progress.present? && PlaybackCompletionPolicy.movie_finished?(@movie_progress)
