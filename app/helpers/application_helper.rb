@@ -1,4 +1,14 @@
 module ApplicationHelper
+  # A child account only sees titles whose certification resolves. With no
+  # rating source configured, every title is "unrated" and hidden, so say why
+  # rather than showing an empty catalogue.
+  def parental_rating_sources_missing?
+    return false unless current_user&.child_account?
+    return @parental_rating_sources_missing unless @parental_rating_sources_missing.nil?
+
+    @parental_rating_sources_missing = !ParentalControls::RatingResolver.sources_configured?
+  end
+
   def player_time(seconds)
     total_seconds = seconds.to_f
     return "0:00" unless total_seconds.finite? && total_seconds.positive?
