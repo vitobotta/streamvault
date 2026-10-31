@@ -9,6 +9,14 @@ const SUBTITLE_STARTUP_LOOK_BEHIND_SECONDS = 2
 const STREAM_STALL_TIMEOUT_MS = 60000
 const BUFFER_AHEAD_SECONDS = 30
 const BUFFER_AHEAD_MAX_WAIT_MS = 15000
+// A seek restarts the MSE session and its forward buffer from zero. Waiting
+// for the 30s startup cushion there meant every seek sat through ~11s of
+// encoding (30s of media at roughly 2.5x realtime on a 4K HEVC transcode)
+// before the first frame appeared. The seeking overlay already tells the user
+// the jump is in progress, so a seek resumes on a small cushion and lets the
+// paced producer build the rest. 4s covers the 2-4s write gaps observed on 4K
+// HEVC without letting playback outrun the encoder.
+const SEEK_RESUME_BUFFER_SECONDS = 4
 // After a stall, rebuild a meaningful buffer before resuming so ffmpeg
 // can catch up and transient upstream dips don't cause immediate
 // re-stall. 10s absorbs variable-rate sources (RealDebrid links from
@@ -153,6 +161,9 @@ export default class extends Controller {
     this.streamRecoveryActive = false
     this.playbackStarted = false
     this.isStalled = false
+    // Set by a seek; lets the restarted MSE session resume on a small
+    // forward buffer instead of the full startup cushion.
+    this.seekResumePending = false
     this.playbackObservation = null
     // True when the user deliberately paused (button/spacebar). The
     // rebuffer gate in maybeStartPlayback must never auto-resume a
@@ -1501,7 +1512,11 @@ export default class extends Controller {
     if (!this.playbackStarted) {
       const deadlineReached = deadlineTriggered ||
         (this.bufferAheadDeadline && Date.now() >= this.bufferAheadDeadline)
-      if (bufferedAhead >= BUFFER_AHEAD_SECONDS || (deadlineReached && bufferedAhead >= 0.5)) {
+      const startupBufferSeconds = this.seekResumePending
+        ? SEEK_RESUME_BUFFER_SECONDS
+        : BUFFER_AHEAD_SECONDS
+      if (bufferedAhead >= startupBufferSeconds || (deadlineReached && bufferedAhead >= 0.5)) {
+        this.seekResumePending = false
         this.playbackStarted = true
         this.bufferAheadDeadline = null
         clearTimeout(this.bufferAheadDeadlineTimer)
@@ -1809,6 +1824,7 @@ export default class extends Controller {
     if (this.systemRebufferPaused || this.subtitlePlaybackHoldToken != null) return
 
     this.playbackStarted = true
+    this.seekResumePending = false
     clearTimeout(this.bufferingOverlayTimer)
     this.bufferingOverlayTimer = null
     this.isStalled = false
@@ -2399,6 +2415,7 @@ export default class extends Controller {
     const duration = this.knownDuration
     const targetSeconds = Math.max(0, Math.min(duration, Math.floor(requestedSeconds)))
     if (targetSeconds === Math.floor(this.currentPlaybackPosition())) return
+    this.seekResumePending = true
 
     if (this.isSeeking) {
       if (this.isRemuxDirectPlay()) {

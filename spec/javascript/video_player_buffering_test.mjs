@@ -436,3 +436,79 @@ test("stall telemetry sends the correlated JSON request body", () => {
   assert.equal(body.mse_quota_errors, 1)
   assert.deepEqual(body.buffered_ranges, [[0, 45]])
 })
+
+function seekStartupPlayer({ bufferedAhead, seekResumePending = false }) {
+  const player = new VideoPlayerController()
+  let playCount = 0
+  player.videoTarget = { currentTime: 0, ended: false, paused: true }
+  player.sourceBuffer = { buffered: timeRanges([[0, Math.max(bufferedAhead, 0.1)]]) }
+  player.playbackStarted = false
+  player.userPaused = false
+  player.isSeeking = seekResumePending
+  player.seekResumePending = seekResumePending
+  player.systemRebufferPaused = false
+  player.navigatingAway = false
+  player.playbackDisconnected = false
+  player.subtitlePlaybackHoldToken = null
+  player.bufferAheadDeadline = null
+  player.bufferAheadDeadlineTimer = null
+  player.bufferedAheadOfCurrent = () => bufferedAhead
+  player.requestPlayback = () => { playCount += 1 }
+  player.playCount = () => playCount
+  return player
+}
+
+test("a seek-started session resumes on a small cushion, not the 30 s startup gate", () => {
+  const player = seekStartupPlayer({ bufferedAhead: 4.2, seekResumePending: true })
+
+  player.maybeStartPlayback(false)
+
+  assert.equal(player.playCount(), 1)
+  assert.equal(player.playbackStarted, true)
+  assert.equal(player.seekResumePending, false)
+})
+
+test("a seek still waits for a playable amount of buffer", () => {
+  const player = seekStartupPlayer({ bufferedAhead: 2.5, seekResumePending: true })
+
+  player.maybeStartPlayback(false)
+
+  assert.equal(player.playCount(), 0)
+  assert.equal(player.playbackStarted, false)
+  assert.equal(player.seekResumePending, true)
+})
+
+test("an ordinary startup keeps waiting for the full 30 s cushion", () => {
+  const player = seekStartupPlayer({ bufferedAhead: 4.2 })
+
+  player.maybeStartPlayback(false)
+
+  assert.equal(player.playCount(), 0)
+  assert.equal(player.playbackStarted, false)
+
+  player.bufferedAheadOfCurrent = () => 30
+  player.maybeStartPlayback(false)
+  assert.equal(player.playCount(), 1)
+})
+
+test("the startup deadline still starts a seek with whatever is buffered", () => {
+  const player = seekStartupPlayer({ bufferedAhead: 0.6, seekResumePending: true })
+  player.bufferAheadDeadline = Date.now() - 1
+
+  player.maybeStartPlayback(false)
+
+  assert.equal(player.playCount(), 1)
+})
+
+test("a seek marks the next session for fast resume", () => {
+  const player = seekStartupPlayer({ bufferedAhead: 0 })
+  player.knownDuration = 1000
+  player.currentPlaybackPosition = () => 100
+  player.currentTimeTarget = { textContent: "" }
+  player.updateSeekVisuals = () => {}
+  player.restartPlaybackAt = () => {}
+
+  player.seekBySeconds(15)
+
+  assert.equal(player.seekResumePending, true)
+})
