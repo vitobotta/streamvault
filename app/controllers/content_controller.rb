@@ -37,9 +37,11 @@ class ContentController < ApplicationController
         PlaybackCompletionPolicy.episode_finished?(progress)
       end
       @selected_season = params[:season]&.to_i || 1
-      @season_watched_map = season_watched_map(@metadata)
-      @season_watched = @season_watched_map[@selected_season]
-      @series_watched = @season_watched_map.any? && @season_watched_map.values.all?
+      @season_progress = season_progress(@metadata)
+      selected_season = @season_progress[@selected_season]
+      @season_watched = selected_season && selected_season[:watched] == selected_season[:total]
+      @series_watched = @season_progress.any? &&
+                        @season_progress.values.all? { |season| season[:watched] == season[:total] }
     else
       @movie_progress = current_user.playback_progresses.movies_only.find_by(imdb_id: @imdb_id)
       @movie_watched = @movie_progress.present? && PlaybackCompletionPolicy.movie_finished?(@movie_progress)
@@ -94,12 +96,14 @@ class ContentController < ApplicationController
 
   # A season is watched only when every episode that has already aired is
   # watched. Specials and unreleased episodes do not block that state, and a
-  # season with no released episodes has no state at all.
-  def season_watched_map(metadata)
+  # season with no released episodes has no state at all. Counts drive both
+  # the tab indicators and the season/series actions.
+  def season_progress(metadata)
     released_episodes(metadata).group_by { |episode| episode[:season].to_i }.transform_values do |episodes|
-      episodes.all? do |episode|
+      watched = episodes.count do |episode|
         @episode_finished[[ episode[:season].to_i, episode[:episode].to_i ]]
       end
+      { watched: watched, total: episodes.size }
     end
   end
 

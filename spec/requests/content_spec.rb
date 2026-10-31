@@ -78,6 +78,8 @@ RSpec.describe "Content", type: :request do
         expect(response.body).to include("Mark series watched")
         expect(response.body).to include("Mark season watched")
         expect(response.body).not_to include("Season 1, watched")
+        expect(response.body).to include("Season 1, 1 of 2 episodes watched")
+        expect(response.body).to include("1/2")
       end
 
       it "marks a completed season on its tab while the series is still partial" do
@@ -94,6 +96,7 @@ RSpec.describe "Content", type: :request do
         expect(response.body).to include("Mark series watched")
         expect(response.body).to include("Season 1, watched")
         expect(response.body).not_to include("Season 2, watched")
+        expect(response.body).not_to include("0/1")
       end
 
       it "shows the watched state for a completed movie" do

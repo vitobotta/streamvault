@@ -1471,6 +1471,15 @@ details[open] > .source-more svg { transform: rotate(180deg); }
 
 .season-tab--active .season-tab__status { color: var(--color-sage-950); }
 
+.season-tab__progress {
+  color: var(--color-ink-400);
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.season-tab--active .season-tab__progress { color: var(--color-ink-800); }
+
 .episode {
   border-bottom: 1px solid oklch(1 0 0 / 0.06);
 }
