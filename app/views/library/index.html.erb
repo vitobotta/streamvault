@@ -42,12 +42,18 @@
 
   <div class="poster-grid">
     <% @entries.each do |entry| %>
+      <% watched = entry.content_type == "movie" && @movie_watched_map&.dig(entry.imdb_id) %>
+      <% watch_path = entry.content_type == "movie" ? content_watched_path(type: "movie", imdb_id: entry.imdb_id) : nil %>
       <%= render "shared/poster_card",
                  item: entry,
                  link_path: content_path(type: entry.content_type, imdb_id: entry.imdb_id),
                  subtitle: [entry.year, entry.content_type == "show" ? "Series" : "Film"].compact.join(" · "),
                  progress: @progress_map&.dig(entry.imdb_id),
-                 controls: :library %>
+                 series_progress: @series_progress_map&.dig(entry.imdb_id),
+                 controls: :library,
+                 watched: watched,
+                 watch_path: watch_path,
+                 watch_params: (watch_path ? { watched: !watched, title: entry.title, poster_url: entry.poster_url } : {}) %>
     <% end %>
   </div>
 

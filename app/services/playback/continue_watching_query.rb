@@ -42,6 +42,7 @@ module Playback
 
     def unfinished_movies
       @user.playback_progresses.movies_only
+        .where(completed: false)
         .where("duration_seconds <= 0 OR progress_seconds * 100 < duration_seconds * ?", PlaybackCompletionPolicy::MOVIE_PERCENTAGE)
         .recently_watched.limit(LIMIT).to_a
     end
@@ -67,7 +68,7 @@ module Playback
 
       if entry.episode? && PlaybackCompletionPolicy.episode_finished?(entry)
         following = @episode_sequence.next_after(content_ref)
-        return if following.error_code == :series_complete
+        return if [ :series_complete, :not_released ].include?(following.error_code)
         if following.success?
           content_ref = following.data
           progress = 0

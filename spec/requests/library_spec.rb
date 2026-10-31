@@ -34,6 +34,54 @@ RSpec.describe "Library", type: :request do
       expect(response.body).to include("MOVIE_TITLE")
       expect(response.body).not_to include("SHOW_TITLE")
     end
+
+    it "renders the watched toggle on movie cards" do
+      entry = create(:collection_entry, user: user, content_type: :movie, title: "MOVIE_TITLE")
+      create(:playback_progress, :movie, user: user, imdb_id: entry.imdb_id, completed: true)
+      sign_in user
+
+      get library_index_path
+
+      expect(response.body).to include("Mark MOVIE_TITLE unwatched")
+    end
+
+    it "leaves series cards without a single watched toggle" do
+      create(:collection_entry, :show, user: user, title: "SHOW_TITLE")
+      sign_in user
+
+      get library_index_path
+
+      expect(response.body).not_to include("Mark SHOW_TITLE")
+      expect(response.body).not_to include("data-series-card-progress")
+    end
+
+    it "shows persisted episode progress on series cards without a catalogue lookup" do
+      entry = create(:collection_entry, :show, user: user, imdb_id: "tt0903747", title: "SHOW_TITLE",
+        series_total_episodes: 3)
+      create(:playback_progress, :episode, user: user, imdb_id: entry.imdb_id, season_number: 1, episode_number: 1, completed: true)
+      create(:playback_progress, :episode, user: user, imdb_id: entry.imdb_id, season_number: 1, episode_number: 2, completed: true)
+      sign_in user
+
+      get library_index_path
+
+      expect(response.body).to include("data-series-card-progress")
+      expect(Nokogiri::HTML(response.body).text.squish).to include("2 of 3 episodes watched")
+      expect(response.body).to include('style="width: 67%"')
+      expect(WebMock).not_to have_requested(:get, %r{v3-cinemeta\.strem\.io/meta/})
+    end
+
+    it "does not fetch episode totals when a series card has no persisted count" do
+      entry = create(:collection_entry, :show, user: user, imdb_id: "tt0903747", title: "SHOW_TITLE")
+      create(:playback_progress, :episode, user: user, imdb_id: entry.imdb_id, season_number: 1, episode_number: 1, completed: true)
+      sign_in user
+
+      get library_index_path
+
+      expect(response).to have_http_status(:ok)
+      expect(response.body).to include("SHOW_TITLE")
+      expect(response.body).not_to include("data-series-card-progress")
+      expect(WebMock).not_to have_requested(:get, %r{v3-cinemeta\.strem\.io/meta/})
+    end
   end
 
   describe "PATCH /collection" do

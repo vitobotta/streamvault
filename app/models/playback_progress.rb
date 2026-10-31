@@ -21,8 +21,15 @@ class PlaybackProgress < ApplicationRecord
   scope :episodes_only, -> { where(content_type: :episode) }
 
   def progress_percentage
+    # A manual "mark watched" is authoritative even when the catalogue has no
+    # runtime for the title, so it always displays as complete.
+    return 100 if completed?
     return progress_seconds.positive? ? 1 : 0 unless duration_seconds.positive?
 
     ((progress_seconds.to_f / duration_seconds) * 100).round.clamp(0, 100)
+  end
+
+  def watched?
+    episode? ? PlaybackCompletionPolicy.episode_finished?(self) : PlaybackCompletionPolicy.movie_finished?(self)
   end
 end

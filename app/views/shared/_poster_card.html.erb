@@ -12,6 +12,11 @@
   remove_label = local_assigns.fetch(:remove_label, "Remove #{title}")
   play_label = local_assigns.fetch(:play_label, "Open #{title}")
   priority = local_assigns.fetch(:priority, false)
+  watch_path = local_assigns[:watch_path]
+  watch_params = local_assigns.fetch(:watch_params, {})
+  watched = local_assigns.fetch(:watched, false)
+  series_progress = local_assigns[:series_progress]
+  card_progress = series_progress ? series_progress[:percentage] : progress
 %>
 <article class="poster-card group">
   <%= link_to link_path, class: "block", data: { page_loader: "link" }, aria: { label: play_label } do %>
@@ -25,9 +30,9 @@
       <% end %>
       <span class="poster-card__scrim" aria-hidden="true"></span>
       <span class="poster-card__play" aria-hidden="true"><%= icon :play %></span>
-      <% if progress.positive? %>
-        <div class="card-progress" role="img" aria-label="<%= progress %>% watched">
-          <div class="card-progress-bar" style="width: <%= progress %>%"></div>
+      <% if card_progress.positive? %>
+        <div class="card-progress" role="img" aria-label="<%= series_progress ? "#{series_progress[:watched]} of #{series_progress[:total]} episodes watched" : "#{progress}% watched" %>">
+          <div class="card-progress-bar" style="width: <%= card_progress %>%"></div>
         </div>
       <% end %>
     </div>
@@ -36,11 +41,24 @@
       <% if subtitle.present? %>
         <p class="poster-card__sub"><%= subtitle %></p>
       <% end %>
+      <% if series_progress.present? %>
+        <p class="poster-card__progress" data-series-card-progress>
+          <span class="t-num"><%= series_progress[:watched] %> of <%= series_progress[:total] %></span> episodes watched
+        </p>
+      <% end %>
     </div>
   <% end %>
 
-  <% if controls.present? || remove_path.present? %>
+  <% if controls.present? || remove_path.present? || watch_path.present? %>
     <div class="poster-card__controls">
+      <% if watch_path.present? %>
+        <%= button_to watch_path, method: :patch, params: watch_params,
+                      class: "card-action #{'card-action--active' if watched}",
+                      title: watched ? "Mark #{title} unwatched" : "Mark #{title} watched",
+                      aria: { label: watched ? "Mark #{title} unwatched" : "Mark #{title} watched", pressed: watched } do %>
+          <%= icon :check %>
+        <% end %>
+      <% end %>
       <% if controls == :wishlist %>
         <%= button_to collection_path, method: :patch, params: { state: "library", collection_entry: { imdb_id: imdb_id } }, class: "card-action", title: "Move to library", aria: { label: "Move #{title} to library" } do %>
           <%= icon :library %>
