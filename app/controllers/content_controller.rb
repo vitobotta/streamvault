@@ -37,18 +37,14 @@ class ContentController < ApplicationController
         PlaybackCompletionPolicy.episode_finished?(progress)
       end
       @selected_season = params[:season]&.to_i || 1
-      @season_progress = season_progress(@metadata)
+      series_progress = Playback::SeriesProgress.new(@metadata&.dig(:episodes), finished: @episode_finished)
+      @season_progress = series_progress.seasons
       selected_season = @season_progress[@selected_season]
       @season_watched = selected_season && selected_season[:watched] == selected_season[:total]
-      @series_watched = @season_progress.any? &&
-                        @season_progress.values.all? { |season| season[:watched] == season[:total] }
-      @series_watched_episodes = @season_progress.values.sum { |season| season[:watched] }
-      @series_total_episodes = @season_progress.values.sum { |season| season[:total] }
-      @series_progress_percentage = if @series_total_episodes.positive?
-        ((@series_watched_episodes.to_f / @series_total_episodes) * 100).round
-      else
-        0
-      end
+      @series_watched = series_progress.complete?
+      @series_watched_episodes = series_progress.watched_episodes
+      @series_total_episodes = series_progress.total_episodes
+      @series_progress_percentage = series_progress.percentage
     else
       @movie_progress = current_user.playback_progresses.movies_only.find_by(imdb_id: @imdb_id)
       @movie_watched = @movie_progress.present? && PlaybackCompletionPolicy.movie_finished?(@movie_progress)
@@ -100,33 +96,6 @@ class ContentController < ApplicationController
   end
 
   private
-
-  # A season is watched only when every episode that has already aired is
-  # watched. Specials and unreleased episodes do not block that state, and a
-  # season with no released episodes has no state at all. Counts drive both
-  # the tab indicators and the season/series actions.
-  def season_progress(metadata)
-    released_episodes(metadata).group_by { |episode| episode[:season].to_i }.transform_values do |episodes|
-      watched = episodes.count do |episode|
-        @episode_finished[[ episode[:season].to_i, episode[:episode].to_i ]]
-      end
-      { watched: watched, total: episodes.size }
-    end
-  end
-
-  def released_episodes(metadata)
-    Array(metadata&.dig(:episodes)).select do |episode|
-      episode[:season].to_i.positive? && released_episode?(episode)
-    end
-  end
-
-  def released_episode?(episode)
-    return true if episode[:released].blank?
-
-    Date.parse(episode[:released].to_s) <= Date.current
-  rescue ArgumentError
-    true
-  end
 
   # Child accounts may not access titles above their rating limit — never
   # return their metadata or streams, even via a direct item URL.

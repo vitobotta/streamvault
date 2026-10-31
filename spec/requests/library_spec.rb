@@ -3,6 +3,15 @@ require 'rails_helper'
 RSpec.describe "Library", type: :request do
   let(:user) { create(:user) }
 
+  def stub_show_metadata(videos)
+    stub_request(:get, "https://v3-cinemeta.strem.io/meta/series/tt0903747.json")
+      .to_return(
+        status: 200,
+        body: { "meta" => { "id" => "tt0903747", "name" => "Breaking Bad", "videos" => videos } }.to_json,
+        headers: { "Content-Type" => "application/json" }
+      )
+  end
+
   describe "GET /library" do
     it "requires authentication" do
       get library_index_path
@@ -52,6 +61,41 @@ RSpec.describe "Library", type: :request do
       get library_index_path
 
       expect(response.body).not_to include("Mark SHOW_TITLE")
+      expect(response.body).not_to include("data-series-card-progress")
+    end
+
+    it "shows released-episode progress on series cards" do
+      entry = create(:collection_entry, :show, user: user, imdb_id: "tt0903747", title: "SHOW_TITLE")
+      create(:playback_progress, :episode, user: user, imdb_id: entry.imdb_id, season_number: 1, episode_number: 1, completed: true)
+      create(:playback_progress, :episode, user: user, imdb_id: entry.imdb_id, season_number: 1, episode_number: 2, completed: true)
+      stub_show_metadata([
+        { "season" => 0, "episode" => 1, "name" => "Special", "released" => "2008-01-01" },
+        { "season" => 1, "episode" => 1, "name" => "Pilot", "released" => "2008-01-20" },
+        { "season" => 1, "episode" => 2, "name" => "Cat's in the Bag...", "released" => "2008-01-27" },
+        { "season" => 2, "episode" => 1, "name" => "Seven Thirty-Seven", "released" => "2009-03-08" },
+        { "season" => 2, "episode" => 2, "name" => "Grilled", "released" => Date.tomorrow.iso8601 }
+      ])
+      sign_in user
+
+      get library_index_path
+
+      expect(response.body).to include("data-series-card-progress")
+      expect(Nokogiri::HTML(response.body).text.squish).to include("2 of 3 episodes watched")
+      expect(response.body).to include('style="width: 67%"')
+      expect(WebMock).to have_requested(:get, "https://v3-cinemeta.strem.io/meta/series/tt0903747.json").once
+    end
+
+    it "still renders series cards when metadata is unavailable" do
+      entry = create(:collection_entry, :show, user: user, imdb_id: "tt0903747", title: "SHOW_TITLE")
+      create(:playback_progress, :episode, user: user, imdb_id: entry.imdb_id, season_number: 1, episode_number: 1, completed: true)
+      stub_request(:get, "https://v3-cinemeta.strem.io/meta/series/tt0903747.json").to_return(status: 500)
+      sign_in user
+
+      get library_index_path
+
+      expect(response).to have_http_status(:ok)
+      expect(response.body).to include("SHOW_TITLE")
+      expect(response.body).not_to include("data-series-card-progress")
     end
   end
 

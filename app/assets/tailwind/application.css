@@ -601,6 +601,17 @@
   white-space: nowrap;
 }
 
+.poster-card__progress {
+  margin-top: 0.125rem;
+  font-size: 0.6875rem;
+  letter-spacing: 0.01em;
+  color: var(--color-ink-400);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (hover: hover) {
   .poster-card:hover .poster-card__art img {
     transform: scale(1.045);
