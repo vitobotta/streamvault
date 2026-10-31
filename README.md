@@ -244,6 +244,12 @@ git pull
 docker compose up -d --build
 ```
 
+If you are upgrading from a build before persisted series totals, backfill the episode totals used by library cards once:
+
+```bash
+docker compose exec web bin/rails series:backfill_totals
+```
+
 ### Environment variables
 
 | Variable | Description | Default |
