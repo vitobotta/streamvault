@@ -45,6 +45,9 @@ const MAX_REMUX_PRESENTATION_OFFSET_SECONDS = 1
 const REMUX_SEEK_TOLERANCE_SECONDS = 0.25
 const REMUX_SEEK_TIMEOUT_MS = 500
 const INTERACTIVE_SELECTOR = "button, a, input, textarea, select, [contenteditable='true']"
+// Arrow-key seek step. Large enough to be a useful jump, small enough
+// that a couple of presses do not overshoot a scene.
+const KEYBOARD_SEEK_STEP_SECONDS = 15
 const SAFARI_AUTOPLAY_GUIDANCE_KEY = "streamvault:safari-autoplay-guidance-seen"
 
 export default class extends Controller {
@@ -1553,12 +1556,36 @@ export default class extends Controller {
   }
 
   onKeyDown(event) {
-    if (event.key !== " " && event.key !== "Spacebar") return
-    if (event.repeat || this.isInteractiveElement(event.target)) return
+    if (event.key === " " || event.key === "Spacebar") {
+      if (event.repeat || this.isInteractiveElement(event.target)) return
+
+      event.preventDefault()
+      this.togglePlay()
+      this.showOverlayUi()
+      return
+    }
+
+    const seekDelta = this.keyboardSeekDelta(event)
+    if (seekDelta === null) return
+    // Modifier chords belong to the browser/OS (Cmd+Left is "back" in
+    // most browsers), and a held key must not fire a burst of seeks:
+    // each one restarts ffmpeg or the MSE session.
+    if (event.repeat || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
+    if (this.isInteractiveElement(event.target)) return
 
     event.preventDefault()
-    this.togglePlay()
+    this.seekBySeconds(seekDelta)
     this.showOverlayUi()
+  }
+
+  keyboardSeekDelta(event) {
+    if (event.key === "ArrowRight" || event.key === "Right" || event.code === "ArrowRight") {
+      return KEYBOARD_SEEK_STEP_SECONDS
+    }
+    if (event.key === "ArrowLeft" || event.key === "Left" || event.code === "ArrowLeft") {
+      return -KEYBOARD_SEEK_STEP_SECONDS
+    }
+    return null
   }
 
   isInteractiveElement(element) {
@@ -2354,7 +2381,23 @@ export default class extends Controller {
 
   performSeek(percent) {
     if (this.knownDuration <= 0) return
-    const targetSeconds = Math.floor(percent * this.knownDuration)
+    this.seekToSeconds(Math.floor(percent * this.knownDuration))
+  }
+
+  // Keyboard seeking jumps by a fixed offset from the current position
+  // instead of a percentage, then reuses the same restart path as a
+  // click on the seek bar.
+  seekBySeconds(offsetSeconds) {
+    if (this.knownDuration <= 0) return
+    const position = this.currentPlaybackPosition()
+    const targetSeconds = Math.max(0, Math.min(this.knownDuration, position + offsetSeconds))
+    this.seekToSeconds(targetSeconds)
+  }
+
+  seekToSeconds(requestedSeconds) {
+    if (this.knownDuration <= 0) return
+    const duration = this.knownDuration
+    const targetSeconds = Math.max(0, Math.min(duration, Math.floor(requestedSeconds)))
     if (targetSeconds === Math.floor(this.currentPlaybackPosition())) return
 
     if (this.isSeeking) {
