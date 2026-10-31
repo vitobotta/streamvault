@@ -27,26 +27,28 @@ class LibraryController < ApplicationController
 
   private
 
-  # Series cards need the released-episode total, which only the catalogue
-  # knows. Only shows with at least one completed episode are looked up, so a
-  # library without watched series makes no metadata requests.
+  # Series cards use the total persisted when the series page loaded and the
+  # user's local progress rows, so loading the library never calls the
+  # catalogue.
   def series_progress_map(entries, progress_rows)
-    rows_by_show = progress_rows.group_by(&:imdb_id)
-    catalog = Catalog::CinemetaClient.new
+    rows_by_show = progress_rows.select(&:episode?).group_by(&:imdb_id)
 
     entries.select(&:show?).each_with_object({}) do |entry, result|
-      finished = Array(rows_by_show[entry.imdb_id]).select(&:watched?).index_by do |row|
-        [ row.season_number, row.episode_number ]
+      total = entry.series_total_episodes.to_i
+      next unless total.positive?
+
+      watched = Array(rows_by_show[entry.imdb_id]).count do |row|
+        row.season_number.positive? && row.watched?
       end
-      next if finished.empty?
+      next unless watched.positive?
 
-      metadata = catalog.metadata(entry.imdb_id, "show", include_ratings: false)
-      next if metadata.failure?
-
-      progress = Playback::SeriesProgress.new(metadata.data[:episodes], finished: finished)
-      next unless progress.watched_episodes.positive?
-
-      result[entry.imdb_id] = progress.summary
+      watched = [ watched, total ].min
+      result[entry.imdb_id] = {
+        watched: watched,
+        total: total,
+        percentage: ((watched.to_f / total) * 100).round,
+        complete: watched == total
+      }
     end
   end
 end

@@ -88,6 +88,7 @@ RSpec.describe "Content", type: :request do
       end
 
       it "marks a completed season on its tab while the series is still partial" do
+        entry = create(:collection_entry, :show, user: user, imdb_id: "tt0903747")
         create(:playback_progress, :episode, user: user, imdb_id: "tt0903747", season_number: 1, episode_number: 1, completed: true)
         create(:playback_progress, :episode, user: user, imdb_id: "tt0903747", season_number: 1, episode_number: 2, completed: true)
         stub_show_metadata(videos: [
@@ -106,6 +107,8 @@ RSpec.describe "Content", type: :request do
         expect(response.body).to include("aria-valuenow=\"2\"")
         expect(response.body).to include("aria-valuemax=\"3\"")
         expect(Nokogiri::HTML(response.body).text.squish).to include("2 of 3 episodes watched")
+        expect(entry.reload.series_total_episodes).to eq(3)
+        expect(entry.series_total_episodes_synced_at).to be_present
       end
 
       it "shows the watched state for a completed movie" do

@@ -45,6 +45,7 @@ class ContentController < ApplicationController
       @series_watched_episodes = series_progress.watched_episodes
       @series_total_episodes = series_progress.total_episodes
       @series_progress_percentage = series_progress.percentage
+      persist_series_total(@collection_entry, @series_total_episodes)
     else
       @movie_progress = current_user.playback_progresses.movies_only.find_by(imdb_id: @imdb_id)
       @movie_watched = @movie_progress.present? && PlaybackCompletionPolicy.movie_finished?(@movie_progress)
@@ -96,6 +97,19 @@ class ContentController < ApplicationController
   end
 
   private
+
+  # Library cards read this stored total instead of calling the catalogue on
+  # every page load. The series page is the authoritative place to refresh it.
+  def persist_series_total(entry, total)
+    return if entry.blank? || entry.series_total_episodes == total
+
+    entry.update_columns(
+      series_total_episodes: total,
+      series_total_episodes_synced_at: Time.current
+    )
+  rescue ActiveRecord::ActiveRecordError => e
+    Rails.logger.warn("[ContentController] series total sync failed: #{e.class}: #{e.message}")
+  end
 
   # Child accounts may not access titles above their rating limit — never
   # return their metadata or streams, even via a direct item URL.
