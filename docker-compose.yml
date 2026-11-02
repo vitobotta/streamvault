@@ -26,7 +26,30 @@ services:
     environment:
       RAILS_ENV: production
       DATABASE_URL: postgres://${POSTGRES_USER:-streamvault}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-streamvault}
-      SOLID_QUEUE_IN_PUMA: "true"
+      # Background jobs run in the `worker` service below, so the web
+      # container must not start its own Solid Queue supervisor.
+      SOLID_QUEUE_IN_PUMA: "false"
+      # Both default to true, which is right behind a TLS-terminating proxy.
+      # Set both to false in .env to serve plain HTTP on a trusted network.
+      FORCE_SSL: "${FORCE_SSL:-true}"
+      ASSUME_SSL: "${ASSUME_SSL:-true}"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Runs the Solid Queue supervisor, dispatcher and workers. The image's
+  # default command is the web server, so the command override is required.
+  worker:
+    build:
+      context: .
+    env_file: .env
+    environment:
+      RAILS_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-streamvault}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-streamvault}
+      # Threads per worker process; see config/queue.yml.
+      JOB_CONCURRENCY: "${JOB_CONCURRENCY:-1}"
+    command: [ "bundle", "exec", "bin/jobs" ]
     depends_on:
       db:
         condition: service_healthy
