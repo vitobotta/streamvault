@@ -1,0 +1,89 @@
+<div class="px-6 py-8">
+  <%= link_to "← Back to playlists", playlists_path, class: "text-sm text-sv-accent hover:underline" %>
+
+  <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mt-4 mb-8">
+    <div class="min-w-0">
+      <h1 class="text-3xl font-bold text-white truncate"><%= @playlist.name %></h1>
+      <p class="text-sm text-sv-text-muted mt-1">
+        <%= pluralize(@playlist.playlist_items.size, "title") %>
+        <% if @items.size != @playlist.playlist_items.size %>
+          · <%= @playlist.playlist_items.size - @items.size %> hidden for this account
+        <% end %>
+      </p>
+      <% if @playlist.description.present? %>
+        <p class="text-sv-text-muted mt-3 max-w-2xl"><%= @playlist.description %></p>
+      <% end %>
+    </div>
+    <div class="flex items-center gap-2 shrink-0">
+      <details class="relative">
+        <summary class="btn-secondary text-sm cursor-pointer list-none">Rename</summary>
+        <div class="absolute right-0 mt-2 w-72 bg-sv-surface border border-sv-border rounded-xl p-4 shadow-xl z-20">
+          <%= form_with model: @playlist, url: playlist_path(@playlist), method: :patch, class: "space-y-3" do |f| %>
+            <% if @playlist.errors.any? %>
+              <p class="text-xs text-red-400"><%= @playlist.errors.full_messages.to_sentence %></p>
+            <% end %>
+            <%= f.text_field :name, class: "input-field", maxlength: 80, required: true, aria: { label: "Playlist name" } %>
+            <%= f.text_area :description, class: "input-field", rows: 2, placeholder: "Description (optional)", aria: { label: "Playlist description" } %>
+            <%= f.submit "Save", class: "btn-primary text-sm cursor-pointer" %>
+          <% end %>
+        </div>
+      </details>
+      <%= button_to "Delete playlist", playlist_path(@playlist), method: :delete,
+            class: "btn-secondary text-sm text-red-400" %>
+    </div>
+  </div>
+
+  <% if @items.any? %>
+    <div class="grid gap-4" style="grid-template-columns: repeat(auto-fill, 160px)">
+      <% @items.each_with_index do |item, index| %>
+        <div class="poster-card group">
+          <%= link_to content_path(type: item.content_type, imdb_id: item.imdb_id), data: { page_loader: "link" } do %>
+            <% if item.poster_url.present? %>
+              <img src="<%= item.poster_url %>" alt="<%= item.title %>" loading="lazy" class="w-full aspect-[2/3] object-cover">
+            <% else %>
+              <div class="w-full aspect-[2/3] bg-sv-surface flex items-center justify-center">
+                <svg class="w-12 h-12 text-sv-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>
+              </div>
+            <% end %>
+            <div class="p-2">
+              <h3 class="text-xs font-medium text-white truncate"><%= item.title %></h3>
+              <p class="text-xs text-sv-text-muted mt-0.5">
+                <%= [ item.year, item.show? ? "Series" : "Film" ].compact.join(" · ") %>
+              </p>
+            </div>
+          <% end %>
+
+          <div class="absolute top-2 right-2 flex flex-col gap-1 [@media(hover:hover)]:opacity-0 group-hover:opacity-100 transition-opacity">
+            <%= button_to playlist_playlist_item_path(@playlist, item), method: :delete,
+                  class: "w-7 h-7 bg-black/60 rounded-full flex items-center justify-center text-white hover:bg-red-600",
+                  title: "Remove from playlist", aria: { label: "Remove #{item.title} from #{@playlist.name}" } do %>
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            <% end %>
+            <% if index.positive? %>
+              <%= button_to move_playlist_playlist_item_path(@playlist, item), method: :patch, params: { direction: "up" },
+                    class: "w-7 h-7 bg-black/60 rounded-full flex items-center justify-center text-white hover:bg-sv-accent",
+                    title: "Move earlier", aria: { label: "Move #{item.title} earlier" } do %>
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
+              <% end %>
+            <% end %>
+            <% if index < @items.length - 1 %>
+              <%= button_to move_playlist_playlist_item_path(@playlist, item), method: :patch, params: { direction: "down" },
+                    class: "w-7 h-7 bg-black/60 rounded-full flex items-center justify-center text-white hover:bg-sv-accent",
+                    title: "Move later", aria: { label: "Move #{item.title} later" } do %>
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+              <% end %>
+            <% end %>
+          </div>
+        </div>
+      <% end %>
+    </div>
+  <% else %>
+    <div class="text-center py-16">
+      <svg class="w-16 h-16 text-sv-text-muted mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M4 6h10M4 12h10M4 18h7m6-9v8m0 0l-3-3m3 3l3-3"/>
+      </svg>
+      <p class="text-sv-text-muted mb-2">This playlist is empty.</p>
+      <p class="text-sm text-sv-text-muted">Open a film or show and use “Add to playlist”.</p>
+    </div>
+  <% end %>
+</div>

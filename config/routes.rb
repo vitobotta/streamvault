@@ -17,6 +17,15 @@ Rails.application.routes.draw do
   resources :wishlist, only: [ :index ]
   resource :collection, only: [ :update ]
 
+  # Playlists
+  resources :playlists, only: [ :index, :show, :create, :update, :destroy ] do
+    resources :playlist_items, only: [ :create, :destroy ] do
+      member do
+        patch :move
+      end
+    end
+  end
+
   # Watch History
   resources :watch_history, only: [ :index, :destroy ] do
     collection do

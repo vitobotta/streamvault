@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_14_080000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_30_130000) do
   create_table "collection_entries", force: :cascade do |t|
     t.integer "content_type", default: 0, null: false
     t.datetime "created_at", null: false
@@ -55,6 +55,31 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_14_080000) do
     t.index ["user_id", "imdb_id"], name: "idx_playback_progresses_content"
     t.index ["user_id"], name: "index_playback_progresses_on_user_id"
     t.index ["watched_at"], name: "index_playback_progresses_on_watched_at"
+  end
+
+  create_table "playlist_items", force: :cascade do |t|
+    t.integer "content_type", default: 0, null: false
+    t.datetime "created_at", null: false
+    t.string "imdb_id", null: false
+    t.bigint "playlist_id", null: false
+    t.integer "position", default: 0, null: false
+    t.string "poster_url"
+    t.string "title", null: false
+    t.datetime "updated_at", null: false
+    t.integer "year"
+    t.index ["playlist_id", "imdb_id", "content_type"], name: "idx_playlist_items_unique", unique: true
+    t.index ["playlist_id", "position"], name: "idx_playlist_items_order"
+    t.index ["playlist_id"], name: "index_playlist_items_on_playlist_id"
+  end
+
+  create_table "playlists", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.text "description"
+    t.string "name", null: false
+    t.datetime "updated_at", null: false
+    t.bigint "user_id", null: false
+    t.index ["user_id", "name"], name: "index_playlists_on_user_id_and_name", unique: true
+    t.index ["user_id"], name: "index_playlists_on_user_id"
   end
 
   create_table "solid_cache_entries", force: :cascade do |t|
@@ -211,6 +236,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_14_080000) do
   add_foreign_key "collection_entries", "users"
   add_foreign_key "hls_sessions", "users"
   add_foreign_key "playback_progresses", "users"
+  add_foreign_key "playlist_items", "playlists", on_delete: :cascade
+  add_foreign_key "playlists", "users"
   add_foreign_key "solid_queue_blocked_executions", "solid_queue_jobs", column: "job_id", on_delete: :cascade
   add_foreign_key "solid_queue_claimed_executions", "solid_queue_jobs", column: "job_id", on_delete: :cascade
   add_foreign_key "solid_queue_failed_executions", "solid_queue_jobs", column: "job_id", on_delete: :cascade
