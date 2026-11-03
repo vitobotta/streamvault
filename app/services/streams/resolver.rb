@@ -16,7 +16,7 @@ module Streams
     end
 
     def start(content_ref)
-      return ServiceResult.failure("RealDebrid API key not configured") unless @user.has_realdebrid_key?
+      return ServiceResult.failure(missing_key_message) unless debrid_access?
 
       streams_result = available(content_ref)
       return streams_result if streams_result.failure?
@@ -26,7 +26,7 @@ module Streams
     end
 
     def resolve(candidate, content_ref:, duration: nil)
-      return ServiceResult.failure("RealDebrid API key not configured") unless @user.has_realdebrid_key?
+      return ServiceResult.failure(missing_key_message) unless debrid_access?
 
       selected = StreamCandidate.from(candidate)
       resolved = playback_safe_alternative(selected, content_ref, duration) if oversized_transcode_source?(selected, duration)
@@ -161,7 +161,31 @@ module Streams
       source && { source: source, stream: candidate }
     end
 
+    # A shared AIOStreams instance already holds its own debrid credentials;
+    # Torrentio and Comet need a key for the account's selected service.
+    def debrid_access?
+      @user.debrid_configured? || StreamProvider.keyless_provider_available?
+    end
+
+    def missing_key_message
+      label = @user.respond_to?(:debrid_service_label) ? @user.debrid_service_label : "Debrid"
+      "#{label} API key not configured"
+    end
+
+    # AIOStreams and some addons return the final debrid CDN link directly
+    # instead of an addon URL that redirects to it.  Accept a direct link when
+    # its host is a trusted debrid host, so it does not fail the origin
+    # allowlist check for provider endpoints.
+    def direct_debrid_source(value)
+      source = ResolvedSource.new(url: value)
+      source if source.service.present?
+    rescue ResolvedSource::Invalid
+      nil
+    end
+
     def resolve_url(resolve_url)
+      direct = direct_debrid_source(resolve_url)
+      return direct if direct
       return unless allowed_resolve_url?(resolve_url)
 
       response = with_retries { connection_for(resolve_url).get(resolve_url) }
@@ -183,7 +207,7 @@ module Streams
       candidate = resolved.fetch(:stream)
       source = resolved.fetch(:source)
       filename = candidate.filename.presence || source.filename
-      source = ResolvedSource.new(url: source.url, filename: filename)
+      source = ResolvedSource.new(url: source.url, filename: filename, service: source.service)
       ServiceResult.success({
         source: source,
         stream: candidate.merge(filename: filename),
@@ -222,6 +246,9 @@ module Streams
 
     def connection_for(resolve_url)
       return direct_connection if CometService.comet_url.present? && resolve_url.start_with?(CometService.comet_url)
+      if Streams::AioStreamsProvider.configured? && resolve_url.start_with?(Streams::AioStreamsProvider.base_url)
+        return aiostreams_connection
+      end
 
       @proxy_connection ||= Faraday.new do |faraday|
         faraday.adapter Faraday.default_adapter
@@ -236,6 +263,15 @@ module Streams
         faraday.adapter Faraday.default_adapter
         faraday.options.timeout = 15
         faraday.options.open_timeout = 5
+      end
+    end
+
+    def aiostreams_connection
+      @aiostreams_connection ||= Faraday.new do |faraday|
+        faraday.adapter Faraday.default_adapter
+        faraday.options.timeout = 15
+        faraday.options.open_timeout = 5
+        faraday.proxy = Streams::AioStreamsProvider.proxy_url if Streams::AioStreamsProvider.proxy_url.present?
       end
     end
   end

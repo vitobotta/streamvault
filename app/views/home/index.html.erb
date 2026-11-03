@@ -9,9 +9,9 @@
     <% end %>
   </div>
 
-  <% unless current_user.has_realdebrid_key? %>
+  <% unless debrid_access_configured? %>
     <div class="mb-8 p-4 bg-sv-accent/10 border border-sv-accent/30 rounded-lg">
-      <p class="text-sv-text">Welcome to StreamVault! Add your RealDebrid API key in <%= link_to "Settings", settings_path, class: "text-sv-accent font-medium hover:underline" %> to start streaming.</p>
+      <p class="text-sv-text">Welcome to StreamVault! Add a RealDebrid or TorBox API key in <%= link_to "Settings", settings_path, class: "text-sv-accent font-medium hover:underline" %> to start streaming, or ask an administrator for a team key.</p>
     </div>
   <% end %>
 

@@ -42,7 +42,8 @@ class TranscodeController < ApplicationController
         default_language: current_user.default_stream_language,
         preferred_languages: current_user.preferred_stream_languages,
         remux: params[:remux] == "1",
-        telemetry_id: playback_id
+        telemetry_id: playback_id,
+        quality: params[:quality]
       ) do |chunk|
         response.stream.write(chunk)
         written_bytes += chunk.bytesize
@@ -74,7 +75,8 @@ class TranscodeController < ApplicationController
       elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at
       Rails.logger.info(
         "[TranscodeStream] playback_id=#{playback_id} load_id=#{load_id} " \
-        "remux=#{params[:remux] == '1'} start_seconds=#{start_seconds.round(2)} " \
+        "remux=#{params[:remux] == '1'} quality=#{Media::Transcoder.normalized_quality(params[:quality]) || 'auto'} " \
+        "start_seconds=#{start_seconds.round(2)} " \
         "outcome=#{outcome} written_bytes=#{written_bytes} elapsed=#{elapsed.round(2)}s"
       )
       response.stream.close

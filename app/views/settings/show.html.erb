@@ -40,20 +40,63 @@
     </div>
 
     <div class="bg-sv-surface rounded-xl p-6 border border-sv-border">
-      <h2 class="text-lg font-semibold text-white mb-4">RealDebrid</h2>
+      <h2 class="text-lg font-semibold text-white mb-2">Debrid</h2>
+      <p class="text-xs text-sv-text-muted mb-4">Pick the debrid service you prefer; its streams are listed first. When keys for both services are available, both are queried and their streams merged, so you get more results to choose from. Your own API key takes precedence; if you leave it blank, the team key set by an administrator (or in the environment) is used.</p>
 
       <div class="mb-4">
-        <%= f.label :realdebrid_api_key, "API Key", class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
-        <%= f.password_field :realdebrid_api_key, class: "input-field", placeholder: "Enter your RealDebrid API key", value: "" %>
-        <p class="text-xs text-sv-text-muted mt-1">Get your API key from <a href="https://real-debrid.com/apitoken" target="_blank" class="text-sv-accent">real-debrid.com/apitoken</a></p>
+        <%= f.label :debrid_service, "Preferred service", class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
+        <%= f.select :debrid_service,
+          options_for_select(User::DEBRID_SERVICES.map { |value, label| [ label, value ] }, @user.effective_debrid_service),
+          {},
+          class: "input-field w-auto" %>
       </div>
 
-      <% if @user.has_realdebrid_key? %>
-        <div class="flex items-center gap-2 text-sv-success text-sm">
-          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-          API key configured
-        </div>
-      <% end %>
+      <div class="mb-4">
+        <%= f.label :realdebrid_api_key, "RealDebrid API key", class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
+        <%= f.password_field :realdebrid_api_key, class: "input-field", placeholder: "Enter your RealDebrid API key", value: "" %>
+        <p class="text-xs text-sv-text-muted mt-1">Get your API key from <a href="https://real-debrid.com/apitoken" target="_blank" class="text-sv-accent">real-debrid.com/apitoken</a></p>
+        <% if @user.realdebrid_api_key.present? %>
+          <p class="mt-2 text-xs text-sv-success">Your RealDebrid key is saved.</p>
+        <% elsif @user.effective_realdebrid_api_key.present? %>
+          <p class="mt-2 text-xs text-sv-text-muted">Using the team RealDebrid key.</p>
+        <% else %>
+          <p class="mt-2 text-xs text-sv-text-muted">No RealDebrid key configured.</p>
+        <% end %>
+      </div>
+
+      <div>
+        <%= f.label :torbox_api_key, "TorBox API key", class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
+        <%= f.password_field :torbox_api_key, class: "input-field", placeholder: "Enter your TorBox API key", value: "" %>
+        <p class="text-xs text-sv-text-muted mt-1">Get your API key from <a href="https://torbox.app/settings" target="_blank" class="text-sv-accent">torbox.app/settings</a></p>
+        <% if @user.torbox_api_key.present? %>
+          <p class="mt-2 text-xs text-sv-success">Your TorBox key is saved.</p>
+        <% elsif @user.effective_torbox_api_key.present? %>
+          <p class="mt-2 text-xs text-sv-text-muted">Using the team TorBox key.</p>
+        <% else %>
+          <p class="mt-2 text-xs text-sv-text-muted">No TorBox key configured.</p>
+        <% end %>
+      </div>
+
+      <div class="mt-4 border-t border-sv-border pt-4 text-xs text-sv-text-muted">
+        Preferred service: <span class="text-white"><%= @user.debrid_service_label %></span>.
+        <% extra = @user.debrid_credentials.map(&:first) - [ @user.effective_debrid_service ] %>
+        <% if extra.any? %>
+          Streams from <%= extra.map { |service| User::DEBRID_SERVICES.fetch(service, service) }.to_sentence %> are merged in.
+        <% end %>
+        <% source = @user.debrid_key_source %>
+        <% if source == :user %>
+          Using your own key.
+        <% elsif source == :global %>
+          Using the administrator's team key.
+        <% elsif source == :environment %>
+          Using the installation key from the environment.
+        <% else %>
+          No key available for this service.
+        <% end %>
+        <% if @user.admin? %>
+          <div class="mt-2"><%= link_to "Manage team keys", admin_settings_path, class: "text-sv-accent" %></div>
+        <% end %>
+      </div>
     </div>
 
     <div class="bg-sv-surface rounded-xl p-6 border border-sv-border">

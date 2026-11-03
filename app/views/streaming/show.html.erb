@@ -172,6 +172,21 @@
         </div>
       </div>
 
+      <%# Transcode quality: auto keeps the server default (CRF, 1080p cap);
+          a fixed rung caps resolution and bitrate on slow connections. %>
+      <label class="flex items-center gap-1 px-2 py-1 bg-black/60 rounded text-xs text-sv-text-muted">
+        <span class="hidden sm:inline">Quality</span>
+        <select data-video-player-target="quality"
+                data-action="change->video-player#changeQuality"
+                aria-label="Stream quality"
+                class="bg-transparent text-xs text-white focus:outline-none">
+          <option value="auto">Auto</option>
+          <option value="1080p">1080p</option>
+          <option value="720p">720p</option>
+          <option value="480p">480p</option>
+        </select>
+      </label>
+
       <%# Fullscreen %>
       <button data-action="click->video-player#toggleFullscreen" class="hover:text-indigo-400 transition-colors">
         <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>

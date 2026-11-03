@@ -93,6 +93,15 @@
               </svg>
               <span>Settings</span>
             <% end %>
+
+            <% if current_user.admin? %>
+              <%= link_to admin_settings_path, class: "sidebar-link" do %>
+                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 3l7 4v5c0 4.418-2.985 7.674-7 9-4.015-1.326-7-4.582-7-9V7l7-4z"/>
+                </svg>
+                <span>Team</span>
+              <% end %>
+            <% end %>
           </nav>
 
           <%# User info %>

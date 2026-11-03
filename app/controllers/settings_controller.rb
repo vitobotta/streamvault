@@ -10,10 +10,10 @@ class SettingsController < ApplicationController
   def update
     @user = current_user
 
-    # Preserve existing RD key if not provided
-    if params[:user][:realdebrid_api_key].blank?
-      params[:user].delete(:realdebrid_api_key)
-    end
+    # Blank key fields mean "keep the stored key"; there is no way to clear a
+    # key from this form.
+    params[:user].delete(:realdebrid_api_key) if params[:user][:realdebrid_api_key].blank?
+    params[:user].delete(:torbox_api_key) if params[:user][:torbox_api_key].blank?
 
     if params[:user][:password].present?
       update_with_password
@@ -38,32 +38,52 @@ class SettingsController < ApplicationController
   end
 
   def update_without_password
+    realdebrid_key = params.dig(:user, :realdebrid_api_key)
+    torbox_key = params.dig(:user, :torbox_api_key)
+
     if @user.update(settings_params)
-      if params[:user][:realdebrid_api_key].present?
-        rd = RealDebridService.new(@user.realdebrid_api_key)
-        result = rd.verify_key
-        if result.success?
-          redirect_to settings_path, notice: "Settings updated. RealDebrid connection verified."
-        else
-          redirect_to settings_path, alert: "Settings saved, but RealDebrid key could not be verified: #{result.error_message}"
-        end
+      failures = key_verification_failures(realdebrid_key, torbox_key)
+      if failures.any?
+        redirect_to settings_path, alert: "Settings saved, but #{failures.to_sentence} could not be verified."
       else
-        redirect_to settings_path, notice: "Settings updated."
+        redirect_to settings_path, notice: verification_notice(realdebrid_key, torbox_key)
       end
     else
       render :show, status: :unprocessable_entity
     end
   end
 
+  def key_verification_failures(realdebrid_key, torbox_key)
+    failures = []
+    if realdebrid_key.present?
+      result = RealDebridService.new(realdebrid_key).verify_key
+      failures << "the RealDebrid key (#{result.error_message})" if result.failure?
+    end
+    if torbox_key.present?
+      result = TorBoxService.new(torbox_key).verify_key
+      failures << "the TorBox key (#{result.error_message})" if result.failure?
+    end
+    failures
+  end
+
+  def verification_notice(realdebrid_key, torbox_key)
+    verified = []
+    verified << "RealDebrid" if realdebrid_key.present?
+    verified << "TorBox" if torbox_key.present?
+    return "Settings updated." if verified.empty?
+
+    "Settings updated. #{verified.to_sentence} connection verified."
+  end
+
   def settings_params_with_password
-    params.require(:user).permit(:realdebrid_api_key, :default_language, :password, :password_confirmation, :current_password,
+    params.require(:user).permit(:realdebrid_api_key, :torbox_api_key, :debrid_service, :default_language,
+      :password, :password_confirmation, :current_password,
       :child_account, :max_rating_age, :child_lock_password, :child_lock_password_confirmation, :child_lock_current_password,
       preferred_languages: [])
   end
 
-
   def settings_params
-    params.require(:user).permit(:realdebrid_api_key, :default_language,
+    params.require(:user).permit(:realdebrid_api_key, :torbox_api_key, :debrid_service, :default_language,
       :child_account, :max_rating_age, :child_lock_password, :child_lock_password_confirmation, :child_lock_current_password,
       preferred_languages: [])
   end

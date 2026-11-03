@@ -1,11 +1,17 @@
 # frozen_string_literal: true
 
+require "digest"
+
 class AvailableStreamsService
   CACHE_TTL = 60.seconds
 
   def initialize(user, providers: nil, cache: Rails.cache, logger: Rails.logger)
     @user = user
-    @providers = providers || StreamProvider.providers(rd_api_key: user&.realdebrid_api_key)
+    @providers = providers || StreamProvider.providers(
+      rd_api_key: user&.effective_realdebrid_api_key,
+      torbox_api_key: user&.effective_torbox_api_key,
+      debrid_service: user&.effective_debrid_service
+    )
     @cache = cache
     @logger = logger
   end
@@ -24,7 +30,13 @@ class AvailableStreamsService
 
   def cache_key_for(imdb_id, type, season, episode)
     language_key = Array(@user.stream_language_priority).join(",")
-    "streams/v2/#{@user.cache_key_with_version}/#{imdb_id}/#{type}/#{season}/#{episode}/#{language_key}"
+    # A team key can change without touching the user row, so include a
+    # fingerprint of every usable credential instead of relying on the cache
+    # version alone.
+    credential_key = Digest::SHA256.hexdigest(
+      [ @user.effective_debrid_service, @user.effective_realdebrid_api_key.to_s, @user.effective_torbox_api_key.to_s ].join(":")
+    )[0, 12]
+    "streams/v4/#{@user.cache_key_with_version}/#{credential_key}/#{imdb_id}/#{type}/#{season}/#{episode}/#{language_key}"
   end
 
   def fetch_streams(imdb_id, type, season, episode, title)
@@ -35,7 +47,29 @@ class AvailableStreamsService
     end.map(&:value)
 
     streams = results.filter_map { |result| result.data if result&.success? }.flatten(1)
+    streams = deduplicate(streams)
     streams.empty? ? ServiceResult.failure("No streams available") : ServiceResult.success(streams)
+  end
+
+  # Every debrid variant of an addon returns the same torrents, so keep the
+  # first copy: providers for the account's preferred service run first.
+  def deduplicate(streams)
+    seen = {}
+    streams.each_with_object([]) do |stream, unique|
+      key = torrent_key(stream)
+      next if key && seen[key]
+
+      seen[key] = true if key
+      unique << stream
+    end
+  end
+
+  def torrent_key(stream)
+    info_hash = stream.respond_to?(:info_hash) ? stream.info_hash : stream[:info_hash]
+    return if info_hash.blank?
+
+    file_idx = stream.respond_to?(:file_idx) ? stream.file_idx : stream[:file_idx]
+    [ info_hash, file_idx ].join(":")
   end
 
   def fetch_provider(provider, imdb_id, type, season, episode, title)

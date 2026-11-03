@@ -133,8 +133,8 @@
       <% else %>
         <div class="mt-8 p-4 bg-sv-surface rounded-lg border border-sv-border text-center">
           <p class="text-sv-text-muted">No streams available for this content.</p>
-          <% unless current_user.has_realdebrid_key? %>
-            <p class="text-sv-text-muted mt-1">Add your RealDebrid API key in <%= link_to "Settings", settings_path, class: "text-sv-accent" %> to enable streaming.</p>
+          <% unless debrid_access_configured? %>
+            <p class="text-sv-text-muted mt-1">Add a debrid API key in <%= link_to "Settings", settings_path, class: "text-sv-accent" %> to enable streaming, or ask an administrator for a team key.</p>
           <% end %>
         </div>
       <% end %>

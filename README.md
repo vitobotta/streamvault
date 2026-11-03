@@ -110,9 +110,11 @@ StreamVault relies on several external services. Here's what each one does and h
 
 | Service | Role | Required? | How to get access |
 |---------|------|-----------|-------------------|
-| **RealDebrid** | Resolves selected files and provides direct streaming links | **Yes** — streaming won't work without it | Sign up at [real-debrid.com](https://real-debrid.com), then get your API key at [real-debrid.com/apitoken](https://real-debrid.com/apitoken) |
+| **RealDebrid** | Resolves selected files and provides direct streaming links | One debrid service is required | Sign up at [real-debrid.com](https://real-debrid.com), then get your API key at [real-debrid.com/apitoken](https://real-debrid.com/apitoken) |
+| **TorBox** | Alternative debrid resolver (preliminary support) | One debrid service is required | Sign up at [torbox.app](https://torbox.app), then get your API key at [torbox.app/settings](https://torbox.app/settings) |
 | **Torrentio** | Finds available streams for a given title | Yes (default provider) | Works out of the box with the public instance. May need a proxy if your server IP is blocked (see below) |
 | **Comet** | Alternative stream provider — self-hosted, independent of Torrentio | Optional (recommended) | Self-host via Docker — see [proxy/comet](proxy/comet) |
+| **AIOStreams** | Aggregating stream provider — one addon over your sources and debrid services | Optional (preliminary support) | Run an instance or use one you trust, configure its sources/services, then set `AIOSTREAMS_URL` to its install link |
 | **Cinemeta** | Provides content metadata (titles, posters, plots, episodes) | Yes (built-in) | No setup needed — uses the public Stremio metadata service |
 | **OMDB** | Enriches content with IMDb, Rotten Tomatoes, and Metacritic ratings | Yes | Get a free API key at [omdbapi.com/apikey.aspx](https://www.omdbapi.com/apikey.aspx) |
 | **TMDB** | Powers the "Recommended for You" feature using your watch history | Optional | Create an account at [themoviedb.org](https://www.themoviedb.org), then get a Read Access Token at [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api) |
@@ -120,9 +122,9 @@ StreamVault relies on several external services. Here's what each one does and h
 
 ### How the services work together
 
-- **Torrentio and Comet** are both stream *providers*. They search torrent networks for available streams and return a list with quality, size, and language information. You can use either one or both — when both are configured (`STREAM_PROVIDER=auto`), StreamVault queries them in parallel and picks the best stream regardless of which provider found it. If one is down, the other fills in.
+- **Torrentio, Comet and AIOStreams** are stream *providers*. They search torrent networks for available streams and return a list with quality, size, and language information. When more than one is configured (`STREAM_PROVIDER=auto`), StreamVault queries them in parallel and picks the best stream regardless of which provider found it. If one is down, the other fills in.
 
-- **RealDebrid** is the *resolver*. Once you pick a stream, StreamVault sends its magnet link to RealDebrid, which retrieves or resolves the selected file and returns a direct HTTPS link. StreamVault does not add the source file to a persistent local media library, but its bytes pass through the server on demand and may be buffered temporarily during proxying or transcoding.
+- **RealDebrid and TorBox** are the *resolvers*. Once you pick a stream, StreamVault sends its magnet link or provider URL to the selected debrid service, which retrieves the file and returns a direct HTTPS link. StreamVault does not add the source file to a persistent local media library, but its bytes pass through the server on demand and may be buffered temporarily during proxying or transcoding. Each account can use its own key, an administrator can set a team key, and `REALDEBRID_API_KEY` / `TORBOX_API_KEY` provide an installation fallback.
 
 - **FFmpeg** is the *translator*. StreamVault bypasses it for sources the browser can play directly. Otherwise FFmpeg copies compatible video when safe, normalises audio to AAC with timestamp correction, or re-encodes incompatible/UHD video to browser-friendly 1080p H.264. It also produces HLS for iPhone playback and burns image-based subtitles that browsers cannot render.
 
@@ -151,7 +153,7 @@ The most demanding component is **FFmpeg transcoding**, which happens on-the-fly
 ### Prerequisites
 
 - A server or VPS with **Docker** and **Docker Compose** installed
-- A **RealDebrid subscription** (starts at ~€3/month)
+- A **RealDebrid or TorBox subscription** (RealDebrid starts at ~€3/month)
 - API keys for **OMDB** (free) and optionally **TMDB** (free) and **SubDL** (free)
 
 ### Quick start
@@ -196,9 +198,28 @@ Store the generated password in your password manager, then sign in and change i
 
 To enable self-registration, set `ENABLE_SIGNUPS=true` in `.env` and restart.
 
-### Configure your RealDebrid key
+### Configure debrid keys
 
-After logging in, go to **Settings** and enter your RealDebrid API key. The app verifies the key automatically and shows a confirmation. Your key is encrypted at rest using Active Record Encryption — it never appears in logs or is transmitted in plain text.
+After logging in, go to **Settings** and choose RealDebrid or TorBox, then enter that service's API key. The app verifies the key automatically and shows a confirmation. Keys are encrypted at rest using Active Record Encryption — they never appear in logs or are transmitted in plain text.
+
+Keys are resolved in this order:
+
+1. the account's own key in Settings;
+2. the team key an administrator sets under **Team settings**;
+3. `REALDEBRID_API_KEY` or `TORBOX_API_KEY` from the environment.
+
+Each account can therefore bring its own debrid subscription, while a team can share one key without putting it in every profile.
+
+### Create your first administrator
+
+Promote an existing account after the first sign-in:
+
+```bash
+docker compose exec web bin/rails c
+> User.first.update!(admin: true)
+```
+
+Administrators see a **Team** link in the sidebar where they can set team-wide RealDebrid and TorBox keys.
 
 ### Auto-start on boot
 
@@ -231,10 +252,16 @@ docker compose up -d --build
 | `POSTGRES_PASSWORD` | PostgreSQL database password (generate with `openssl rand -hex 16`) | Required |
 | `POSTGRES_DB` | PostgreSQL database name | `streamvault` |
 | `PORT` | Host port to expose the app on | `3000` |
-| `STREAM_PROVIDER` | Which stream provider to use: `torrentio`, `comet`, or `auto` (see below) | `torrentio` |
+| `STREAM_PROVIDER` | Which stream provider to use: `torrentio`, `comet`, `aiostreams`, or `auto` (see below) | `torrentio` |
 | `TORRENTIO_API_BASE_URL` | Torrentio API base URL | `https://torrentio.strem.fun` |
 | `COMET_URL` | URL of your self-hosted Comet instance | Optional |
+| `AIOSTREAMS_URL` | AIOStreams install/manifest URL (the `/manifest.json` suffix is optional) | Optional |
+| `AIOSTREAMS_PROXY` | Forward proxy URL for AIOStreams requests | Optional |
 | `REALDEBRID_API_BASE_URL` | RealDebrid API base URL | `https://api.real-debrid.com/rest/1.0` |
+| `REALDEBRID_API_KEY` | Installation-wide RealDebrid key for accounts without their own | Optional |
+| `TORBOX_API_BASE_URL` | TorBox API base URL | `https://api.torbox.app/v1/api` |
+| `TORBOX_API_KEY` | Installation-wide TorBox key for accounts without their own | Optional |
+| `STREAM_SOURCE_HOSTS` | Extra comma-separated hosts allowed to serve the final media file | Optional |
 | `OMDB_API_KEY` | OMDB API key for ratings metadata | Required |
 | `TMDB_READ_ACCESS_TOKEN` | TMDB v4 bearer token for recommendations | Optional |
 | `SUBDL_API_KEY` | SubDL API key for external subtitle fallback | Optional |
@@ -335,7 +362,24 @@ If you run StreamVault on your home computer (which has a residential IP that Re
 |-------|---------|----------|-------------|
 | `torrentio` | Torrentio | — | Default, simplest setup (no Comet needed) |
 | `comet` | Comet | Torrentio | Explicit Comet-first with Torrentio fallback |
-| `auto` | Comet (if `COMET_URL` set) | Torrentio | **Recommended** — best of both worlds |
+| `aiostreams` | AIOStreams | Torrentio | You already run AIOStreams and want it to aggregate your sources |
+| `auto` | AIOStreams (if set), then Comet (if set) | Torrentio | **Recommended** — best of both worlds |
+
+### AIOStreams notes
+
+AIOStreams is an addon aggregator. The install link you put in `AIOSTREAMS_URL`
+already carries the sources and debrid accounts configured on that instance, so
+a shared AIOStreams instance uses the keys configured there — not the
+per-account RealDebrid/TorBox keys stored in StreamVault. Those per-account
+keys are used by the Torrentio and Comet providers. When AIOStreams is selected
+(and configured), accounts without their own key can still stream through the
+instance. If every account should use its own debrid subscription, prefer
+`STREAM_PROVIDER=torrentio` or `comet`, or run an AIOStreams instance per
+account and point that account at its own link.
+
+AIOStreams can return either its own proxy URL or a direct debrid CDN link.
+StreamVault accepts both: direct RealDebrid and TorBox hosts are recognised, and
+the RealDebrid bearer token is only ever sent to RealDebrid hosts.
 
 ## Testing
 

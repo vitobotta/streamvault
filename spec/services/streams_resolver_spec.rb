@@ -7,20 +7,74 @@ RSpec.describe Streams::Resolver do
   subject(:resolver) { described_class.new(user, available_streams: available_streams) }
 
   around do |example|
-    previous = ENV["STREAM_PROVIDER"]
+    previous = { "STREAM_PROVIDER" => ENV["STREAM_PROVIDER"], "AIOSTREAMS_URL" => ENV["AIOSTREAMS_URL"] }
     ENV["STREAM_PROVIDER"] = "torrentio"
     example.run
   ensure
-    ENV["STREAM_PROVIDER"] = previous
+    previous.each { |key, value| value.nil? ? ENV.delete(key) : ENV[key] = value }
   end
 
-  it "fails before provider fan-out when the RealDebrid key is missing" do
+  it "fails before provider fan-out when the debrid key is missing" do
     user.update!(realdebrid_api_key: nil)
     expect(available_streams).not_to receive(:call)
 
     result = resolver.start(content_ref)
     expect(result).to be_failure
-    expect(result.error_message).to include("RealDebrid API key")
+    expect(result.error_message).to include("RealDebrid API key not configured")
+  end
+
+  it "works without an account key when a shared AIOStreams instance is configured" do
+    ENV["STREAM_PROVIDER"] = "aiostreams"
+    ENV["AIOSTREAMS_URL"] = "https://aiostreams.example.com/stremio/test-uuid"
+    user.update!(realdebrid_api_key: nil, debrid_service: "realdebrid")
+    candidate = StreamCandidate.new(
+      title: "AIOStreams proxy",
+      filename: "Inception.mkv",
+      resolve_url: "https://aiostreams.example.com/api/v1/proxy/abc",
+      provider: "Streams::AioStreamsProvider"
+    )
+    allow(available_streams).to receive(:call).and_return(ServiceResult.success([ candidate ]))
+    stub_request(:get, candidate.resolve_url)
+      .to_return(status: 302, headers: { "Location" => "https://download.real-debrid.com/d/file/Inception.mkv" })
+
+    result = resolver.start(content_ref)
+
+    expect(result).to be_success
+    expect(result.data[:source].url).to eq("https://download.real-debrid.com/d/file/Inception.mkv")
+  end
+
+  it "accepts a direct TorBox link returned by a provider without proxying it" do
+    user.update!(debrid_service: "torbox", torbox_api_key: "tb_key")
+    candidate = StreamCandidate.new(
+      title: "TorBox direct link",
+      filename: "Inception.mkv",
+      resolve_url: "https://store-1.torbox.app/file/Inception.mkv",
+      provider: "Streams::AioStreamsProvider"
+    )
+    allow(available_streams).to receive(:call).and_return(ServiceResult.success([ candidate ]))
+
+    result = resolver.start(content_ref)
+
+    expect(result).to be_success
+    expect(result.data[:source].service).to eq("torbox")
+    expect(WebMock).not_to have_requested(:get, candidate.resolve_url)
+  end
+
+  it "accepts a TorBox CDN destination" do
+    user.update!(debrid_service: "torbox", torbox_api_key: "tb_key")
+    candidate = StreamCandidate.new(
+      title: "TorBox stream",
+      filename: "Inception.mkv",
+      resolve_url: "https://torrentio.strem.fun/resolve/torbox/tb_key/abc/null/0/Inception.mkv"
+    )
+    allow(available_streams).to receive(:call).and_return(ServiceResult.success([ candidate ]))
+    stub_request(:get, candidate.resolve_url)
+      .to_return(status: 302, headers: { "Location" => "https://store-1.torbox.app/d/file/Inception.mkv" })
+
+    result = resolver.start(content_ref)
+
+    expect(result).to be_success
+    expect(result.data[:source].service).to eq("torbox")
   end
 
   it "returns a clear failure when no candidates are available" do
