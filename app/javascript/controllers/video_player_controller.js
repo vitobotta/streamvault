@@ -39,13 +39,28 @@ const REBUFFER_STALL_TIMEOUT_MS = 20000
 // a slow source; the stall watchdog handles a genuinely dead source.
 const REBUFFER_MAX_WAIT_MS = 12000
 const MSE_FORWARD_BUFFER_HIGH_SECONDS = 45
-const MSE_FORWARD_BUFFER_LOW_SECONDS = 30
+// The gap between the high and low water marks is how long the reader
+// stays parked, and parking is what starves the response. One second of
+// playback drains one second of cushion, so 45→42 caps a park at ~3s.
+// The old 45→30 band parked for ~15s, which is longer than the app
+// server is willing to wait for a writable socket (see
+// MSE_READ_LIVENESS_MS) and killed the response a few times per film.
+const MSE_FORWARD_BUFFER_LOW_SECONDS = 42
 const MSE_PENDING_BUFFER_HIGH_BYTES = 16 * 1024 * 1024
 const MSE_PENDING_BUFFER_LOW_BYTES = 8 * 1024 * 1024
 const MSE_CAPACITY_POLL_MS = 250
 // A capacity wait shorter than this is ordinary loop noise; anything
 // longer means the read loop was genuinely parked (client backpressure).
 const MSE_READ_PAUSE_RECORD_MS = 5
+// Puma aborts a live response whose socket stays unwritable for 10s
+// (Puma::Const::WRITE_TIMEOUT in Response#fast_write_str). A parked
+// reader fills the kernel and proxy buffers, so Puma's wait expires and
+// the body dies mid-film: the player then burns its cushion and rebuilds
+// the MSE session, which is the black frame followed by a still frame
+// before playback resumes. Never let the response go unread this long,
+// even when the element is paused or frozen and the cushion stops
+// draining, so the write always makes progress inside Puma's window.
+const MSE_READ_LIVENESS_MS = 4000
 const MSE_MIME_TYPE = 'video/mp4; codecs="avc1.640028,mp4a.40.2"'
 const REMUX_PRESENTATION_PROBE_SECONDS = 0.001
 const REMUX_PRESENTATION_PROBE_TIMEOUT_MS = 500
@@ -1067,6 +1082,9 @@ export default class extends Controller {
   }
 
   async waitForMseReadCapacity(signal) {
+    let parkedAhead = null
+    let drainedAt = Date.now()
+
     while (!signal.aborted) {
       const bufferedAhead = this.playbackStarted
         ? this.bufferedAheadOfCurrent()
@@ -1085,6 +1103,17 @@ export default class extends Controller {
         bufferedAhead <= MSE_FORWARD_BUFFER_LOW_SECONDS &&
         pendingBytes <= MSE_PENDING_BUFFER_LOW_BYTES
       if (belowLowWater) {
+        this.mseReadPaused = false
+        return true
+      }
+
+      // A paused or frozen element keeps the cushion fixed, so the water
+      // marks alone would park this loop forever. Let a chunk through once
+      // the cushion has stopped draining so the response keeps moving and
+      // Puma's write timeout cannot tear it down.
+      if (parkedAhead === null || bufferedAhead < parkedAhead - 0.05) drainedAt = Date.now()
+      parkedAhead = bufferedAhead
+      if (Date.now() - drainedAt >= MSE_READ_LIVENESS_MS) {
         this.mseReadPaused = false
         return true
       }
@@ -1157,6 +1186,12 @@ export default class extends Controller {
       }, 1500)
       return
     }
+
+    // Before the startup gate has opened there is nothing to rebuffer:
+    // the startup overlay already owns this wait and maybeStartPlayback
+    // decides when to begin. Entering the gate here paused every rebuilt
+    // session on a black frame and showed "Buffering…" over it.
+    if (!this.playbackStarted) return
 
     // MSE path: Chrome does NOT set paused=true when the MSE buffer runs
     // dry — the video stays "playing" but currentTime stops advancing.
@@ -1439,6 +1474,12 @@ export default class extends Controller {
     const nextSrc = url.pathname + url.search
     this.streamingUrlValue = nextSrc
     this.element.dataset.videoPlayerStreamingUrlValue = nextSrc
+
+    // A recovery is a restart, not a cold start: the source was healthy
+    // until the response died, so resume on the small cushion instead of
+    // waiting for the 30s startup target. That wait was the visible black
+    // frame after every teardown.
+    this.seekResumePending = true
 
     this.setupMseSource(nextSrc)
 

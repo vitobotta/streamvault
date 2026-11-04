@@ -512,3 +512,166 @@ test("a seek marks the next session for fast resume", () => {
 
   assert.equal(player.seekResumePending, true)
 })
+
+// ── Response liveness (Puma's 10 s socket write timeout) ──────────────
+//
+// Puma 8 gives a streaming response 10 s to make progress on the socket
+// (Puma::Const::WRITE_TIMEOUT in Response#fast_write_str). The reader
+// parks itself when the forward cushion is full, so a band wider than
+// that window tears the body down mid-film. These fixtures run the
+// controller on a fake clock so both the band and the liveness escape
+// are measured rather than slept through.
+
+function fakeClock() {
+  const { context, VideoPlayerController, timeRanges } = createVideoPlayerHarness()
+  const timers = new Map()
+  let now = 100_000
+  let timerId = 0
+  context.Date = class extends Date { static now() { return now } }
+  context.setTimeout = (callback, delay) => {
+    const id = ++timerId
+    timers.set(id, { callback, due: now + delay })
+    return id
+  }
+  context.clearTimeout = (id) => timers.delete(id)
+  context.console = { warn() {}, info() {} }
+
+  return {
+    VideoPlayerController,
+    timeRanges,
+    now: () => now,
+    advance(ms) {
+      const end = now + ms
+      while (true) {
+        const next = [...timers].filter(([, timer]) => timer.due <= end)
+          .sort((a, b) => a[1].due - b[1].due || a[0] - b[0])[0]
+        if (!next) break
+        const [id, timer] = next
+        now = timer.due
+        timers.delete(id)
+        timer.callback()
+      }
+      now = end
+    }
+  }
+}
+
+// A gate that never releases must fail the test, not hang it: the fake
+// clock only runs timers that were scheduled, so an unbounded `await`
+// would wait forever.
+function settledValue(promise) {
+  const state = { done: false, value: undefined }
+  promise.then((value) => { state.done = true; state.value = value })
+  return state
+}
+
+function flushMicrotasks() {
+  return new Promise((resolve) => setImmediate(resolve))
+}
+
+function capacityPlayer(VideoPlayerController, ahead) {
+  const player = new VideoPlayerController()
+  player.playbackStarted = true
+  player.bufferedAheadOfCurrent = () => ahead()
+  player.fmp4BufferSize = 0
+  player.pendingAppendBuffer = null
+  player.mseReadPaused = false
+  return player
+}
+
+test("a full forward cushion parks the reader for seconds, not the old 15 s band", async () => {
+  const { VideoPlayerController, advance } = fakeClock()
+  let ahead = 45.2
+  const player = capacityPlayer(VideoPlayerController, () => ahead)
+
+  const settled = settledValue(player.waitForMseReadCapacity(new AbortController().signal))
+  advance(1000)
+  assert.equal(player.mseReadPaused, true)
+  assert.equal(settled.done, false)
+
+  // Playback drains one second of cushion per second, so the 45→42 band
+  // is reached in about three seconds; the old 45→30 band parked ~15 s,
+  // which is longer than the app server waits for a writable socket.
+  ahead = 41.9
+  advance(300)
+  await flushMicrotasks()
+
+  assert.equal(settled.done, true)
+  assert.equal(settled.value, true)
+  assert.equal(player.mseReadPaused, false)
+})
+
+test("a cushion that stops draining cannot park the reader into the write timeout", async () => {
+  const { VideoPlayerController, advance } = fakeClock()
+  const player = capacityPlayer(VideoPlayerController, () => 45.2)
+
+  // A paused or frozen element never drains the cushion, so the water
+  // marks alone would hold the response unread until Puma gives up.
+  const settled = settledValue(player.waitForMseReadCapacity(new AbortController().signal))
+  advance(3000)
+  assert.equal(player.mseReadPaused, true)
+  assert.equal(settled.done, false)
+
+  advance(1100)
+  await flushMicrotasks()
+
+  assert.equal(settled.done, true)
+  assert.equal(settled.value, true)
+})
+
+test("a waiting event before playback starts does not pause the element", async () => {
+  const { VideoPlayerController, advance, timeRanges } = fakeClock()
+  const player = new VideoPlayerController()
+  let pauseCount = 0
+  let rebufferCount = 0
+  player.videoTarget = {
+    src: "/transcode?source=x",
+    currentTime: 0,
+    paused: false,
+    ended: false,
+    seeking: false,
+    buffered: timeRanges([]),
+    pause: () => { pauseCount += 1 }
+  }
+  player.playbackStarted = false
+  player.userPaused = false
+  player.navigatingAway = false
+  player.subtitlePlaybackHoldToken = null
+  player.bufferingOverlayTimer = null
+  player.isHls = () => false
+  player.isDirectPlay = () => false
+  player.beginSystemRebuffer = () => { rebufferCount += 1 }
+
+  player.onVideoWaiting()
+  advance(500)
+
+  assert.equal(pauseCount, 0)
+  assert.equal(rebufferCount, 0)
+  assert.ok(!player.systemRebufferPaused)
+})
+
+test("a recovery restarts the session on the small resume cushion", async () => {
+  const { VideoPlayerController } = fakeClock()
+  const player = new VideoPlayerController()
+  player.videoTarget = { currentTime: 500.4, paused: false }
+  player.streamingUrlValue = "/transcode?source=abc"
+  player.element = { dataset: {} }
+  player.startSecondsValue = 0
+  player.selectedAudioStream = null
+  player.selectedSubtitleStream = null
+  player.streamRecoveryAttempts = 1
+  player.streamRecoveryActive = true
+  player.burnedSubtitleSelected = () => false
+  player.currentPlaybackPosition = () => 500.4
+  player.bufferedAheadOfCurrent = () => 4
+  player.reportStall = () => {}
+  player.clearSubtitleCues = () => {}
+  player.reloadTextSubtitlesAt = () => {}
+  player.setupMseSource = (src) => { player.swappedSrc = src }
+
+  await player.reconnectFromCurrentPosition()
+
+  assert.equal(player.seekResumePending, true)
+  assert.equal(player.startSecondsValue, 500)
+  assert.match(player.swappedSrc, /start_seconds=500/)
+})
