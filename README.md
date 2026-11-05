@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://github.com/vitobotta/streamvault/actions/workflows/ci.yml"><img src="https://github.com/vitobotta/streamvault/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
   <a href="https://github.com/vitobotta/streamvault/releases/latest"><img src="https://img.shields.io/github/v/release/vitobotta/streamvault?color=4f63e6" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/ruby-4.0.5-CC342D?logo=ruby&amp;logoColor=white" alt="Ruby 4.0.5">
+  <img src="https://img.shields.io/badge/ruby-4.0.9-CC342D?logo=ruby&amp;logoColor=white" alt="Ruby 4.0.9">
   <img src="https://img.shields.io/badge/rails-8.1-CC0000?logo=rubyonrails&amp;logoColor=white" alt="Rails 8.1">
 </p>
 
@@ -368,7 +368,7 @@ If you run StreamVault on your home computer (which has a residential IP that Re
 
 ## Testing
 
-Local development uses Ruby 4.0.5. Development and test run on SQLite, so no database server is needed; FFmpeg must be installed to exercise transcoding. The JavaScript regression suite uses Node's built-in test runner and needs no npm install.
+Local development uses Ruby 4.0.9. Development and test run on SQLite, so no database server is needed; FFmpeg must be installed to exercise transcoding. The JavaScript regression suite uses Node's built-in test runner and needs no npm install.
 
 ```bash
 # Prepare Ruby dependencies and the test database
