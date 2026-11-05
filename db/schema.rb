@@ -10,12 +10,14 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_30_120100) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_05_090000) do
   create_table "app_settings", force: :cascade do |t|
     t.text "realdebrid_api_key"
     t.text "torbox_api_key"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.boolean "singleton", default: true, null: false
+    t.index ["singleton"], name: "index_app_settings_on_singleton", unique: true
   end
 
   create_table "collection_entries", force: :cascade do |t|

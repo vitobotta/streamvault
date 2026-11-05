@@ -188,7 +188,11 @@ module Streams
       return direct if direct
       return unless allowed_resolve_url?(resolve_url)
 
-      response = with_retries { connection_for(resolve_url).get(resolve_url) }
+      # Only the status and redirect target matter, and AIOStreams can proxy media
+      # through this URL, so ask for one byte instead of buffering a whole film.
+      response = with_retries do
+        connection_for(resolve_url).get(resolve_url) { |request| request.headers["Range"] = "bytes=0-1" }
+      end
       return unless response
 
       source_url = if [ 301, 302, 303, 307, 308 ].include?(response.status)
@@ -244,9 +248,12 @@ module Streams
       end.uniq { |uri| [ uri.scheme, uri.host, uri.port ] }
     end
 
+    # Provider base URLs embed their install path (AIOStreams: /stremio/<uuid>)
+    # while their proxy links live on other paths of the same host, so routing is
+    # decided by origin instead of by a full URL prefix.
     def connection_for(resolve_url)
-      return direct_connection if CometService.comet_url.present? && resolve_url.start_with?(CometService.comet_url)
-      if Streams::AioStreamsProvider.configured? && resolve_url.start_with?(Streams::AioStreamsProvider.base_url)
+      return direct_connection if CometService.comet_url.present? && same_origin?(resolve_url, CometService.comet_url)
+      if Streams::AioStreamsProvider.configured? && same_origin?(resolve_url, Streams::AioStreamsProvider.base_url)
         return aiostreams_connection
       end
 
@@ -256,6 +263,14 @@ module Streams
         faraday.options.open_timeout = 5
         faraday.proxy = ENV["TORRENTIO_PROXY"] if ENV["TORRENTIO_PROXY"].present?
       end
+    end
+
+    def same_origin?(value, base)
+      candidate = URI.parse(value.to_s)
+      origin = URI.parse(base.to_s)
+      candidate.scheme == origin.scheme && candidate.host == origin.host && candidate.port == origin.port
+    rescue URI::InvalidURIError
+      false
     end
 
     def direct_connection

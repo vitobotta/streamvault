@@ -57,6 +57,10 @@
         <p class="text-xs text-sv-text-muted mt-1">Get your API key from <a href="https://real-debrid.com/apitoken" target="_blank" class="text-sv-accent">real-debrid.com/apitoken</a></p>
         <% if @user.realdebrid_api_key.present? %>
           <p class="mt-2 text-xs text-sv-success">Your RealDebrid key is saved.</p>
+          <label class="mt-2 flex items-center gap-2 text-xs text-sv-text-muted">
+            <%= check_box_tag "user[clear_realdebrid_api_key]", "1", false, class: "rounded" %>
+            Remove my key and use the shared key instead
+          </label>
         <% elsif @user.effective_realdebrid_api_key.present? %>
           <p class="mt-2 text-xs text-sv-text-muted">Using the team RealDebrid key.</p>
         <% else %>
@@ -70,6 +74,10 @@
         <p class="text-xs text-sv-text-muted mt-1">Get your API key from <a href="https://torbox.app/settings" target="_blank" class="text-sv-accent">torbox.app/settings</a></p>
         <% if @user.torbox_api_key.present? %>
           <p class="mt-2 text-xs text-sv-success">Your TorBox key is saved.</p>
+          <label class="mt-2 flex items-center gap-2 text-xs text-sv-text-muted">
+            <%= check_box_tag "user[clear_torbox_api_key]", "1", false, class: "rounded" %>
+            Remove my key and use the shared key instead
+          </label>
         <% elsif @user.effective_torbox_api_key.present? %>
           <p class="mt-2 text-xs text-sv-text-muted">Using the team TorBox key.</p>
         <% else %>

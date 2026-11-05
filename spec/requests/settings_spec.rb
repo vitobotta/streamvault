@@ -44,6 +44,15 @@ RSpec.describe "Settings", type: :request do
       expect(user.reload.realdebrid_api_key).to eq("existing_key")
     end
 
+    it "removes the saved key when the remove checkbox is submitted" do
+      user.update!(realdebrid_api_key: "expired_key")
+
+      patch settings_path, params: { user: { realdebrid_api_key: "", clear_realdebrid_api_key: "1" } }
+
+      expect(response).to redirect_to(settings_path)
+      expect(user.reload.realdebrid_api_key).to be_nil
+    end
+
     it "updates preferred languages" do
       patch settings_path, params: { user: { preferred_languages: [ "ENG", "FRENCH" ] } }
       expect(response).to redirect_to(settings_path)

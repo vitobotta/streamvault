@@ -542,6 +542,33 @@ RSpec.describe Media::Transcoder do
       expect(argument_pairs(command)).not_to include([ "-c:v", "copy" ])
     end
 
+    it "scales bitmap subtitles to a scaled base before overlaying them" do
+      allow(described_class).to receive(:scale2ref_available?).and_return(true)
+      video_output = {
+        "streams" => [ { "codec_name" => "h264", "width" => 1920, "height" => 1080, "pix_fmt" => "yuv420p" } ]
+      }.to_json
+      track_output = {
+        "streams" => [
+          { "index" => 4, "codec_type" => "subtitle", "codec_name" => "hdmv_pgs_subtitle", "tags" => { "language" => "fre" }, "disposition" => { "default" => 0 } }
+        ]
+      }.to_json
+      allow(described_class).to receive(:capture_command) do |cmd, **_kwargs|
+        cmd.include?("-select_streams") ? capture_result(video_output) : capture_result(track_output)
+      end
+
+      command = described_class.send(:build_ffmpeg_command,
+        "https://example.test/video-pgs-subtitles.mkv",
+        headers: {},
+        start_seconds: 0,
+        subtitle_stream: "4",
+        quality: "480p"
+      )
+
+      graph = argument_pairs(command).to_h["-filter_complex"]
+      expect(graph).to include("[0:s:0][vbase]scale2ref[sub][vbase2];[vbase2][sub]overlay")
+      expect(graph).to include("min(853,iw)")
+    end
+
     it "re-encodes instead of copying when a quality rung is requested" do
       video_output = {
         "streams" => [ { "codec_name" => "h264", "width" => 1920, "height" => 1080, "pix_fmt" => "yuv420p" } ]
@@ -733,6 +760,16 @@ RSpec.describe Media::Transcoder do
       command = command_for(
         "codec_name" => "hevc", "width" => 3840, "height" => 2160,
         "pix_fmt" => "yuv420p10le", "color_transfer" => "smpte2084", "color_primaries" => "bt2020"
+      )
+
+      expect(video_filter(command)).not_to include("zscale")
+    end
+
+    it "leaves SDR BT.2020 sources untouched" do
+      allow(described_class).to receive(:tonemap_available?).and_return(true)
+      command = command_for(
+        "codec_name" => "h264", "width" => 1920, "height" => 1080,
+        "pix_fmt" => "yuv420p", "color_transfer" => "bt709", "color_primaries" => "bt2020"
       )
 
       expect(video_filter(command)).not_to include("zscale")

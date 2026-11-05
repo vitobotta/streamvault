@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 class SettingsController < ApplicationController
+  DEBRID_KEY_COLUMNS = %w[realdebrid_api_key torbox_api_key].freeze
+
   before_action :authenticate_user!
 
   def show
@@ -10,10 +12,7 @@ class SettingsController < ApplicationController
   def update
     @user = current_user
 
-    # Blank key fields mean "keep the stored key"; there is no way to clear a
-    # key from this form.
-    params[:user].delete(:realdebrid_api_key) if params[:user][:realdebrid_api_key].blank?
-    params[:user].delete(:torbox_api_key) if params[:user][:torbox_api_key].blank?
+    apply_key_removals
 
     if params[:user][:password].present?
       update_with_password
@@ -23,6 +22,21 @@ class SettingsController < ApplicationController
   end
 
   private
+
+  # Blank key fields mean "keep the stored key"; the remove checkbox is the only
+  # way to clear one, so an expired key stops overriding the team key.
+  def apply_key_removals
+    submitted = params[:user]
+    return unless submitted
+
+    DEBRID_KEY_COLUMNS.each do |column|
+      if submitted["clear_#{column}"].to_s == "1"
+        submitted[column] = nil
+      elsif submitted[column].blank?
+        submitted.delete(column)
+      end
+    end
+  end
 
   def update_with_password
     if @user.update_with_password(settings_params_with_password)

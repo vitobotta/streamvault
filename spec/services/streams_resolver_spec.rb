@@ -43,6 +43,14 @@ RSpec.describe Streams::Resolver do
     expect(result.data[:source].url).to eq("https://download.real-debrid.com/d/file/Inception.mkv")
   end
 
+  it "routes AIOStreams proxy links on any path through the AIOStreams connection" do
+    ENV["STREAM_PROVIDER"] = "aiostreams"
+    ENV["AIOSTREAMS_URL"] = "https://aiostreams.example.com/stremio/test-uuid"
+
+    expect(resolver.send(:connection_for, "https://aiostreams.example.com/api/v1/proxy/abc"))
+      .to be(resolver.send(:aiostreams_connection))
+  end
+
   it "accepts a direct TorBox link returned by a provider without proxying it" do
     user.update!(debrid_service: "torbox", torbox_api_key: "tb_key")
     candidate = StreamCandidate.new(

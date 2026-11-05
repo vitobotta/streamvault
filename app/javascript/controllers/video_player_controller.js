@@ -1219,7 +1219,9 @@ export default class extends Controller {
   }
 
   handleStreamStall(eventType = "stall") {
-    this.maybeDowngradeAutoQuality()
+    // The monitor ignores stalls that arrive while a recovery is already
+    // running, so those must not count toward the auto-quality ladder either.
+    if (!this.streamRecoveryActive) this.maybeDowngradeAutoQuality()
     return this.recoveryMonitor().handleStreamStall(eventType)
   }
 

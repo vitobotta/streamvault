@@ -1004,11 +1004,12 @@ class Media::Transcoder
   end
   private_class_method :video_filter
 
+  # Only the transfer function marks a source as HDR: SDR content also ships in
+  # the BT.2020 container, and tone mapping it would crush its brightness.
   def self.hdr_video?(stream)
     return false unless stream.is_a?(Hash)
 
-    HDR_TRANSFER_FUNCTIONS.include?(stream[:color_transfer].to_s.downcase) ||
-      stream[:color_primaries].to_s.downcase == "bt2020"
+    HDR_TRANSFER_FUNCTIONS.include?(stream[:color_transfer].to_s.downcase)
   end
   public_class_method :hdr_video?
 
@@ -1021,6 +1022,15 @@ class Media::Transcoder
     filters = result.status&.success? ? result.stdout : ""
     @tonemap_available = filters.include?("zscale") && filters.include?(" tonemap ")
   end
+
+  def self.scale2ref_available?
+    return @scale2ref_available if defined?(@scale2ref_available)
+
+    result = capture_command([ FFMPEG_PATH, "-hide_banner", "-filters" ], timeout_seconds: 10)
+    filters = result.status&.success? ? result.stdout : ""
+    @scale2ref_available = filters.include?("scale2ref")
+  end
+  private_class_method :scale2ref_available?
 
   def self.videotoolbox_available?
     return @videotoolbox_available if defined?(@videotoolbox_available)
@@ -1067,9 +1077,15 @@ class Media::Transcoder
   private_class_method :selected_burn_subtitle_track
 
   # Tone mapping and scaling happen before the overlay so subtitle colours are
-  # not pushed through the HDR transfer function.
+  # not pushed through the HDR transfer function.  Bitmap subtitles (PGS/VobSub)
+  # keep their own canvas and overlay does not rescale its input, so a scaled
+  # base would crop them; scale2ref sizes the subtitle to the base first.
   def self.subtitle_burn_filter(subtitle_position, video_stream: nil, quality: nil)
-    "[0:v:0]#{video_filter(video_stream, quality)}[vbase];[vbase][0:s:#{subtitle_position}]overlay,format=yuv420p[v]"
+    base = "[0:v:0]#{video_filter(video_stream, quality)}[vbase]"
+    subtitle = "[0:s:#{subtitle_position}]"
+    return "#{base};#{subtitle}[vbase]scale2ref[sub][vbase2];[vbase2][sub]overlay,format=yuv420p[v]" if scale2ref_available?
+
+    "#{base};[vbase]#{subtitle}overlay,format=yuv420p[v]"
   end
   private_class_method :subtitle_burn_filter
 

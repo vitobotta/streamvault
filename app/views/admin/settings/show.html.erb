@@ -26,6 +26,10 @@
       <%= f.password_field :realdebrid_api_key, class: "input-field", value: "", placeholder: "Enter the team RealDebrid API key" %>
       <% if @settings.realdebrid_api_key.present? %>
         <p class="mt-2 text-xs text-sv-success">A team RealDebrid key is set. Leave the field blank to keep it.</p>
+        <label class="mt-2 flex items-center gap-2 text-xs text-sv-text-muted">
+          <%= check_box_tag "app_setting[clear_realdebrid_api_key]", "1", false, class: "rounded" %>
+          Remove the team key and fall back to the environment
+        </label>
       <% else %>
         <p class="mt-2 text-xs text-sv-text-muted">No team RealDebrid key is set.</p>
       <% end %>
@@ -39,6 +43,10 @@
       <%= f.password_field :torbox_api_key, class: "input-field", value: "", placeholder: "Enter the team TorBox API key" %>
       <% if @settings.torbox_api_key.present? %>
         <p class="mt-2 text-xs text-sv-success">A team TorBox key is set. Leave the field blank to keep it.</p>
+        <label class="mt-2 flex items-center gap-2 text-xs text-sv-text-muted">
+          <%= check_box_tag "app_setting[clear_torbox_api_key]", "1", false, class: "rounded" %>
+          Remove the team key and fall back to the environment
+        </label>
       <% else %>
         <p class="mt-2 text-xs text-sv-text-muted">No team TorBox key is set.</p>
       <% end %>
