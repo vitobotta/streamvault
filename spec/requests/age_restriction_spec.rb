@@ -9,10 +9,18 @@ RSpec.describe "Age restrictions", type: :request do
   let(:user) { create(:user, realdebrid_api_key: "test_key") }
   let(:restricted_user) { create(:user, :age_restricted, realdebrid_api_key: "test_key") }
 
+  # RatingResolver skips OMDB entirely unless a key is configured, so without
+  # this every title resolves to UNKNOWN_AGE and the whole catalogue is hidden -
+  # masking what these specs are actually testing.
   around do |ex|
+    previous = { "STREAM_PROVIDER" => ENV["STREAM_PROVIDER"], "OMDB_API_KEY" => ENV["OMDB_API_KEY"] }
     ENV["STREAM_PROVIDER"] = "torrentio"
-    ex.run
-    ENV.delete("STREAM_PROVIDER")
+    ENV["OMDB_API_KEY"] = "test_key"
+    begin
+      ex.run
+    ensure
+      previous.each { |key, value| value.nil? ? ENV.delete(key) : ENV[key] = value }
+    end
   end
 
   before do
@@ -57,6 +65,22 @@ RSpec.describe "Age restrictions", type: :request do
       expect(response).to have_http_status(:ok)
       expect(response.body).to include("Family Adventure")
       expect(response.body).not_to include("Late Night Thriller")
+    end
+
+    it "explains the empty catalogue when no rating source is configured" do
+      sign_in restricted_user
+      stub_search(search_metas)
+      stub_ratings({})
+      original = ENV["OMDB_API_KEY"]
+      ENV.delete("OMDB_API_KEY")
+
+      get search_index_path(q: "test")
+
+      expect(response).to have_http_status(:ok)
+      expect(response.body).to include("no film rating source is")
+      expect(response.body).to include("OMDB_API_KEY")
+    ensure
+      ENV["OMDB_API_KEY"] = original
     end
 
     it "hides titles whose rating cannot be verified" do
