@@ -157,7 +157,7 @@ module Streams
     end
 
     def resolve_candidate(candidate)
-      source = resolve_url(candidate.resolve_url)
+      source = resolve_url(candidate.resolve_url, provider: candidate.provider)
       source && { source: source, stream: candidate }
     end
 
@@ -183,7 +183,7 @@ module Streams
       nil
     end
 
-    def resolve_url(resolve_url)
+    def resolve_url(resolve_url, provider: nil)
       direct = direct_debrid_source(resolve_url)
       return direct if direct
       return unless allowed_resolve_url?(resolve_url)
@@ -191,7 +191,7 @@ module Streams
       # Only the status and redirect target matter, and AIOStreams can proxy media
       # through this URL, so ask for one byte instead of buffering a whole film.
       response = with_retries do
-        connection_for(resolve_url).get(resolve_url) { |request| request.headers["Range"] = "bytes=0-1" }
+        connection_for(resolve_url, provider: provider).get(resolve_url) { |request| request.headers["Range"] = "bytes=0-1" }
       end
       return unless response
 
@@ -248,21 +248,45 @@ module Streams
       end.uniq { |uri| [ uri.scheme, uri.host, uri.port ] }
     end
 
+    # Which configured provider answers a URL.  The candidate's own provider decides
+    # when both are configured, then the install-path prefix, then the origin: a
+    # shared origin with no hint would be a guess, so the default proxy is kept.
     # Provider base URLs embed their install path (AIOStreams: /stremio/<uuid>)
-    # while their proxy links live on other paths of the same host, so routing is
-    # decided by origin instead of by a full URL prefix.
-    def connection_for(resolve_url)
-      return direct_connection if CometService.comet_url.present? && same_origin?(resolve_url, CometService.comet_url)
-      if Streams::AioStreamsProvider.configured? && same_origin?(resolve_url, Streams::AioStreamsProvider.base_url)
-        return aiostreams_connection
-      end
+    # while their proxy links live on other paths of the same host.
+    def serving_provider(resolve_url, provider)
+      hint = provider.to_s
+      return :aiostreams if hint.include?("AioStreams") && aiostreams_configured?
+      return :comet if hint.include?("Comet") && comet_configured?
 
-      @proxy_connection ||= Faraday.new do |faraday|
-        faraday.adapter Faraday.default_adapter
-        faraday.options.timeout = 15
-        faraday.options.open_timeout = 5
-        faraday.proxy = ENV["TORRENTIO_PROXY"] if ENV["TORRENTIO_PROXY"].present?
+      return :comet if comet_configured? && resolve_url.start_with?(CometService.comet_url)
+      return :aiostreams if aiostreams_configured? && resolve_url.start_with?(Streams::AioStreamsProvider.base_url)
+
+      origins = []
+      origins << :comet if comet_configured? && same_origin?(resolve_url, CometService.comet_url)
+      origins << :aiostreams if aiostreams_configured? && same_origin?(resolve_url, Streams::AioStreamsProvider.base_url)
+      origins.one? ? origins.first : nil
+    end
+
+    def connection_for(resolve_url, provider: nil)
+      case serving_provider(resolve_url, provider)
+      when :aiostreams then aiostreams_connection
+      when :comet then direct_connection
+      else
+        @proxy_connection ||= Faraday.new do |faraday|
+          faraday.adapter Faraday.default_adapter
+          faraday.options.timeout = 15
+          faraday.options.open_timeout = 5
+          faraday.proxy = ENV["TORRENTIO_PROXY"] if ENV["TORRENTIO_PROXY"].present?
+        end
       end
+    end
+
+    def aiostreams_configured?
+      Streams::AioStreamsProvider.configured?
+    end
+
+    def comet_configured?
+      CometService.comet_url.present?
     end
 
     def same_origin?(value, base)

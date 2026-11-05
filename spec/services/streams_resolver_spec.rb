@@ -51,6 +51,20 @@ RSpec.describe Streams::Resolver do
       .to be(resolver.send(:aiostreams_connection))
   end
 
+  it "routes by provider when Comet and AIOStreams share an origin" do
+    allow(CometService).to receive(:comet_url).and_return("https://shared.example.com/comet")
+    ENV["STREAM_PROVIDER"] = "auto"
+    ENV["AIOSTREAMS_URL"] = "https://shared.example.com/aio"
+
+    aio_connection = resolver.send(:connection_for, "https://shared.example.com/api/v1/proxy/abc",
+      provider: "Streams::AioStreamsProvider")
+    comet_connection = resolver.send(:connection_for, "https://shared.example.com/playback/abc",
+      provider: "Streams::CometProvider")
+
+    expect(aio_connection).to be(resolver.send(:aiostreams_connection))
+    expect(comet_connection).to be(resolver.send(:direct_connection))
+  end
+
   it "accepts a direct TorBox link returned by a provider without proxying it" do
     user.update!(debrid_service: "torbox", torbox_api_key: "tb_key")
     candidate = StreamCandidate.new(

@@ -1292,6 +1292,12 @@ export default class extends Controller {
 
     this.quality = next
     this.syncQualitySelect()
+    // Direct play ignores the rung, so the next reconnect has to move onto the
+    // transcode path for the downgrade to actually cap the stream.
+    if (this.isDirectPlay()) {
+      this.directPlayActive = false
+      this.remuxDirectPlay = false
+    }
     console.info(`[Player] Auto quality stepped down to ${next} after repeated stalls`)
     this.reportStall("quality_downgrade", { quality: next })
   }
