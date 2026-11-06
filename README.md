@@ -4,7 +4,6 @@
 
 <h1 align="center">StreamVault</h1>
 
-<p align="center"><em>Your personal cinema: search, stream, and manage movies and TV shows, all in one place.</em></p>
 
 <p align="center">
   <a href="https://github.com/vitobotta/streamvault/actions/workflows/ci.yml"><img src="https://github.com/vitobotta/streamvault/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
