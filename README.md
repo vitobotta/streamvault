@@ -33,7 +33,7 @@
 > **StreamVault is built and maintained by one developer.**
 > No company, no venture money, no paid tier. If it has earned a place in your setup, sponsoring is the most direct way to fund the next release.
 >
-> **[Become a sponsor](https://github.com/sponsors/vitobotta)** · from $5/month
+> **[Become a sponsor](https://github.com/sponsors/vitobotta)** · from $1/month
 
 ---
 
@@ -241,7 +241,7 @@ StreamVault is one person's work, built in the evenings and at weekends. Sponsor
 
 <a href="https://github.com/sponsors/vitobotta"><img src="https://img.shields.io/badge/Become%20a%20sponsor-%E2%9D%A4-ea4aaa?style=for-the-badge&amp;logo=github" alt="Sponsor on GitHub"></a>
 
-From $5/month. Sponsoring funds maintenance and development, not content.
+From $1/month. Sponsoring funds maintenance and development, not content.
 
 **Other ways to help, all free:** star the repo so other self-hosters find it, report bugs with logs and your setup, answer a question in [Discussions](https://github.com/vitobotta/streamvault/discussions), or send a pull request.
 
