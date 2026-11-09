@@ -13,9 +13,10 @@
 
     <%= yield :head %>
 
-    <link rel="icon" href="/icon.png" type="image/png">
-    <link rel="icon" href="/icon.svg" type="image/svg+xml">
-    <link rel="apple-touch-icon" href="/icon.png">
+    <link rel="icon" href="<%= versioned_icon_path("/icon.png") %>" type="image/png">
+    <link rel="icon" href="<%= versioned_icon_path("/icon.svg") %>" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="<%= versioned_icon_path("/icon.png") %>">
+    <link rel="preload" href="/fonts/instrument-sans.woff2" as="font" type="font/woff2" crossorigin>
 
     <%= stylesheet_link_tag "tailwind" %>
     <%= stylesheet_link_tag "application" %>

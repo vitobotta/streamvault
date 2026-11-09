@@ -47,6 +47,10 @@ export class PlaybackEngine {
     player.fmp4Buffer = null
     player.fmp4BufferSize = 0
     player.pendingAppendBuffer = null
+    // Per-session stall counters travel with every telemetry event.
+    player.evictionCount = 0
+    player.evictedSecondsTotal = 0
+    player.lastEvictionAt = null
     player.mseFetchEnded = false
     player.quotaBlockedAtTime = null
     player.mseReadPaused = false

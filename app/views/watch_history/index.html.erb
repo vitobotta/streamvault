@@ -1,59 +1,87 @@
-<div class="px-6 py-8">
-  <div class="flex items-center justify-between mb-6">
-    <h1 class="text-3xl font-bold text-white">Watch History</h1>
-    <% if @entries.any? %>
-      <%= button_to "Clear History", clear_all_watch_history_index_path, method: :delete, class: "btn-secondary text-sm", data: { confirm: "Clear all watch history?" } %>
+<div class="mb-8 flex flex-col gap-5 md:mb-10 md:flex-row md:items-end md:justify-between">
+  <div>
+    <p class="kicker mb-2.5">Activity</p>
+    <h1 class="t-page">Watch history</h1>
+    <p class="mt-2 text-sm text-ink-400">
+      <% if @entries.any? %>
+        <span class="t-num"><%= @pagination.total %></span> <%= @pagination.total == 1 ? "title" : "titles" %> watched recently
+      <% else %>
+        Every stream you start is listed here
+      <% end %>
+    </p>
+  </div>
+  <% if @entries.any? %>
+    <%= button_to "Clear history", clear_all_watch_history_index_path, method: :delete,
+                  class: "btn-danger",
+                  data: { confirm: "Clear all watch history?" } %>
+  <% end %>
+</div>
+
+<% if @entries.any? %>
+  <div class="flex flex-wrap items-center justify-between gap-3 border-t border-white/8 pt-4 mb-2">
+    <p class="text-xs text-ink-400 t-num">
+      Showing <%= @pagination.first_item_number %>&ndash;<%= @pagination.last_item_number %> of <%= @pagination.total %>
+    </p>
+    <div class="page-size">
+      <span class="kicker">Per page</span>
+      <% [25, 50, 100].each do |size| %>
+        <% if size == @pagination.per_page %>
+          <span class="current t-num"><%= size %></span>
+        <% else %>
+          <%= link_to size, watch_history_index_path(per_page: size, page: 1), class: "t-num" %>
+        <% end %>
+      <% end %>
+    </div>
+  </div>
+
+  <div class="row-list">
+    <% @entries.each do |entry| %>
+      <div class="row-item group">
+        <%= link_to content_path(type: entry.episode? ? "show" : "movie", imdb_id: entry.imdb_id, season: entry.season_number, episode: entry.episode_number),
+                    class: "absolute inset-0", data: { page_loader: "link" }, aria: { label: entry.title } do %>
+          <span class="sr-only">Open <%= entry.title %></span>
+        <% end %>
+        <% if entry.poster_url.present? %>
+          <img src="<%= poster_url_for(entry.poster_url) %>" alt="" loading="lazy" class="row-item__thumb pointer-events-none">
+        <% else %>
+          <div class="row-item__thumb bg-ink-850 grid place-items-center pointer-events-none">
+            <span class="text-ink-400"><%= icon :history, css: "w-4 h-4" %></span>
+          </div>
+        <% end %>
+
+        <div class="min-w-0 flex-1">
+          <h3 class="text-sm font-medium text-ink-100 truncate"><%= entry.title %></h3>
+          <p class="mt-0.5 text-xs text-ink-400 t-num">
+            <% if entry.episode? %>
+              S<%= format("%02d", entry.season_number.to_i) %>E<%= format("%02d", entry.episode_number.to_i) %>
+              <span class="mx-1.5 text-ink-700">/</span>
+            <% end %>
+            <%= entry.progress_percentage %>% watched
+          </p>
+          <div class="progress-track mt-2 max-w-[16rem]">
+            <div class="progress-fill" style="width: <%= entry.progress_percentage %>%"></div>
+          </div>
+        </div>
+
+        <div class="relative z-10 flex shrink-0 items-center gap-3">
+          <span class="hidden text-xs text-ink-400 sm:inline"><%= time_ago_in_words(entry.watched_at) %> ago</span>
+          <%= button_to watch_history_path(entry), method: :delete,
+                        class: "card-action card-action--danger",
+                        title: "Remove from history",
+                        aria: { label: "Remove #{entry.title} from history" } do %>
+            <%= icon :x %>
+          <% end %>
+        </div>
+      </div>
     <% end %>
   </div>
 
-  <% if @entries.any? %>
-    <%# Result count and page size %>
-    <div class="flex items-center justify-between mb-4">
-      <p class="text-sm text-sv-text-muted">
-        Showing <%= @pagination.first_item_number %>&ndash;<%= @pagination.last_item_number %> of <%= @pagination.total %>
-      </p>
-      <div class="flex items-center gap-1">
-        <% [25, 50, 100].each do |size| %>
-          <% if size == @pagination.per_page %>
-            <span class="px-2 py-1 rounded bg-sv-accent text-white text-xs font-medium"><%= size %></span>
-          <% else %>
-            <%= link_to size, watch_history_index_path(per_page: size, page: 1), class: "px-2 py-1 rounded bg-sv-surface text-sv-text-muted hover:text-white text-xs transition-colors" %>
-          <% end %>
-        <% end %>
-      </div>
-    </div>
-
-    <div class="space-y-2">
-      <% @entries.each do |entry| %>
-        <div class="relative flex items-center gap-4 p-3 bg-sv-surface rounded-lg hover:bg-sv-surface-hover transition-colors">
-          <%= link_to content_path(type: entry.episode? ? "show" : "movie", imdb_id: entry.imdb_id, season: entry.season_number, episode: entry.episode_number), class: "absolute inset-0 rounded-lg", data: { page_loader: "link" }, aria: { label: entry.title } %>
-          <% if entry.poster_url %>
-            <img src="<%= entry.poster_url %>" alt="<%= entry.title %>" class="w-12 h-18 object-cover rounded pointer-events-none">
-          <% end %>
-          <div class="flex-1 min-w-0">
-            <h3 class="text-sm font-medium text-white truncate"><%= entry.title %></h3>
-            <% if entry.episode? %>
-              <p class="text-xs text-sv-text-muted">S<%= entry.season_number.to_s.rjust(2, '0') %>E<%= entry.episode_number.to_s.rjust(2, '0') %></p>
-            <% end %>
-            <div class="mt-1 h-1 bg-sv-border rounded-full overflow-hidden">
-              <div class="h-full bg-sv-accent rounded-full" style="width: <%= entry.progress_percentage %>%"></div>
-            </div>
-          </div>
-          <div class="flex items-center gap-3 shrink-0 relative">
-            <span class="text-xs text-sv-text-muted"><%= time_ago_in_words(entry.watched_at) %> ago</span>
-            <%= button_to watch_history_path(entry), method: :delete, class: "w-6 h-6 bg-black/60 rounded-full flex items-center justify-center text-white hover:bg-red-600", title: "Remove from history" do %>
-              <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-            <% end %>
-          </div>
-        </div>
-      <% end %>
-    </div>
-
-    <%= render "shared/pagination", pagination: @pagination, label: "Watch history" %>
-  <% else %>
-    <div class="text-center py-16">
-      <svg class="w-16 h-16 text-sv-text-muted mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-      <p class="text-sv-text-muted">No watch history yet.</p>
-    </div>
-  <% end %>
-</div>
+  <%= render "shared/pagination", pagination: @pagination, label: "Watch history" %>
+<% else %>
+  <div class="empty">
+    <p class="kicker">No activity</p>
+    <p class="empty__title">Nothing watched yet.</p>
+    <p class="empty__text">Start any film or episode and it will appear here with your progress.</p>
+    <%= link_to "Find something to watch", search_index_path, class: "btn-primary mt-2" %>
+  </div>
+<% end %>

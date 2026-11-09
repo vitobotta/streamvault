@@ -31,11 +31,14 @@ class ContentController < ApplicationController
     @in_wishlist = @collection_entry&.wishlist? || false
 
     if @type == "show"
-      @episode_progress = current_user.playback_progresses.for_show(@imdb_id)
-        .index_by { |progress| [ progress.season_number, progress.episode_number ] }
+      progress_rows = current_user.playback_progresses.for_show(@imdb_id)
+      @episode_progress = progress_rows.index_by { |progress| [ progress.season_number, progress.episode_number ] }
       @selected_season = params[:season]&.to_i || 1
-      @progress = current_user.playback_progresses.for_show(@imdb_id)
-        .recently_watched.first&.progress_percentage
+      @progress = progress_rows.recently_watched.first&.progress_percentage
+      # One resolver decides what "continue" means (the in-progress episode,
+      # else the next one), so the hero button can never disagree with the
+      # player about which episode it starts.
+      @resume_target = resume_target if @episode_progress.present?
     else
       # Movie progress
       @progress = current_user.playback_progresses.movies_only
@@ -89,6 +92,14 @@ class ContentController < ApplicationController
   end
 
   private
+
+  # What the hero "Continue" button should start: the in-progress episode, or
+  # the next one when the last episode was finished. PlaybackResumeService owns
+  # that decision and already degrades to a failure rather than raising.
+  def resume_target
+    result = PlaybackResumeService.new(current_user).call(imdb_id: @imdb_id, type: "show")
+    result.success? ? result.data : nil
+  end
 
   # Child accounts may not access titles above their rating limit — never
   # return their metadata or streams, even via a direct item URL.

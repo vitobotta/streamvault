@@ -18,11 +18,13 @@ export default class extends Controller {
     const drawer = this.drawerTargets[index]
     const drawerContent = this.drawerContentTargets[index]
     const chevron = this.chevronTargets[index]
+    const setExpanded = (value) => button.setAttribute("aria-expanded", String(value))
 
     // If this episode is already open, close it
     if (this.openEpisode === index) {
       drawer.classList.add("hidden")
       chevron.style.transform = ""
+      setExpanded(false)
       this.openEpisode = null
       return
     }
@@ -31,13 +33,16 @@ export default class extends Controller {
     if (this.openEpisode !== null) {
       const prevDrawer = this.drawerTargets[this.openEpisode]
       const prevChevron = this.chevronTargets[this.openEpisode]
+      const prevTrigger = prevDrawer.parentElement?.querySelector("button")
       prevDrawer.classList.add("hidden")
       prevChevron.style.transform = ""
+      prevTrigger?.setAttribute("aria-expanded", "false")
     }
 
     // Open this episode
     drawer.classList.remove("hidden")
     chevron.style.transform = "rotate(180deg)"
+    setExpanded(true)
     this.openEpisode = index
 
     // Fetch streams
@@ -45,7 +50,7 @@ export default class extends Controller {
     // content#episode_streams ERB partial, which must use ERB
     // auto-escaping (<%= %>) for all stream metadata.  Never introduce
     // raw/html_safe on stream[:title]/[:name]/[:filename] in that
-    // partial — this innerHTML sink would turn it into an XSS vector.
+    // partial - this innerHTML sink would turn it into an XSS vector.
     drawerContent.innerHTML = `
       <div class="flex items-center gap-2 text-sv-text-muted text-sm">
         <div class="w-4 h-4 border-2 border-sv-accent border-t-transparent rounded-full animate-spin"></div>

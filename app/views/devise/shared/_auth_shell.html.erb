@@ -1,0 +1,44 @@
+<%
+  title = local_assigns.fetch(:title)
+  subtitle = local_assigns[:subtitle]
+%>
+<div class="auth-shell">
+  <aside class="auth-aside">
+    <div class="auth-aside__bg" style="background-image: url('https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=1600&q=80')"></div>
+    <span class="auth-aside__scrim" aria-hidden="true"></span>
+    <div class="auth-aside__content">
+      <span class="wordmark">
+        <%= render "shared/brand_mark", css: "wordmark__mark" %>
+        <span class="wordmark__text">StreamVault</span>
+      </span>
+
+      <div>
+        <p class="kicker mb-4 text-ink-300">Private cinema</p>
+        <p class="auth-aside__title">Your own cinema, always on.</p>
+        <p class="mt-5 max-w-sm text-sm leading-6 text-ink-300">
+          One library for everything you watch. Resume on any screen, keep the kids' profiles age-appropriate, and pick your languages once.
+        </p>
+      </div>
+
+      <p class="text-xs text-ink-300">Personal library &middot; Resume anywhere &middot; Age-aware profiles</p>
+    </div>
+  </aside>
+
+  <main class="auth-main">
+    <div class="auth-card">
+      <div class="mb-10 lg:hidden">
+        <%= link_to root_path, class: "wordmark" do %>
+          <%= render "shared/brand_mark", css: "wordmark__mark" %>
+          <span class="wordmark__text">StreamVault</span>
+        <% end %>
+      </div>
+
+      <h1 class="t-page mb-2"><%= title %></h1>
+      <% if subtitle.present? %>
+        <p class="mb-8 text-sm text-ink-400"><%= subtitle %></p>
+      <% end %>
+
+      <%= yield %>
+    </div>
+  </main>
+</div>

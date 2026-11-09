@@ -1261,7 +1261,10 @@ RSpec.describe Media::Transcoder do
     end
 
     it "returns cue output from a subtitle process that times out after writing cues" do
-      stub_const("Media::Transcoder::SUBTITLE_EXTRACTION_TIMEOUT_SECONDS", 0.5)
+      # The deadline has to outlast a child interpreter's startup on a loaded
+      # machine: at 0.5s the parent sometimes timed out before the cue reached
+      # the reader, so the "already written" half of this example was a race.
+      stub_const("Media::Transcoder::SUBTITLE_EXTRACTION_TIMEOUT_SECONDS", 2.0)
       command = [
         RbConfig.ruby,
         "-e",
@@ -1271,7 +1274,7 @@ RSpec.describe Media::Transcoder do
 
       result = described_class.send(:capture_subtitle_stdout_result, command)
 
-      expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).to be < 3
+      expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).to be < 5
       expect(result.vtt).to include("Hello")
     end
   end

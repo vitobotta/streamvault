@@ -12,7 +12,7 @@ export default class extends Controller {
   connect() {
     this.onStateChanged = (event) => this.render(event.detail.state === this.stateValue)
     this.onPageShow = (event) => { if (event.persisted) void this.refresh() }
-    this.container = this.element.closest(".flex.gap-3.mt-6")
+    this.container = this.element.closest("[data-collection-actions]") || this.element.closest(".flex.gap-3.mt-6")
     this.container?.addEventListener("collection-state:changed", this.onStateChanged)
     window.addEventListener("pageshow", this.onPageShow)
   }
@@ -84,14 +84,30 @@ export default class extends Controller {
     this.activeValue = active
     this.element.classList.toggle("text-sv-accent", active)
     this.element.classList.toggle("text-sv-text-muted", !active)
-    this.element.title = active ? `In your ${this.stateValue} — click to remove` : `Add to ${this.stateValue}`
+    this.element.classList.toggle("collection-btn--active", active)
+    this.element.setAttribute("aria-pressed", String(active))
+    this.element.title = active ? `In your ${this.stateValue} - click to remove` : `Add to ${this.stateValue}`
 
-    if (this.stateValue === "library") {
-      this.element.innerHTML = active
-        ? '<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>'
-        : '<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>'
+    // Labelled action buttons keep their text; only the glyph swaps.
+    const icon = this.element.querySelector("[data-toggle-icon]")
+    const label = this.element.querySelector("[data-toggle-label]")
+    if (label) {
+      label.textContent = active
+        ? (this.stateValue === "library" ? "In library" : "On wishlist")
+        : (this.stateValue === "library" ? "Library" : "Wishlist")
+    }
+
+    // Static glyph markup only, never user data - safe for innerHTML.
+    const markup = this.stateValue === "library"
+      ? (active
+        ? '<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"/></svg>'
+        : '<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>')
+      : '<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20s-7.5-4.6-7.5-9.6A4.4 4.4 0 0 1 12 7.4a4.4 4.4 0 0 1 7.5 3C19.5 15.4 12 20 12 20Z"/></svg>'
+
+    if (icon) {
+      icon.innerHTML = markup
     } else {
-      this.element.innerHTML = `<svg class="w-5 h-5" fill="${active ? "currentColor" : "none"}" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>`
+      this.element.innerHTML = markup
     }
   }
 }

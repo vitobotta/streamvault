@@ -1,38 +1,25 @@
-<div class="flex items-center justify-center px-4 min-h-screen">
-  <div class="w-full max-w-md">
-    <div class="flex items-center justify-center gap-2 mb-8">
-      <svg class="w-10 h-10 text-sv-accent" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M8 5v14l11-7z"/>
-      </svg>
-      <span class="text-2xl font-bold text-white tracking-tight">StreamVault</span>
-    </div>
+<%= render layout: "devise/shared/auth_shell", locals: { title: "Choose a new password", subtitle: "Pick something you have not used before." } do %>
+  <%= form_for(resource, as: resource_name, url: password_path(resource_name), html: { method: :put, class: "space-y-4" }) do |f| %>
+    <%= render "devise/shared/error_messages", resource: resource %>
+    <%= f.hidden_field :reset_password_token %>
 
-    <div class="bg-sv-surface/90 backdrop-blur-sm rounded-xl p-8 border border-sv-border">
-      <h2 class="text-2xl font-bold text-white mb-6 text-center">Change your password</h2>
-
-      <%= form_for(resource, as: resource_name, url: password_path(resource_name), html: { method: :put }) do |f| %>
-        <%= render "devise/shared/error_messages", resource: resource %>
-        <%= f.hidden_field :reset_password_token %>
-
-        <div class="mb-4">
-          <%= f.label :password, "New password", class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
-          <% if @minimum_password_length %>
-            <p class="text-xs text-sv-text-muted mb-1.5"><%= @minimum_password_length %> characters minimum</p>
-          <% end %>
-          <%= f.password_field :password, autofocus: true, autocomplete: "new-password", class: "input-field", placeholder: "••••••••" %>
-        </div>
-
-        <div class="mb-6">
-          <%= f.label :password_confirmation, "Confirm new password", class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
-          <%= f.password_field :password_confirmation, autocomplete: "new-password", class: "input-field", placeholder: "••••••••" %>
-        </div>
-
-        <%= f.submit "Change my password", class: "btn-primary w-full text-center cursor-pointer" %>
+    <div>
+      <%= f.label :password, "New password", class: "field-label" %>
+      <%= f.password_field :password, autofocus: true, autocomplete: "new-password", class: "input-field", placeholder: "Choose a new password" %>
+      <% if @minimum_password_length %>
+        <p class="field-hint"><%= @minimum_password_length %> characters minimum</p>
       <% end %>
     </div>
 
-    <div class="mt-4 text-center">
-      <%= render "devise/shared/links" %>
+    <div>
+      <%= f.label :password_confirmation, "Confirm new password", class: "field-label" %>
+      <%= f.password_field :password_confirmation, autocomplete: "new-password", class: "input-field", placeholder: "Repeat the new password" %>
     </div>
-  </div>
-</div>
+
+    <%= f.submit "Change my password", class: "btn-primary btn-lg w-full cursor-pointer mt-2" %>
+  <% end %>
+
+  <p class="mt-8 text-center text-sm text-ink-400">
+    <%= link_to "Back to sign in", new_session_path(resource_name), class: "text-iris-300 hover:text-iris-200" %>
+  </p>
+<% end %>

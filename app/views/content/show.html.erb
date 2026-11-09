@@ -1,198 +1,299 @@
-<%# Back link — link to a known internal route instead of the raw
-   Referer header, which is attacker-controlled and would otherwise
-   render an off-site (open-redirect / phishing) link. %>
-<% if request.referer&.include?("/search") %>
-  <div class="px-6 pt-4">
-    <%= link_to "← Back to search results", search_index_path, class: "text-sm text-sv-accent hover:underline" %>
-  </div>
-<% elsif request.referer&.include?("/library") %>
-  <div class="px-6 pt-4">
-    <%= link_to "← Back to library", library_index_path, class: "text-sm text-sv-accent hover:underline" %>
-  </div>
-<% elsif request.referer&.include?("/wishlist") %>
-  <div class="px-6 pt-4">
-    <%= link_to "← Back to wishlist", wishlist_index_path, class: "text-sm text-sv-accent hover:underline" %>
-  </div>
-<% elsif request.referer&.include?("/watch_history") %>
-  <div class="px-6 pt-4">
-    <%= link_to "← Back to history", watch_history_index_path, class: "text-sm text-sv-accent hover:underline" %>
-  </div>
-<% end %>
+<%
+  # Back link: build it from known internal routes rather than the raw Referer,
+  # which is attacker-controlled and would render an off-site link.
+  back_target =
+    if request.referer&.include?("/search")
+      [search_index_path, "Back to search"]
+    elsif request.referer&.include?("/library")
+      [library_index_path, "Back to library"]
+    elsif request.referer&.include?("/wishlist")
+      [wishlist_index_path, "Back to wishlist"]
+    elsif request.referer&.include?("/watch_history")
+      [watch_history_index_path, "Back to history"]
+    else
+      [root_path, "Back to home"]
+    end
 
-<div class="px-6 py-8">
-  <% if @metadata %>
-    <%# Hero section %>
-    <div class="flex flex-col md:flex-row gap-8">
-      <% if @metadata[:poster_url] %>
-        <div class="shrink-0">
-          <img src="<%= @metadata[:poster_url] %>" alt="<%= @metadata[:title] %>" class="w-48 rounded-lg shadow-lg">
-          <% if @progress && @progress > 0 %>
-            <div class="mt-2">
-              <div class="h-1 bg-sv-border rounded-full overflow-hidden">
-                <div class="h-full bg-sv-accent rounded-full" style="width: <%= @progress %>%"></div>
-              </div>
-              <p class="text-xs text-sv-text-muted mt-1"><%= @progress %>% watched</p>
-            </div>
-          <% end %>
-        </div>
+  collection_params = if @metadata
+    { collection_entry: { content_type: @type, imdb_id: @imdb_id, title: @metadata[:title], poster_url: @metadata[:poster_url], year: @metadata[:year]&.to_i } }.to_query
+  end
+
+  # Highest-confidence source: RealDebrid-cached first, then compatibility.
+  best_stream = @streams.present? ? @streams.max_by { |s| [s[:rd_plus] ? 1 : 0, s[:compatibility_score].to_i] } : nil
+%>
+
+<% if @metadata %>
+  <div class="-mx-5 -mt-6 md:-mx-8 md:-mt-8 xl:-mx-12 xl:-mt-10">
+    <section class="detail-hero" aria-labelledby="content-title">
+      <% if @metadata[:background_url].present? %>
+        <img class="detail-hero__bg" src="<%= poster_url_for(@metadata[:background_url]) %>" alt="" aria-hidden="true">
       <% end %>
-      <div>
-        <h1 class="text-3xl font-bold text-white"><%= @metadata[:title] %></h1>
-        <p class="text-sv-text-muted mt-1">
-          <%= @metadata[:year] %>
-          <% if @type != "show" && @metadata[:runtime] %> · <%= @metadata[:runtime] %><% end %>
-          <% if @metadata[:genre] %> · <%= @metadata[:genre] %><% end %>
-        </p>
-        <div class="flex items-center gap-3 mt-1 flex-wrap">
-          <% if @metadata[:rated] %>
-            <span class="px-2 py-0.5 border border-sv-text-muted rounded text-xs text-sv-text-muted font-medium"><%= @metadata[:rated] %></span>
-          <% end %>
-          <% if @metadata[:imdb_rating] %>
-            <span class="text-sv-warning text-sm font-medium">⭐ <%= @metadata[:imdb_rating] %>/10</span>
-          <% end %>
-          <% if @metadata[:rt_rating] %>
-            <span class="text-sm font-medium" style="color: #fa320a;">🍅 <%= @metadata[:rt_rating] %></span>
-          <% end %>
-          <% if @metadata[:metascore] %>
-            <span class="px-1.5 py-0.5 text-xs font-bold rounded" style="background: #00cf4a; color: #000;">Metascore <%= @metadata[:metascore] %></span>
-          <% end %>
-        </div>
-        <% if @metadata[:plot] %>
-          <p class="text-sv-text mt-4"><%= @metadata[:plot] %></p>
-        <% end %>
-        <% if @metadata[:actors] %>
-          <p class="text-sv-text-muted mt-2 text-sm"><span class="text-sv-text">Cast:</span> <%= @metadata[:actors] %></p>
-        <% end %>
+      <span class="detail-hero__scrim" aria-hidden="true"></span>
 
-        <% collection_params = { collection_entry: { content_type: @type, imdb_id: @imdb_id, title: @metadata[:title], poster_url: @metadata[:poster_url], year: @metadata[:year]&.to_i } }.to_query %>
-        <div class="flex gap-3 mt-6">
-          <button type="button"
-                  class="w-8 h-8 bg-sv-surface rounded-lg hover:bg-sv-surface-hover flex items-center justify-center transition-colors cursor-pointer <%= @in_library ? 'text-sv-accent' : 'text-sv-text-muted hover:text-sv-accent' %>"
-                  data-controller="toggle-button"
-                  data-action="click->toggle-button#toggle"
-                  data-toggle-button-state-value="library"
-                  data-toggle-button-url-value="<%= collection_path %>"
-                  data-toggle-button-active-value="<%= @in_library %>"
-                  data-toggle-button-status-url-value="<%= content_status_path(type: @type, imdb_id: @imdb_id) %>"
-                  data-toggle-button-params-value="<%= collection_params %>"
-                  title="<%= @in_library ? 'In your library — click to remove' : 'Add to library' %>">
-            <% if @in_library %>
-              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+      <div class="detail-hero__inner">
+        <div class="order-2 md:order-1">
+          <div class="detail-poster">
+            <% if @metadata[:poster_url].present? %>
+              <img src="<%= poster_url_for(@metadata[:poster_url]) %>" alt="<%= @metadata[:title] %> poster">
             <% else %>
-              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+              <div class="grid h-full place-items-center bg-ink-850">
+                <span class="poster-card__initial"><%= @metadata[:title].to_s[0].to_s.upcase %></span>
+              </div>
             <% end %>
-          </button>
-
-          <button type="button"
-                  class="w-8 h-8 bg-sv-surface rounded-lg hover:bg-sv-surface-hover flex items-center justify-center transition-colors cursor-pointer <%= @in_wishlist ? 'text-sv-accent' : 'text-sv-text-muted hover:text-sv-accent' %>"
-                  data-controller="toggle-button"
-                  data-action="click->toggle-button#toggle"
-                  data-toggle-button-state-value="wishlist"
-                  data-toggle-button-url-value="<%= collection_path %>"
-                  data-toggle-button-active-value="<%= @in_wishlist %>"
-                  data-toggle-button-status-url-value="<%= content_status_path(type: @type, imdb_id: @imdb_id) %>"
-                  data-toggle-button-params-value="<%= collection_params %>"
-                  title="<%= @in_wishlist ? 'In your wishlist — click to remove' : 'Add to wishlist' %>">
-            <svg class="w-5 h-5" fill="<%= @in_wishlist ? 'currentColor' : 'none' %>" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>
-          </button>
+          </div>
         </div>
-      </div>
-    </div>
 
-    <%# MOVIES: show streams directly %>
-    <% if @type != "show" %>
-      <% if @streams_error.present? %>
-        <div class="mt-8 p-4 bg-sv-surface rounded-lg border border-sv-border text-center">
-          <p class="text-sv-warning"><%= @streams_error %></p>
-          <p class="text-sv-text-muted mt-1 text-sm">If this persists, the stream provider may be blocking this server's IP. Consider setting <code>TORRENTIO_PROXY</code> or <code>TORRENTIO_API_BASE_URL</code> env vars.</p>
-        </div>
-      <% elsif @streams.present? %>
-        <h2 class="text-xl font-bold text-white mt-8 mb-4">Available Streams</h2>
-        <div class="space-y-2">
-          <% @streams.each do |stream| %>
-            <div class="flex items-center justify-between gap-3 p-3 bg-sv-surface rounded-lg">
-              <div class="min-w-0 flex-1 overflow-hidden">
-                <div class="flex items-center gap-1.5">
-                  <% if stream[:rd_plus] %><span class="badge badge-success shrink-0">RD+</span><% end %>
-                  <span class="text-sm text-white truncate"><%= stream[:title] || stream[:name] %></span>
-                </div>
-                <div class="flex items-center gap-1.5 mt-1">
-                  <span class="badge badge-accent"><%= stream[:quality] %></span>
-                  <% stream[:languages]&.each do |lang| %>
-                    <span class="px-1.5 py-0.5 rounded text-xs font-medium bg-sv-surface-hover text-sv-text-muted"><%= lang %></span>
-                  <% end %>
-                  <span class="text-xs text-sv-text-muted"><%= stream[:size] %></span>
-                </div>
-              </div>
-              <div class="flex items-center gap-3 shrink-0">
-                <%= button_to "Watch", streaming_index_path, params: { imdb_id: @imdb_id, type: @type, title: @metadata[:title], poster_url: @metadata[:poster_url], duration: @metadata[:runtime_seconds], resolve_url: stream[:resolve_url], filename: stream[:filename], raw_size: stream[:raw_size], video_codec: stream[:video_codec], compatibility_score: stream[:compatibility_score] }, class: "btn-primary text-sm", data: { page_loader: "stream", page_loader_message: "Finding a working stream..." } %>
-              </div>
+        <div class="order-1 min-w-0 md:order-2">
+          <% if back_target %>
+            <%= link_to back_target[0], class: "mb-6 inline-flex items-center gap-1.5 text-xs text-ink-300 transition-colors hover:text-ink-50", data: { page_loader: "link" } do %>
+              <%= icon :arrow_left, css: "w-3.5 h-3.5" %>
+              <%= back_target[1] %>
+            <% end %>
+          <% end %>
+
+          <p class="kicker mb-3"><%= @type == "show" ? "Series" : "Film" %><%= " · #{@metadata[:year]}" if @metadata[:year].present? %></p>
+          <h1 class="t-hero mb-4" id="content-title"><%= @metadata[:title] %></h1>
+
+          <div class="meta-row">
+            <% if @metadata[:year].present? %>
+              <span class="t-num"><%= @metadata[:year] %></span>
+            <% end %>
+            <% if @type != "show" && @metadata[:runtime].present? %>
+              <span class="meta-dot t-num"><%= @metadata[:runtime] %></span>
+            <% end %>
+            <% if @metadata[:genre].present? %>
+              <span class="meta-dot"><%= @metadata[:genre] %></span>
+            <% end %>
+            <% if @type == "show" && @metadata[:total_seasons].present? %>
+              <span class="meta-dot"><%= @metadata[:total_seasons] %> <%= @metadata[:total_seasons] == 1 ? "season" : "seasons" %></span>
+            <% end %>
+          </div>
+
+          <% if @metadata[:rated].present? || @metadata[:imdb_rating].present? || @metadata[:rt_rating].present? || @metadata[:metascore].present? %>
+            <div class="mt-4 flex flex-wrap items-center gap-1.5">
+              <% if @metadata[:rated].present? %>
+                <span class="chip"><%= @metadata[:rated] %></span>
+              <% end %>
+              <% if @metadata[:imdb_rating].present? %>
+                <span class="chip chip--gold"><%= icon :star, css: "w-3 h-3" %> IMDb <%= @metadata[:imdb_rating] %></span>
+              <% end %>
+              <% if @metadata[:rt_rating].present? %>
+                <span class="chip">Rotten Tomatoes <%= @metadata[:rt_rating] %></span>
+              <% end %>
+              <% if @metadata[:metascore].present? %>
+                <span class="chip chip--sage">Metascore <%= @metadata[:metascore] %></span>
+              <% end %>
             </div>
           <% end %>
-        </div>
-      <% else %>
-        <div class="mt-8 p-4 bg-sv-surface rounded-lg border border-sv-border text-center">
-          <p class="text-sv-text-muted">No streams available for this content.</p>
-          <% unless debrid_access_configured? %>
-            <p class="text-sv-text-muted mt-1">Add a debrid API key in <%= link_to "Settings", settings_path, class: "text-sv-accent" %> to enable streaming, or ask an administrator for a team key.</p>
-          <% end %>
-        </div>
-      <% end %>
-    <% end %>
 
-    <%# SHOWS: season tabs + episode list + streams drawer %>
-    <% if @type == "show" && @metadata[:episodes].present? %>
-      <% seasons = @metadata[:episodes].map { |e| e[:season] }.reject { |s| s == 0 }.uniq.sort %>
-      <div class="flex flex-wrap gap-2 mt-8 mb-4">
-        <% seasons.each do |s| %>
-          <%= link_to content_path(type: @type, imdb_id: @imdb_id, season: s), class: "px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap #{@selected_season == s ? 'bg-sv-accent text-white' : 'bg-sv-surface text-sv-text-muted hover:text-white'}", data: { page_loader: "link" } do %>
-            Season <%= s %>
+          <% if @metadata[:plot].present? %>
+            <p class="mt-5 max-w-2xl text-sm leading-6 text-ink-200"><%= @metadata[:plot] %></p>
           <% end %>
-        <% end %>
-      </div>
 
-      <div class="space-y-2" data-controller="episode-picker"
-           data-episode-picker-url-value="<%= episode_streams_path(type: @type, imdb_id: @imdb_id) %>">
-        <% @metadata[:episodes].select { |e| e[:season] == @selected_season && e[:season] != 0 }.each do |ep| %>
-          <% progress = @episode_progress&.dig([ep[:season], ep[:episode]]) %>
-          <div class="bg-sv-surface rounded-lg hover:bg-sv-surface-hover transition-colors"
-               data-episode-picker-target="episode">
-            <button class="flex items-center gap-4 p-3 w-full text-left"
-                    data-action="click->episode-picker#toggle"
-                    data-season="<%= ep[:season] %>"
-                    data-episode="<%= ep[:episode] %>"
-                    data-title="<%= ep[:title] %>">
-              <div class="w-8 text-center text-sv-text-muted text-sm font-medium shrink-0"><%= ep[:episode] %></div>
-              <div class="flex-1 min-w-0">
-                <h3 class="text-sm font-medium text-white truncate"><%= ep[:title] || "Episode #{ep[:episode]}" %></h3>
-                <p class="text-xs text-sv-text-muted">
-                  <%= ep[:released] %><% if ep[:runtime] %> · <%= ep[:runtime] %><% end %>
-                </p>
-                <% if ep[:overview].present? %>
-                  <p class="text-xs text-sv-text-muted mt-0.5 line-clamp-2"><%= ep[:overview] %></p>
+          <% if @metadata[:actors].present? %>
+            <p class="mt-3 max-w-2xl text-xs leading-5 text-ink-400">
+              <span class="text-ink-300">Cast</span> <%= @metadata[:actors] %>
+            </p>
+          <% end %>
+
+          <div class="mt-7 flex flex-wrap items-center gap-2.5">
+            <% if @type != "show" && best_stream.present? %>
+              <%= button_to streaming_index_path,
+                            params: { imdb_id: @imdb_id, type: @type, title: @metadata[:title], poster_url: @metadata[:poster_url], duration: @metadata[:runtime_seconds], resolve_url: best_stream[:resolve_url], filename: best_stream[:filename], raw_size: best_stream[:raw_size], video_codec: best_stream[:video_codec], compatibility_score: best_stream[:compatibility_score] },
+                            class: "btn-primary btn-lg",
+                            data: { page_loader: "stream" } do %>
+                <%= icon :play, css: "w-4 h-4" %>
+                Play
+              <% end %>
+              <% if @streams.size > 1 %>
+                <%= link_to "#sources", class: "btn-ghost btn-lg" do %>
+                  All sources
                 <% end %>
-                <% if progress %>
-                  <div class="mt-1 h-1 bg-sv-border rounded-full overflow-hidden">
-                    <div class="h-full bg-sv-accent rounded-full" style="width: <%= progress.progress_percentage %>%"></div>
-                  </div>
-                <% end %>
-              </div>
-              <svg class="w-4 h-4 text-sv-text-muted shrink-0 transition-transform" data-episode-picker-target="chevron" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+              <% end %>
+            <% elsif @type == "show" && @resume_target %>
+              <%= link_to resume_streaming_index_path(type: @type, imdb_id: @imdb_id),
+                          class: "btn-primary btn-lg",
+                          data: { page_loader: "link", page_loader_message: "Resuming..." } do %>
+                <%= icon :play, css: "w-4 h-4" %>
+                Continue S<%= format("%02d", @resume_target[:season].to_i) %>E<%= format("%02d", @resume_target[:episode].to_i) %>
+              <% end %>
+            <% end %>
+          </div>
+
+          <div class="collection-actions mt-3" data-collection-actions>
+            <button type="button"
+                    class="collection-btn <%= 'collection-btn--active' if @in_library %>"
+                    data-controller="toggle-button"
+                    data-action="click->toggle-button#toggle"
+                    data-toggle-button-state-value="library"
+                    data-toggle-button-url-value="<%= collection_path %>"
+                    data-toggle-button-active-value="<%= @in_library %>"
+                    data-toggle-button-status-url-value="<%= content_status_path(type: @type, imdb_id: @imdb_id) %>"
+                    data-toggle-button-params-value="<%= collection_params %>"
+                    aria-pressed="<%= @in_library %>"
+                    title="<%= @in_library ? 'Remove from library' : 'Add to library' %>">
+              <span data-toggle-icon><%= icon(@in_library ? :check : :plus) %></span>
+              <span data-toggle-label><%= @in_library ? "In library" : "Library" %></span>
             </button>
 
-            <div data-episode-picker-target="drawer" class="hidden border-t border-sv-border">
-              <div data-episode-picker-target="drawerContent" class="p-3">
-                <div class="flex items-center gap-2 text-sv-text-muted text-sm">
-                  <div class="w-4 h-4 border-2 border-sv-accent border-t-transparent rounded-full animate-spin"></div>
-                  Loading streams...
+            <button type="button"
+                    class="collection-btn <%= 'collection-btn--active' if @in_wishlist %>"
+                    data-controller="toggle-button"
+                    data-action="click->toggle-button#toggle"
+                    data-toggle-button-state-value="wishlist"
+                    data-toggle-button-url-value="<%= collection_path %>"
+                    data-toggle-button-active-value="<%= @in_wishlist %>"
+                    data-toggle-button-status-url-value="<%= content_status_path(type: @type, imdb_id: @imdb_id) %>"
+                    data-toggle-button-params-value="<%= collection_params %>"
+                    aria-pressed="<%= @in_wishlist %>"
+                    title="<%= @in_wishlist ? 'Remove from wishlist' : 'Add to wishlist' %>">
+              <span data-toggle-icon><%= icon :wishlist %></span>
+              <span data-toggle-label><%= @in_wishlist ? "On wishlist" : "Wishlist" %></span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="pt-2">
+    <%# MOVIES: sources list %>
+    <% if @type != "show" %>
+      <section class="mt-9" id="sources">
+        <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p class="kicker mb-2">Play</p>
+            <h2 class="t-section">Sources</h2>
+          </div>
+          <% if @streams.present? %>
+            <p class="text-xs text-ink-400"><span class="t-num"><%= @streams.size %></span> <%= @streams.size == 1 ? "release" : "releases" %> found</p>
+          <% end %>
+        </div>
+
+        <% if @streams_error.present? %>
+          <div class="panel panel-pad">
+            <p class="text-sm text-gold-400"><%= @streams_error %></p>
+            <p class="mt-1.5 text-xs text-ink-400">If this persists, the stream provider may be blocking this server's IP. Consider setting <code class="text-ink-200">TORRENTIO_PROXY</code> or <code class="text-ink-200">TORRENTIO_API_BASE_URL</code>.</p>
+          </div>
+        <% elsif @streams.present? %>
+          <%
+            # Cached, best-scoring releases first; the long tail collapses behind a disclosure.
+            ordered_streams = @streams.sort_by { |s| [s[:rd_plus] ? 0 : 1, -s[:compatibility_score].to_i] }
+            visible_streams = ordered_streams.first(6)
+            hidden_streams = ordered_streams.drop(6)
+            movie_play_params = { imdb_id: @imdb_id, type: @type, title: @metadata[:title], poster_url: @metadata[:poster_url], duration: @metadata[:runtime_seconds] }
+          %>
+          <div class="source-list">
+            <% visible_streams.each do |stream| %>
+              <%= render "shared/stream_row", stream: stream, play_params: movie_play_params %>
+            <% end %>
+          </div>
+
+          <% if hidden_streams.any? %>
+            <details>
+              <summary class="source-more">
+                <span>Show all <%= @streams.size %> releases</span>
+                <%= icon :chevron_down %>
+              </summary>
+              <div class="source-list">
+                <% hidden_streams.each do |stream| %>
+                  <%= render "shared/stream_row", stream: stream, play_params: movie_play_params %>
+                <% end %>
+              </div>
+            </details>
+          <% end %>
+        <% else %>
+          <div class="panel panel-pad text-center">
+            <p class="text-sm text-ink-200">No releases found for this title.</p>
+            <% unless current_user.has_realdebrid_key? %>
+              <p class="mt-1.5 text-xs text-ink-400">
+                Add your RealDebrid API key in <%= link_to "Settings", settings_path, class: "text-iris-300 underline underline-offset-2" %> to enable streaming.
+              </p>
+            <% end %>
+          </div>
+        <% end %>
+      </section>
+    <% end %>
+
+    <%# SHOWS: seasons + episodes %>
+    <% if @type == "show" && @metadata[:episodes].present? %>
+      <% seasons = @metadata[:episodes].map { |e| e[:season] }.reject { |s| s == 0 }.uniq.sort %>
+      <% season_episodes = @metadata[:episodes].select { |e| e[:season] == @selected_season && e[:season] != 0 } %>
+      <section class="mt-9">
+        <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p class="kicker mb-2">Episodes</p>
+            <h2 class="t-section">Season <%= @selected_season %></h2>
+          </div>
+          <p class="text-xs text-ink-400"><span class="t-num"><%= season_episodes.size %></span> episodes</p>
+        </div>
+
+        <div class="season-tabs mb-4" role="group" aria-label="Choose a season">
+          <% seasons.each do |s| %>
+            <%= link_to content_path(type: @type, imdb_id: @imdb_id, season: s),
+                        class: "season-tab #{@selected_season == s ? 'season-tab--active' : ''}",
+                        "aria-current": (@selected_season == s ? "true" : nil),
+                        data: { page_loader: "link" } do %>
+              Season <%= s %>
+            <% end %>
+          <% end %>
+        </div>
+
+        <div class="row-list" data-controller="episode-picker"
+             data-episode-picker-url-value="<%= episode_streams_path(type: @type, imdb_id: @imdb_id) %>">
+          <% season_episodes.each do |ep| %>
+            <% progress = @episode_progress&.dig([ep[:season], ep[:episode]]) %>
+            <div class="episode anchor-offset" id="episode-<%= ep[:season] %>-<%= ep[:episode] %>" data-episode-picker-target="episode">
+              <button class="episode__button"
+                      data-action="click->episode-picker#toggle"
+                      data-season="<%= ep[:season] %>"
+                      data-episode="<%= ep[:episode] %>"
+                      data-title="<%= ep[:title] %>"
+                      aria-expanded="false">
+                <span class="episode__number"><%= ep[:episode] %></span>
+                <span class="episode__body">
+                  <span class="flex items-center gap-2">
+                    <span class="episode__title"><%= ep[:title] || "Episode #{ep[:episode]}" %></span>
+                    <% if progress && progress.progress_percentage.positive? %>
+                      <span class="chip chip--accent shrink-0"><%= progress.progress_percentage %>%</span>
+                    <% end %>
+                  </span>
+                  <span class="episode__meta">
+                    <%= ep[:released] %><% if ep[:runtime] %> · <%= ep[:runtime] %><% end %>
+                  </span>
+                  <% if ep[:overview].present? %>
+                    <span class="episode__overview"><%= ep[:overview] %></span>
+                  <% end %>
+                  <% if progress %>
+                    <span class="progress-track mt-2 block max-w-[18rem]">
+                      <span class="progress-fill block" style="width: <%= progress.progress_percentage %>%"></span>
+                    </span>
+                  <% end %>
+                </span>
+                <span class="mt-1 text-ink-400 shrink-0 transition-transform" data-episode-picker-target="chevron">
+                  <%= icon :chevron_down, css: "w-4 h-4" %>
+                </span>
+              </button>
+
+              <div data-episode-picker-target="drawer" class="episode__drawer hidden">
+                <div data-episode-picker-target="drawerContent" class="px-4 pb-4 pt-3">
+                  <div class="flex items-center gap-2.5 text-sm text-ink-300">
+                    <span class="h-4 w-4 rounded-full border-2 border-white/15 border-t-iris-500 animate-spin"></span>
+                    Loading sources
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        <% end %>
-      </div>
+          <% end %>
+        </div>
+      </section>
     <% end %>
-  <% else %>
-    <p class="text-sv-text-muted">Content not found.</p>
-  <% end %>
-</div>
+  </div>
+<% else %>
+  <div class="empty">
+    <p class="kicker">Not found</p>
+    <p class="empty__title">We could not load this title.</p>
+    <p class="empty__text">It may have been removed from the catalogue, or the metadata service is unreachable right now.</p>
+    <%= link_to "Back to home", root_path, class: "btn-secondary mt-2" %>
+  </div>
+<% end %>

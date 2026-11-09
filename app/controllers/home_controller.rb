@@ -6,13 +6,15 @@ class HomeController < ApplicationController
   def index
     policy = parental_content_policy
     catalog = Catalog::CinemetaClient.new
-    # The four remote catalogs are fetched over HTTP; run them while the local
-    # queries below execute instead of afterwards.
-    catalogs_thread = Thread.new { HomeCatalogService.new(catalog).call }
-    @recommendations = filtered_result(policy, RecommendationService.for(current_user))
+
+    # Local queries run while the four remote catalogs load.
     @continue_watching = policy.filter(fetch_continue_watching)
     @recently_added = policy.filter(current_user.collection_entries.library.where("created_at > ?", 2.weeks.ago).recently_added.limit(20))
     @wishlist_preview = policy.filter(current_user.collection_entries.wishlist.recently_added.limit(20))
+
+    catalogs_thread = Thread.new { HomeCatalogService.new(catalog).call }
+
+    @recommendations = filtered_result(policy, RecommendationService.for(current_user))
     catalogs = catalogs_thread.value
     @popular = filtered_result(policy, catalogs.fetch(:popular))
     @popular_shows = filtered_result(policy, catalogs.fetch(:popular_shows))

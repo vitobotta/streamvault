@@ -6,15 +6,17 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="application-name" content="StreamVault">
     <meta name="mobile-web-app-capable" content="yes">
-    <meta name="theme-color" content="#0f0d1a">
+    <meta name="theme-color" content="#080a0e">
     <%= csrf_meta_tags %>
     <%= csp_meta_tag %>
 
     <%= yield :head %>
 
-    <link rel="icon" href="/icon.png" type="image/png">
-    <link rel="icon" href="/icon.svg" type="image/svg+xml">
-    <link rel="apple-touch-icon" href="/icon.png">
+    <link rel="icon" href="<%= versioned_icon_path("/icon.png") %>" type="image/png">
+    <link rel="icon" href="<%= versioned_icon_path("/icon.svg") %>" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="<%= versioned_icon_path("/icon.png") %>">
+    <link rel="preload" href="/fonts/instrument-sans.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/fonts/instrument-serif.woff2" as="font" type="font/woff2" crossorigin>
     <% if !user_signed_in? %>
       <link rel="preload" href="https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=1920&q=80" as="image">
     <% end %>
@@ -26,72 +28,51 @@
   </head>
 
   <body class="h-full" data-controller="page-loader">
-    <%# Page loading overlay — shown during search and content navigation %>
+    <%# Page loading overlay - shown during search and content navigation %>
     <div data-page-loader-target="overlay"
-         class="hidden fixed inset-0 z-[60] bg-black/80 flex items-center justify-center"
+         class="hidden fixed inset-0 z-[60] bg-black/85 flex items-center justify-center"
          role="status" aria-live="polite" aria-hidden="true">
-      <div class="flex flex-col items-center gap-3 px-5 py-4 rounded-lg bg-sv-surface border border-sv-border shadow-xl">
-        <div class="w-10 h-10 border-4 border-white/20 border-t-indigo-500 rounded-full animate-spin"></div>
-        <div class="text-sm font-medium text-white" data-page-loader-target="message">Loading...</div>
+      <div class="flex flex-col items-center gap-4 px-7 py-6 rounded-2xl border border-white/10 bg-ink-900/95 shadow-2xl">
+        <div class="w-9 h-9 rounded-full border-2 border-white/15 border-t-iris-500 animate-spin"></div>
+        <div class="kicker" data-page-loader-target="message">Loading</div>
       </div>
     </div>
+
     <% if user_signed_in? %>
-      <div class="flex h-full">
-        <%# Sidebar %>
-        <aside class="sidebar hidden md:flex flex-col w-64 shrink-0 p-4">
-          <%# Logo %>
-          <div class="flex items-center gap-2 px-3 mb-8">
-            <svg class="w-8 h-8 text-sv-accent" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M8 5v14l11-7z"/>
-            </svg>
-            <span class="text-xl font-bold text-white tracking-tight">StreamVault</span>
-          </div>
+      <div class="app-shell">
+        <%# Desktop sidebar %>
+        <aside class="app-sidebar">
+          <%= link_to root_path, class: "wordmark px-2" do %>
+            <%= render "shared/brand_mark", css: "wordmark__mark" %>
+            <span class="wordmark__text">StreamVault</span>
+          <% end %>
 
-          <%# Navigation %>
-          <nav class="flex flex-col gap-1 flex-1">
-            <%= link_to root_path, class: "sidebar-link #{'active' if controller_name == 'home'}" do %>
-              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
-              </svg>
-              <span>Home</span>
+          <%= form_tag search_index_path, method: :get, class: "sidebar-search", data: { page_loader: "search" } do %>
+            <%= icon :search %>
+            <%= text_field_tag :q, nil, placeholder: "Search titles", aria: { label: "Search movies and shows" } %>
+          <% end %>
+
+          <nav class="app-nav" aria-label="Primary">
+            <p class="nav-group-label">Browse</p>
+            <%= link_to root_path, class: "nav-link #{'active' if controller_name == 'home'}", "aria-current": (controller_name == "home" ? "page" : nil) do %>
+              <%= icon :home %><span>Home</span>
+            <% end %>
+            <%= link_to search_index_path, class: "nav-link #{'active' if controller_name == 'search'}", "aria-current": (controller_name == "search" ? "page" : nil) do %>
+              <%= icon :search %><span>Search</span>
+            <% end %>
+            <%= link_to library_index_path, class: "nav-link #{'active' if controller_name == 'library'}", "aria-current": (controller_name == "library" ? "page" : nil) do %>
+              <%= icon :library %><span>Library</span>
+            <% end %>
+            <%= link_to wishlist_index_path, class: "nav-link #{'active' if controller_name == 'wishlist'}", "aria-current": (controller_name == "wishlist" ? "page" : nil) do %>
+              <%= icon :wishlist %><span>Wishlist</span>
+            <% end %>
+            <%= link_to watch_history_index_path, class: "nav-link #{'active' if controller_name == 'watch_history'}", "aria-current": (controller_name == "watch_history" ? "page" : nil) do %>
+              <%= icon :history %><span>History</span>
             <% end %>
 
-            <%= link_to search_index_path, class: "sidebar-link #{'active' if controller_name == 'search'}" do %>
-              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
-              </svg>
-              <span>Search</span>
-            <% end %>
-
-            <%= link_to library_index_path, class: "sidebar-link #{'active' if controller_name == 'library'}" do %>
-              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
-              </svg>
-              <span>Library</span>
-            <% end %>
-
-            <%= link_to wishlist_index_path, class: "sidebar-link #{'active' if controller_name == 'wishlist'}" do %>
-              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/>
-              </svg>
-              <span>Wishlist</span>
-            <% end %>
-
-            <%= link_to watch_history_index_path, class: "sidebar-link #{'active' if controller_name == 'watch_history'}" do %>
-              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
-              </svg>
-              <span>History</span>
-            <% end %>
-
-            <div class="my-2 border-t border-sv-border"></div>
-
-            <%= link_to settings_path, class: "sidebar-link #{'active' if controller_name == 'settings'}" do %>
-              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
-                <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-              </svg>
-              <span>Settings</span>
+            <p class="nav-group-label">Account</p>
+            <%= link_to settings_path, class: "nav-link #{'active' if controller_name == 'settings'}", "aria-current": (controller_name == "settings" ? "page" : nil) do %>
+              <%= icon :settings %><span>Settings</span>
             <% end %>
 
             <% if current_user.admin? %>
@@ -104,106 +85,83 @@
             <% end %>
           </nav>
 
-          <%# User info %>
-          <div class="mt-auto px-3 py-2">
-            <p class="text-sm text-sv-text-muted truncate"><%= current_user.email %></p>
-            <%= button_to "Sign out", destroy_user_session_path, method: :delete, class: "text-xs text-sv-text-muted hover:text-sv-accent transition-colors cursor-pointer bg-transparent border-0 p-0" %>
+          <div class="account-card">
+            <span class="avatar" aria-hidden="true"><%= account_initials(current_user) %></span>
+            <div class="min-w-0 flex-1">
+              <p class="account-card__name"><%= account_name(current_user) %></p>
+              <p class="account-card__meta"><%= current_user.child_account? ? "Child profile" : current_user.email %></p>
+            </div>
+            <%= button_to destroy_user_session_path, method: :delete, class: "icon-button", title: "Sign out", aria: { label: "Sign out" } do %>
+              <%= icon :logout %>
+            <% end %>
           </div>
         </aside>
 
-        <%# Main content %>
-        <main class="flex-1 overflow-y-auto min-h-screen">
-          <%# Mobile header %>
-          <header class="md:hidden flex items-center justify-between p-4 border-b border-sv-border">
-            <div class="flex items-center gap-2">
-              <svg class="w-6 h-6 text-sv-accent" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M8 5v14l11-7z"/>
-              </svg>
-              <span class="text-lg font-bold text-white">StreamVault</span>
-            </div>
-            <div class="flex items-center gap-3">
-              <%= link_to search_index_path, class: "text-sv-text-muted" do %>
-                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
-                </svg>
+        <%# Main column %>
+        <div class="app-main">
+          <header class="mobile-header">
+            <%= link_to root_path, class: "wordmark" do %>
+              <%= render "shared/brand_mark", css: "wordmark__mark" %>
+              <span class="wordmark__text">StreamVault</span>
+            <% end %>
+            <div class="flex items-center gap-1">
+              <%= link_to search_index_path, class: "icon-button", aria: { label: "Search" } do %>
+                <%= icon :search %>
               <% end %>
-              <%= link_to settings_path, class: "text-sv-text-muted" do %>
-                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                </svg>
+              <%= link_to settings_path, class: "icon-button", aria: { label: "Settings" } do %>
+                <span class="avatar" style="width: 1.75rem; height: 1.75rem; font-size: 0.8125rem;"><%= account_initials(current_user) %></span>
               <% end %>
             </div>
           </header>
 
-          <%# Child account banner %>
-          <% if current_user.child_account? %>
-            <div class="mx-6 mt-4 flex items-center gap-2.5 rounded-lg border border-sv-border bg-sv-surface px-4 py-2.5">
-              <svg class="w-5 h-5 shrink-0 text-sv-warning" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
-              </svg>
-              <p class="text-sm text-sv-text-muted">
-                <span class="font-medium text-white">Child account for age <%= current_user.max_rating_age %>.</span>
-                Search results and playback are restricted to titles rated for that age.
-              </p>
-            </div>
-          <% end %>
+          <main class="app-content">
+            <% if current_user.child_account? %>
+              <div class="notice-bar mb-6">
+                <%= icon :lock, css: "w-4 h-4 shrink-0 text-iris-300" %>
+                <p>
+                  <span class="font-medium text-ink-50">Child account for age <%= current_user.max_rating_age %>.</span>
+                  Search results and playback are restricted to titles rated for that age.
+                </p>
+              </div>
+            <% end %>
 
-          <%# Flash messages %>
-          <% if notice.present? %>
-            <div class="flash-notice mx-6 mt-4" data-controller="flash" data-flash-target="message">
-              <%= notice %>
-            </div>
-          <% end %>
-          <% if alert.present? %>
-            <div class="flash-alert mx-6 mt-4" data-controller="flash" data-flash-target="message">
-              <%= alert %>
-            </div>
-          <% end %>
+            <% if notice.present? %>
+              <div class="flash-notice mb-6" data-controller="flash" data-flash-target="message">
+                <%= notice %>
+              </div>
+            <% end %>
+            <% if alert.present? %>
+              <div class="flash-alert mb-6" data-controller="flash" data-flash-target="message">
+                <%= alert %>
+              </div>
+            <% end %>
 
-          <%= yield %>
-        </main>
-
-        <%# Mobile bottom nav %>
-        <nav class="md:hidden fixed bottom-0 left-0 right-0 bg-sv-surface border-t border-sv-border flex justify-around py-2 px-4 z-40">
-          <%= link_to root_path, class: "flex flex-col items-center gap-0.5 text-sv-text-muted #{'text-sv-accent' if controller_name == 'home'}" do %>
-            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
-            <span class="text-xs">Home</span>
-          <% end %>
-          <%= link_to search_index_path, class: "flex flex-col items-center gap-0.5 text-sv-text-muted #{'text-sv-accent' if controller_name == 'search'}" do %>
-            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-            <span class="text-xs">Search</span>
-          <% end %>
-          <%= link_to library_index_path, class: "flex flex-col items-center gap-0.5 text-sv-text-muted #{'text-sv-accent' if controller_name == 'library'}" do %>
-            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
-            <span class="text-xs">Library</span>
-          <% end %>
-          <%= link_to wishlist_index_path, class: "flex flex-col items-center gap-0.5 text-sv-text-muted #{'text-sv-accent' if controller_name == 'wishlist'}" do %>
-            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>
-            <span class="text-xs">Wishlist</span>
-          <% end %>
-          <%= link_to watch_history_index_path, class: "flex flex-col items-center gap-0.5 text-sv-text-muted #{'text-sv-accent' if controller_name == 'watch_history'}" do %>
-            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-            <span class="text-xs">History</span>
-          <% end %>
-        </nav>
+            <%= yield %>
+          </main>
+        </div>
       </div>
+
+      <%# Mobile bottom navigation %>
+      <nav class="mobile-nav" aria-label="Primary">
+        <%= link_to root_path, class: "mobile-nav__link #{'active' if controller_name == 'home'}" do %>
+          <%= icon :home %><span>Home</span>
+        <% end %>
+        <%= link_to search_index_path, class: "mobile-nav__link #{'active' if controller_name == 'search'}" do %>
+          <%= icon :search %><span>Search</span>
+        <% end %>
+        <%= link_to library_index_path, class: "mobile-nav__link #{'active' if controller_name == 'library'}" do %>
+          <%= icon :library %><span>Library</span>
+        <% end %>
+        <%= link_to wishlist_index_path, class: "mobile-nav__link #{'active' if controller_name == 'wishlist'}" do %>
+          <%= icon :wishlist %><span>Wishlist</span>
+        <% end %>
+        <%= link_to watch_history_index_path, class: "mobile-nav__link #{'active' if controller_name == 'watch_history'}" do %>
+          <%= icon :history %><span>History</span>
+        <% end %>
+      </nav>
     <% else %>
-      <%# Unauthenticated layout with cinema background %>
-      <div class="min-h-screen flex flex-col relative">
-        <div class="absolute inset-0 bg-sv-bg">
-          <div class="absolute inset-0 bg-cover bg-center bg-no-repeat" style="background-image: url('https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=1920&q=80'); filter: brightness(0.3);"></div>
-          <div class="absolute inset-0 bg-gradient-to-t from-sv-bg via-sv-bg/80 to-transparent"></div>
-        </div>
-        <div class="relative z-10 flex flex-col min-h-screen">
-          <% if notice.present? %>
-            <div class="flash-notice mx-6 mt-4"><%= notice %></div>
-          <% end %>
-          <% if alert.present? %>
-            <div class="flash-alert mx-6 mt-4"><%= alert %></div>
-          <% end %>
-          <%= yield %>
-        </div>
+      <div class="min-h-screen">
+        <%= yield %>
       </div>
     <% end %>
   </body>

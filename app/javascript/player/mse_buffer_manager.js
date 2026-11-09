@@ -135,12 +135,32 @@ export class MseBufferManager {
       if (start >= evictBefore) continue
       try {
         this.player.sourceBuffer.remove(start, Math.min(end, evictBefore))
+        this.reportEviction("quota", Math.min(end, evictBefore) - start)
         return true
       } catch {
         return false
       }
     }
     return false
+  }
+
+  // Every range removal during playback mutates the decoder's buffer.
+  // Recording it (with its size) is what lets a later rebuffer or black
+  // gap be attributed to maintenance instead of to the network.
+  reportEviction(kind, removedSeconds) {
+    const player = this.player
+    const removed = Math.max(0, removedSeconds)
+    player.evictionCount = (player.evictionCount || 0) + 1
+    player.evictedSecondsTotal = (player.evictedSecondsTotal || 0) + removed
+    player.lastEvictionAt = Date.now()
+    try {
+      player.reportStall?.("eviction", {
+        kind,
+        removed_seconds: Math.round(removed * 10) / 10
+      })
+    } catch {
+      // Telemetry must never interrupt buffer maintenance.
+    }
   }
 
   scheduleQuotaRetry() {
@@ -178,6 +198,7 @@ export class MseBufferManager {
       if (containsPlayhead && removeEnd - start < BACK_BUFFER_EVICT_BATCH_SECONDS) continue
 
       try { this.player.sourceBuffer.remove(start, removeEnd) } catch {}
+      this.reportEviction("back", removeEnd - start)
       return
     }
   }

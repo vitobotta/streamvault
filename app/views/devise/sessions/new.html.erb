@@ -1,40 +1,33 @@
-<div class="flex items-center justify-center px-4 min-h-screen">
-  <div class="w-full max-w-md">
-    <%# Logo %>
-    <div class="flex items-center justify-center gap-2 mb-8">
-      <svg class="w-10 h-10 text-sv-accent" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M8 5v14l11-7z"/>
-      </svg>
-      <span class="text-2xl font-bold text-white tracking-tight">StreamVault</span>
+<%= render layout: "devise/shared/auth_shell", locals: { title: "Welcome back", subtitle: "Sign in to pick up where you left off." } do %>
+  <%= form_for(resource, as: resource_name, url: session_path(resource_name), html: { class: "space-y-4" }) do |f| %>
+    <div>
+      <%= f.label :email, "Email", class: "field-label" %>
+      <%= f.email_field :email, autofocus: true, autocomplete: "email", class: "input-field", placeholder: "you@example.com" %>
     </div>
 
-    <div class="bg-sv-surface/90 backdrop-blur-sm rounded-xl p-8 border border-sv-border">
-      <h2 class="text-2xl font-bold text-white mb-6 text-center">Sign in</h2>
-
-      <%= form_for(resource, as: resource_name, url: session_path(resource_name)) do |f| %>
-        <div class="mb-4">
-          <%= f.label :email, class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
-          <%= f.email_field :email, autofocus: true, autocomplete: "email", class: "input-field", placeholder: "you@example.com" %>
-        </div>
-
-        <div class="mb-4">
-          <%= f.label :password, class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
-          <%= f.password_field :password, autocomplete: "current-password", class: "input-field", placeholder: "••••••••" %>
-        </div>
-
-        <% if devise_mapping.rememberable? %>
-          <div class="flex items-center gap-2 mb-6">
-            <%= f.check_box :remember_me, { class: "rounded border-sv-border bg-sv-surface text-sv-accent focus:ring-sv-accent", checked: true }, "1", "0" %>
-            <%= f.label :remember_me, class: "text-sm text-sv-text-muted" %>
-          </div>
+    <div>
+      <div class="flex items-baseline justify-between gap-3">
+        <%= f.label :password, "Password", class: "field-label" %>
+        <% if devise_mapping.recoverable? %>
+          <%= link_to "Forgot?", new_password_path(resource_name), class: "mb-1.5 text-xs text-iris-300 underline underline-offset-2 hover:text-iris-200" %>
         <% end %>
-
-        <%= f.submit "Sign in", class: "btn-primary w-full text-center cursor-pointer" %>
-      <% end %>
+      </div>
+      <%= f.password_field :password, autocomplete: "current-password", class: "input-field", placeholder: "Your password" %>
     </div>
 
-    <div class="mt-4 text-center">
-      <%= render "devise/shared/links" %>
-    </div>
+    <% if devise_mapping.rememberable? %>
+      <label class="check pt-1">
+        <%= f.check_box :remember_me, checked: true %>
+        <span>Keep me signed in on this device</span>
+      </label>
+    <% end %>
+
+    <%= f.submit "Sign in", class: "btn-primary btn-lg w-full cursor-pointer mt-2" %>
+  <% end %>
+
+  <div class="mt-8 space-y-2 text-center text-sm text-ink-400">
+    <% if devise_mapping.registerable? && signups_enabled? %>
+      <p>New here? <%= link_to "Create an account", new_registration_path(resource_name), class: "text-iris-300 hover:text-iris-200" %></p>
+    <% end %>
   </div>
-</div>
+<% end %>
