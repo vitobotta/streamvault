@@ -26,10 +26,11 @@ function fakeButton(initial = []) {
 
 // The browser APIs are absent from the Node harness, so each fixture
 // installs exactly the surface the test wants the controller to see.
-function pipFixture({ standard = false, legacy = false, paused = false, standardRejects = false, ios = false, webkitNoop = false } = {}) {
+function pipFixture({ standard = false, legacy = false, paused = false, standardRejects = false, ios = false, webkitNoop = false, standalone = false } = {}) {
   const { context, VideoPlayerController } = createVideoPlayerHarness()
   const listeners = new Map()
   const button = fakeButton(["hidden"])
+  const notice = Object.assign(fakeButton(["hidden"]), { textContent: "" })
   const calls = { enter: 0, exit: 0, modes: [], playback: 0, fullscreen: 0 }
 
   const video = {
@@ -85,8 +86,11 @@ function pipFixture({ standard = false, legacy = false, paused = false, standard
     hasVideoTarget: true,
     pipButtonTarget: button,
     hasPipButtonTarget: true,
+    pipNoticeTarget: notice,
+    hasPipNoticeTarget: true,
     userPaused: false,
     isIOS: () => ios,
+    isStandaloneWebApp: () => standalone,
     requestPlayback: () => {
       calls.playback += 1
       video.paused = false
@@ -94,7 +98,7 @@ function pipFixture({ standard = false, legacy = false, paused = false, standard
     }
   })
 
-  return { context, player, video, button, calls, listeners, VideoPlayerController }
+  return { context, player, video, button, notice, calls, listeners, VideoPlayerController }
 }
 
 test("a browser without a PiP API keeps the button hidden", () => {
@@ -226,6 +230,21 @@ test("a webkit switch that does nothing falls through to the standard API", asyn
 
   assert.deepEqual(calls.modes, ["picture-in-picture"])
   assert.equal(calls.enter, 1)
+})
+
+test("the Home Screen web app explains that picture in picture needs Safari", async () => {
+  const { player, notice, calls } = pipFixture({ standard: true, legacy: true, ios: true, standalone: true })
+
+  await player.togglePictureInPicture()
+
+  assert.equal(calls.modes.length, 0)
+  assert.equal(calls.enter, 0)
+  assert.equal(calls.fullscreen, 0)
+  assert.equal(notice.classList.contains("hidden"), false)
+  assert.match(notice.textContent, /Home Screen app/)
+  assert.match(notice.textContent, /Safari/)
+
+  clearTimeout(player.pipNoticeTimer)
 })
 
 test("an iPhone whose inline request rejects opens the native player", async () => {

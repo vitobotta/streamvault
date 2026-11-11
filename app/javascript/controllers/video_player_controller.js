@@ -2434,10 +2434,33 @@ export default class extends Controller {
     this.pipButtonTarget.classList.toggle("text-iris-400", active)
   }
 
+  isStandaloneWebApp() {
+    try {
+      return Boolean(globalThis.navigator?.standalone) ||
+        Boolean(globalThis.matchMedia?.("(display-mode: standalone)")?.matches)
+    } catch {
+      return false
+    }
+  }
+
+  // WebKit refuses picture in picture in iOS Home Screen web apps, with no
+  // API to detect it beyond the display mode itself. Say so instead of
+  // pretending the tap failed.
+  pictureInPictureBlockedByStandaloneMode() {
+    return this.isIOS() && this.isStandaloneWebApp()
+  }
+
   async togglePictureInPicture() {
     if (!this.hasVideoTarget) return
     this.reportPictureInPictureDiagnostic("pip_tap")
     if (this.pictureInPictureActive()) return this.exitPictureInPicture()
+
+    if (this.pictureInPictureBlockedByStandaloneMode()) {
+      this.reportPictureInPictureDiagnostic("pip_standalone_blocked")
+      this.showPictureInPictureNotice("Picture in picture isn't available in the Home Screen app. Open stream.botta.me in Safari to use it.")
+      return
+    }
+
     if (!this.pictureInPictureSupported()) return this.showPictureInPictureNotice()
 
     const video = this.videoTarget
@@ -2569,6 +2592,7 @@ export default class extends Controller {
         `std=${typeof video?.requestPictureInPicture === "function" ? 1 : 0}`,
         `flag=${enabled === undefined ? "u" : (enabled ? 1 : 0)}`,
         `ios=${this.isIOS() ? 1 : 0}`,
+        `sa=${this.isStandaloneWebApp() ? 1 : 0}`,
         `sup=${supported === null ? "?" : (supported ? 1 : 0)}`,
         `src=${String(video?.currentSrc || video?.src || "").split(":")[0].slice(0, 5)}`,
         `full=${video?.webkitDisplayingFullscreen ? 1 : 0}`
