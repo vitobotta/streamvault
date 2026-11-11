@@ -26,11 +26,11 @@ function fakeButton(initial = []) {
 
 // The browser APIs are absent from the Node harness, so each fixture
 // installs exactly the surface the test wants the controller to see.
-function pipFixture({ standard = false, legacy = false, paused = false } = {}) {
+function pipFixture({ standard = false, legacy = false, paused = false, standardRejects = false, ios = false } = {}) {
   const { context, VideoPlayerController } = createVideoPlayerHarness()
   const listeners = new Map()
   const button = fakeButton(["hidden"])
-  const calls = { enter: 0, exit: 0, modes: [], playback: 0 }
+  const calls = { enter: 0, exit: 0, modes: [], playback: 0, fullscreen: 0 }
 
   const video = {
     paused,
@@ -51,6 +51,9 @@ function pipFixture({ standard = false, legacy = false, paused = false } = {}) {
     context.document.pictureInPictureEnabled = true
     video.requestPictureInPicture = () => {
       calls.enter += 1
+      if (standardRejects) {
+        return Promise.reject(Object.assign(new Error("unsupported"), { name: "NotSupportedError" }))
+      }
       context.document.pictureInPictureElement = video
       return Promise.resolve()
     }
@@ -69,6 +72,13 @@ function pipFixture({ standard = false, legacy = false, paused = false } = {}) {
     }
   }
 
+  if (ios) {
+    video.webkitDisplayingFullscreen = false
+    video.webkitEnterFullscreen = () => {
+      calls.fullscreen += 1
+    }
+  }
+
   const player = new VideoPlayerController()
   Object.assign(player, {
     videoTarget: video,
@@ -76,6 +86,7 @@ function pipFixture({ standard = false, legacy = false, paused = false } = {}) {
     pipButtonTarget: button,
     hasPipButtonTarget: true,
     userPaused: false,
+    isIOS: () => ios,
     requestPlayback: () => {
       calls.playback += 1
       video.paused = false
@@ -126,7 +137,7 @@ test("tapping again exits picture in picture", async () => {
   assert.equal(calls.exit, 1)
 })
 
-test("Safari falls back to the webkit presentation mode", async () => {
+test("Safari uses the webkit presentation mode", async () => {
   const { player, calls } = pipFixture({ legacy: true })
 
   await player.togglePictureInPicture()
@@ -187,4 +198,40 @@ test("leaving the player closes an active PiP window and drops its listeners", a
   assert.equal(listeners.has("enterpictureinpicture"), false)
   assert.equal(listeners.has("leavepictureinpicture"), false)
   assert.equal(listeners.has("webkitpresentationmodechanged"), false)
+})
+
+test("Safari's presentation mode wins when both APIs are available", async () => {
+  const { player, calls } = pipFixture({ standard: true, legacy: true })
+
+  await player.togglePictureInPicture()
+
+  assert.deepEqual(calls.modes, ["picture-in-picture"])
+  assert.equal(calls.enter, 0)
+})
+
+test("a missing pictureInPictureEnabled flag does not hide the control", () => {
+  const { context, player, button } = pipFixture({ standard: true })
+  delete context.document.pictureInPictureEnabled
+
+  player.setupPictureInPicture()
+
+  assert.equal(player.pictureInPictureSupported(), true)
+  assert.equal(button.classList.contains("hidden"), false)
+})
+
+test("an iPhone whose inline request rejects opens the native player", async () => {
+  const { player, video, calls, listeners } = pipFixture({ standard: true, standardRejects: true, ios: true })
+
+  await player.togglePictureInPicture()
+
+  assert.equal(calls.enter, 1)
+  assert.equal(calls.fullscreen, 1)
+  assert.equal(listeners.has("webkitbeginfullscreen"), true)
+
+  // The native player is the only place iPhone grants PiP, so entering it
+  // retries the request once the element belongs to that player.
+  video.dispatch("webkitbeginfullscreen")
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  assert.equal(calls.enter, 2)
 })

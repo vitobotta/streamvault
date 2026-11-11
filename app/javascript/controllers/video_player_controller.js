@@ -2361,17 +2361,30 @@ export default class extends Controller {
   // webkitSetPresentationMode. A browser with neither keeps the button
   // hidden instead of showing a dead control.
 
-  pictureInPictureSupported() {
+  // Safari answers webkitSupportsPresentationMode for the mode it will
+  // really grant. iPhone returns false for inline video and only grants
+  // picture in picture from its native fullscreen player.
+  supportsWebkitPresentationMode() {
     if (!this.hasVideoTarget) return false
 
     const video = this.videoTarget
-    const standardApi = typeof video.requestPictureInPicture === "function" &&
-      document.pictureInPictureEnabled === true
-    if (standardApi) return true
-
     if (typeof video.webkitSetPresentationMode !== "function") return false
-    // WebKit answers false for a mode it will not grant on this device.
-    return video.webkitSupportsPresentationMode?.("picture-in-picture") !== false
+    return typeof video.webkitSupportsPresentationMode === "function"
+      ? video.webkitSupportsPresentationMode("picture-in-picture") === true
+      : true
+  }
+
+  supportsStandardPictureInPicture() {
+    if (!this.hasVideoTarget) return false
+
+    // A missing flag means the browser does not implement the property.
+    // Only an explicit false means picture in picture is denied.
+    return typeof this.videoTarget.requestPictureInPicture === "function" &&
+      document.pictureInPictureEnabled !== false
+  }
+
+  pictureInPictureSupported() {
+    return this.supportsWebkitPresentationMode() || this.supportsStandardPictureInPicture()
   }
 
   pictureInPictureActive() {
@@ -2433,16 +2446,61 @@ export default class extends Controller {
       void this.requestPlayback()
     }
 
-    try {
-      if (typeof video.requestPictureInPicture === "function" && document.pictureInPictureEnabled) {
-        await video.requestPictureInPicture()
-      } else {
-        video.webkitSetPresentationMode("picture-in-picture")
-      }
-    } catch (error) {
-      console.warn("Picture in picture could not start:", error?.name || "Error")
-    }
+    if (await this.enterPictureInPicture()) return
+
+    // iPhone rejects both inline APIs and grants PiP only from its native
+    // fullscreen player, whose own control bar carries the system PiP
+    // button. Opening that player beats a tap with no visible effect; the
+    // retry inside it covers devices that accept the request once the
+    // native player owns the element.
+    if (this.isIOS()) this.openNativePlayerForPictureInPicture()
     this.updatePictureInPictureState()
+  }
+
+  // Safari's presentation mode is the documented path there and keeps
+  // working on iPhones whose standard request rejects. The standard API
+  // stays as the fallback for Chromium and Firefox.
+  async enterPictureInPicture() {
+    const video = this.videoTarget
+
+    if (this.supportsWebkitPresentationMode()) {
+      try {
+        video.webkitSetPresentationMode("picture-in-picture")
+        return true
+      } catch (error) {
+        console.warn("Picture in picture could not start (webkit):", error?.name || "Error")
+      }
+    }
+
+    if (this.supportsStandardPictureInPicture()) {
+      try {
+        await video.requestPictureInPicture()
+        return true
+      } catch (error) {
+        console.warn("Picture in picture could not start:", error?.name || "Error")
+      }
+    }
+
+    return false
+  }
+
+  openNativePlayerForPictureInPicture() {
+    const video = this.videoTarget
+    if (video.webkitDisplayingFullscreen) return
+    if (typeof video.webkitEnterFullscreen !== "function") return
+
+    const retryInFullscreen = () => {
+      video.removeEventListener("webkitbeginfullscreen", retryInFullscreen)
+      void this.enterPictureInPicture()
+    }
+
+    video.addEventListener("webkitbeginfullscreen", retryInFullscreen)
+    try {
+      video.webkitEnterFullscreen()
+    } catch (error) {
+      video.removeEventListener("webkitbeginfullscreen", retryInFullscreen)
+      console.warn("Picture in picture could not open the native player:", error?.name || "Error")
+    }
   }
 
   async exitPictureInPicture() {
@@ -2450,11 +2508,11 @@ export default class extends Controller {
 
     const video = this.videoTarget
     try {
-      if (document.pictureInPictureElement && document.exitPictureInPicture) {
-        await document.exitPictureInPicture()
-      } else if (typeof video.webkitSetPresentationMode === "function" &&
-        video.webkitPresentationMode === "picture-in-picture") {
+      if (video.webkitPresentationMode === "picture-in-picture" &&
+        typeof video.webkitSetPresentationMode === "function") {
         video.webkitSetPresentationMode("inline")
+      } else if (document.pictureInPictureElement && document.exitPictureInPicture) {
+        await document.exitPictureInPicture()
       }
     } catch (error) {
       console.warn("Picture in picture could not exit:", error?.name || "Error")
