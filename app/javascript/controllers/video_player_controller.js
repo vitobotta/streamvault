@@ -82,7 +82,7 @@ export default class extends Controller {
       "seekingOverlay", "seekingOverlayMessage", "sourceInfo", "sourceToggle", "sourceDetails", "sourceUrl",
       "sourceFilename", "backButton", "audioControls", "audioMenu", "audioOptions", "audioButtonLabel",
       "subtitleControls", "subtitleMenu", "subtitleOptions", "subtitleButtonLabel", "subtitleOverlay",
-      "nextEpisodePrompt", "nextEpisodeButton", "nextEpisodeStatus"
+      "nextEpisodePrompt", "nextEpisodeButton", "nextEpisodeStatus", "pipButton"
     ]
   }
   static get values() {
@@ -223,6 +223,9 @@ export default class extends Controller {
     this.videoErrorHandler = (e) => this.onVideoError(e)
     this.videoTarget.addEventListener("error", this.videoErrorHandler)
 
+    this.pipChangeHandler = null
+    this.setupPictureInPicture()
+
     // Resume: transcode streams already start at the resume position
     // via ffmpeg -ss, so no client-side seek needed.  Direct play uses
     // the native <video> element which seeks via Range requests.
@@ -271,6 +274,7 @@ export default class extends Controller {
     this.pendingAppendBuffer = null
     this.systemRebufferPaused = false
     this.cancelSeekDrag()
+    this.teardownPictureInPicture()
     this.element.removeEventListener("mousemove", this.mouseMoveHandler)
     document.removeEventListener("keydown", this.keydownHandler)
     document.removeEventListener("click", this.documentClickHandler)
@@ -1670,6 +1674,7 @@ export default class extends Controller {
   // save (navigateBack already saved).
   stopPlaybackForNavigation() {
     this.invalidatePlaybackRequest()
+    this.teardownPictureInPicture()
     if (this.hasVideoTarget) { try { this.videoTarget.pause() } catch {} }
     this.playbackCoordinator().disconnect()
     this.saveProgressSync()
@@ -2347,6 +2352,114 @@ export default class extends Controller {
     if (this.hasSubtitleControlsTarget && this.subtitleControlsTarget.contains(event.target)) return
 
     this.closeTrackMenus()
+  }
+
+  // ── Picture in picture ────────────────────────────────────────────
+  // Every playback path renders into the single <video> element, so PiP
+  // is a browser call on that element rather than a new stream. Chrome
+  // (Android included) exposes the standard API; Safari exposes
+  // webkitSetPresentationMode. A browser with neither keeps the button
+  // hidden instead of showing a dead control.
+
+  pictureInPictureSupported() {
+    if (!this.hasVideoTarget) return false
+
+    const video = this.videoTarget
+    const standardApi = typeof video.requestPictureInPicture === "function" &&
+      document.pictureInPictureEnabled === true
+    if (standardApi) return true
+
+    if (typeof video.webkitSetPresentationMode !== "function") return false
+    // WebKit answers false for a mode it will not grant on this device.
+    return video.webkitSupportsPresentationMode?.("picture-in-picture") !== false
+  }
+
+  pictureInPictureActive() {
+    if (!this.hasVideoTarget) return false
+
+    const video = this.videoTarget
+    return document.pictureInPictureElement === video ||
+      video.webkitPresentationMode === "picture-in-picture"
+  }
+
+  setupPictureInPicture() {
+    if (!this.hasPipButtonTarget || !this.hasVideoTarget) return
+    if (!this.pictureInPictureSupported()) return
+
+    this.pipButtonTarget.classList.remove("hidden")
+    this.pipChangeHandler = () => this.updatePictureInPictureState()
+    this.videoTarget.addEventListener("enterpictureinpicture", this.pipChangeHandler)
+    this.videoTarget.addEventListener("leavepictureinpicture", this.pipChangeHandler)
+    this.videoTarget.addEventListener("webkitpresentationmodechanged", this.pipChangeHandler)
+    this.updatePictureInPictureState()
+  }
+
+  // Called from disconnect and before navigating away: a PiP window that
+  // outlives its page would keep a detached element on screen.
+  teardownPictureInPicture() {
+    if (!this.hasVideoTarget) return
+
+    if (this.pipChangeHandler) {
+      this.videoTarget.removeEventListener("enterpictureinpicture", this.pipChangeHandler)
+      this.videoTarget.removeEventListener("leavepictureinpicture", this.pipChangeHandler)
+      this.videoTarget.removeEventListener("webkitpresentationmodechanged", this.pipChangeHandler)
+      this.pipChangeHandler = null
+    }
+    if (this.pictureInPictureActive()) void this.exitPictureInPicture()
+  }
+
+  updatePictureInPictureState() {
+    if (!this.hasPipButtonTarget) return
+
+    const active = this.pictureInPictureActive()
+    const label = active ? "Exit picture in picture" : "Picture in picture"
+    this.pipButtonTarget.setAttribute("aria-pressed", active ? "true" : "false")
+    this.pipButtonTarget.setAttribute("aria-label", label)
+    this.pipButtonTarget.setAttribute("title", label)
+    this.pipButtonTarget.classList.toggle("text-iris-400", active)
+  }
+
+  async togglePictureInPicture() {
+    if (!this.hasVideoTarget) return
+    if (this.pictureInPictureActive()) return this.exitPictureInPicture()
+    if (!this.pictureInPictureSupported()) return
+
+    const video = this.videoTarget
+    // iOS only enters PiP for an element that is playing. The click is
+    // the gesture both play() and the PiP request need, so resume here
+    // rather than leaving the user with a control that does nothing.
+    if (video.paused) {
+      this.userPaused = false
+      void this.requestPlayback()
+    }
+
+    try {
+      if (typeof video.requestPictureInPicture === "function" && document.pictureInPictureEnabled) {
+        await video.requestPictureInPicture()
+      } else {
+        video.webkitSetPresentationMode("picture-in-picture")
+      }
+    } catch (error) {
+      console.warn("Picture in picture could not start:", error?.name || "Error")
+    }
+    this.updatePictureInPictureState()
+  }
+
+  async exitPictureInPicture() {
+    if (!this.hasVideoTarget) return
+
+    const video = this.videoTarget
+    try {
+      if (document.pictureInPictureElement && document.exitPictureInPicture) {
+        await document.exitPictureInPicture()
+      } else if (typeof video.webkitSetPresentationMode === "function" &&
+        video.webkitPresentationMode === "picture-in-picture") {
+        video.webkitSetPresentationMode("inline")
+      }
+    } catch (error) {
+      console.warn("Picture in picture could not exit:", error?.name || "Error")
+    }
+    this.updatePictureInPictureState()
   }
 
   // ── Fullscreen ────────────────────────────────────────────────────
