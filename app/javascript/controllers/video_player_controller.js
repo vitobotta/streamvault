@@ -82,7 +82,7 @@ export default class extends Controller {
       "seekingOverlay", "seekingOverlayMessage", "sourceInfo", "sourceToggle", "sourceDetails", "sourceUrl",
       "sourceFilename", "backButton", "audioControls", "audioMenu", "audioOptions", "audioButtonLabel",
       "subtitleControls", "subtitleMenu", "subtitleOptions", "subtitleButtonLabel", "subtitleOverlay",
-      "nextEpisodePrompt", "nextEpisodeButton", "nextEpisodeStatus", "pipButton"
+      "nextEpisodePrompt", "nextEpisodeButton", "nextEpisodeStatus", "pipButton", "pipNotice"
     ]
   }
   static get values() {
@@ -266,6 +266,7 @@ export default class extends Controller {
     clearTimeout(this.rebufferDeadlineTimer)
     clearTimeout(this.bufferAheadDeadlineTimer)
     clearTimeout(this.prematureEndRecoveryTimer)
+    clearTimeout(this.pipNoticeTimer)
     this.playbackStarted = false
     this.bufferAheadDeadline = null
     this.rebufferDeadline = null
@@ -2397,6 +2398,7 @@ export default class extends Controller {
 
   setupPictureInPicture() {
     if (!this.hasPipButtonTarget || !this.hasVideoTarget) return
+    this.reportPictureInPictureDiagnostic("pip_setup", { supported: this.pictureInPictureSupported() })
     if (!this.pictureInPictureSupported()) return
 
     this.pipButtonTarget.classList.remove("hidden")
@@ -2434,8 +2436,9 @@ export default class extends Controller {
 
   async togglePictureInPicture() {
     if (!this.hasVideoTarget) return
+    this.reportPictureInPictureDiagnostic("pip_tap")
     if (this.pictureInPictureActive()) return this.exitPictureInPicture()
-    if (!this.pictureInPictureSupported()) return
+    if (!this.pictureInPictureSupported()) return this.showPictureInPictureNotice()
 
     const video = this.videoTarget
     // iOS only enters PiP for an element that is playing. The click is
@@ -2446,14 +2449,21 @@ export default class extends Controller {
       void this.requestPlayback()
     }
 
-    if (await this.enterPictureInPicture()) return
+    if (await this.enterPictureInPicture()) {
+      this.reportPictureInPictureDiagnostic("pip_entered")
+      return
+    }
 
     // iPhone rejects both inline APIs and grants PiP only from its native
     // fullscreen player, whose own control bar carries the system PiP
     // button. Opening that player beats a tap with no visible effect; the
     // retry inside it covers devices that accept the request once the
     // native player owns the element.
-    if (this.isIOS()) this.openNativePlayerForPictureInPicture()
+    if (this.isIOS()) {
+      this.reportPictureInPictureDiagnostic("pip_fallback_fullscreen")
+      this.openNativePlayerForPictureInPicture()
+      this.showPictureInPictureNotice("Picture in picture is not available here. Opening the fullscreen player instead.")
+    }
     this.updatePictureInPictureState()
   }
 
@@ -2466,8 +2476,12 @@ export default class extends Controller {
     if (this.supportsWebkitPresentationMode()) {
       try {
         video.webkitSetPresentationMode("picture-in-picture")
-        return true
+        // WebKit refuses a mode by doing nothing at all, so trust the
+        // element state rather than the call returning.
+        if (await this.confirmPictureInPicture()) return true
+        this.reportPictureInPictureDiagnostic("pip_noop", { stage: "webkit" })
       } catch (error) {
+        this.reportPictureInPictureDiagnostic("pip_error", { stage: "webkit", error })
         console.warn("Picture in picture could not start (webkit):", error?.name || "Error")
       }
     }
@@ -2477,11 +2491,38 @@ export default class extends Controller {
         await video.requestPictureInPicture()
         return true
       } catch (error) {
+        this.reportPictureInPictureDiagnostic("pip_error", { stage: "standard", error })
         console.warn("Picture in picture could not start:", error?.name || "Error")
       }
     }
 
     return false
+  }
+
+  // Give the presentation-mode switch a moment to land, then report what
+  // the element actually shows. iPhone answers the setter with silence,
+  // so the mode change is the only honest signal.
+  confirmPictureInPicture(timeoutMs = 400) {
+    if (this.pictureInPictureActive()) return Promise.resolve(true)
+    if (!this.hasVideoTarget) return Promise.resolve(false)
+
+    const video = this.videoTarget
+    return new Promise((resolve) => {
+      let settled = false
+      const finish = (value) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        video.removeEventListener?.("webkitpresentationmodechanged", check)
+        video.removeEventListener?.("enterpictureinpicture", check)
+        resolve(value)
+      }
+      const check = () => { if (this.pictureInPictureActive()) finish(true) }
+      const timer = setTimeout(() => finish(this.pictureInPictureActive()), timeoutMs)
+
+      video.addEventListener?.("webkitpresentationmodechanged", check)
+      video.addEventListener?.("enterpictureinpicture", check)
+    })
   }
 
   openNativePlayerForPictureInPicture() {
@@ -2500,6 +2541,60 @@ export default class extends Controller {
     } catch (error) {
       video.removeEventListener("webkitbeginfullscreen", retryInFullscreen)
       console.warn("Picture in picture could not open the native player:", error?.name || "Error")
+    }
+  }
+
+  showPictureInPictureNotice(message = "Picture in picture is not available for this video.") {
+    if (!this.hasPipNoticeTarget) return
+
+    this.pipNoticeTarget.textContent = message
+    this.pipNoticeTarget.classList.remove("hidden")
+    clearTimeout(this.pipNoticeTimer)
+    this.pipNoticeTimer = setTimeout(() => {
+      this.pipNoticeTarget.classList.add("hidden")
+      this.pipNoticeTimer = null
+    }, 6000)
+  }
+
+  // Temporary diagnosis for the iPhone path: the server log carries the
+  // API surface this device actually exposes, which the phone itself
+  // cannot show without a cable. Whitelisted fields only.
+  reportPictureInPictureDiagnostic(eventName, { stage = null, error = null, supported = null } = {}) {
+    try {
+      const video = this.videoTarget
+      const enabled = document.pictureInPictureEnabled
+      const flags = [
+        `wk=${typeof video?.webkitSetPresentationMode === "function" ? 1 : 0}`,
+        `wkSup=${this.supportsWebkitPresentationMode() ? 1 : 0}`,
+        `std=${typeof video?.requestPictureInPicture === "function" ? 1 : 0}`,
+        `flag=${enabled === undefined ? "u" : (enabled ? 1 : 0)}`,
+        `ios=${this.isIOS() ? 1 : 0}`,
+        `sup=${supported === null ? "?" : (supported ? 1 : 0)}`,
+        `src=${String(video?.currentSrc || video?.src || "").split(":")[0].slice(0, 5)}`,
+        `full=${video?.webkitDisplayingFullscreen ? 1 : 0}`
+      ].join(";")
+
+      const body = JSON.stringify({
+        event: eventName,
+        playback_id: this.playbackId,
+        path: this.playbackPath(),
+        ready_state: video?.readyState ?? 0,
+        paused: Boolean(video?.paused),
+        fetch_error: [ stage, error?.name ].filter(Boolean).join(":") || "none",
+        fetch_error_message: flags
+      })
+
+      Promise.resolve(fetch("/streaming/stall_telemetry", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": document.querySelector("meta[name='csrf-token']")?.content
+        },
+        body,
+        keepalive: true
+      })).catch(() => {})
+    } catch {
+      // Diagnostics must never break playback.
     }
   }
 

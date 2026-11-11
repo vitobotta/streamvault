@@ -26,7 +26,7 @@ function fakeButton(initial = []) {
 
 // The browser APIs are absent from the Node harness, so each fixture
 // installs exactly the surface the test wants the controller to see.
-function pipFixture({ standard = false, legacy = false, paused = false, standardRejects = false, ios = false } = {}) {
+function pipFixture({ standard = false, legacy = false, paused = false, standardRejects = false, ios = false, webkitNoop = false } = {}) {
   const { context, VideoPlayerController } = createVideoPlayerHarness()
   const listeners = new Map()
   const button = fakeButton(["hidden"])
@@ -68,7 +68,7 @@ function pipFixture({ standard = false, legacy = false, paused = false, standard
     video.webkitSupportsPresentationMode = () => true
     video.webkitSetPresentationMode = (mode) => {
       calls.modes.push(mode)
-      video.webkitPresentationMode = mode
+      if (!webkitNoop) video.webkitPresentationMode = mode
     }
   }
 
@@ -217,6 +217,15 @@ test("a missing pictureInPictureEnabled flag does not hide the control", () => {
 
   assert.equal(player.pictureInPictureSupported(), true)
   assert.equal(button.classList.contains("hidden"), false)
+})
+
+test("a webkit switch that does nothing falls through to the standard API", async () => {
+  const { player, calls } = pipFixture({ standard: true, legacy: true, webkitNoop: true })
+
+  await player.togglePictureInPicture()
+
+  assert.deepEqual(calls.modes, ["picture-in-picture"])
+  assert.equal(calls.enter, 1)
 })
 
 test("an iPhone whose inline request rejects opens the native player", async () => {

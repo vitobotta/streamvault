@@ -190,6 +190,11 @@
     </div>
   </div>
 
+  <%# Transient notice for a picture-in-picture failure the user cannot see any other way %>
+  <div data-video-player-target="pipNotice" role="status" aria-live="polite"
+       class="hidden absolute left-1/2 z-30 -translate-x-1/2 rounded-lg bg-black/80 px-4 py-2 text-center text-sm text-white"
+       style="bottom: calc(env(safe-area-inset-bottom, 0px) + 6rem); max-width: 20rem;"></div>
+
   <%# Loading overlay (shown while ffmpeg restarts after a seek, subtitles catch up, or the stream buffers). bg-black/80 so the spinner is visible — with MSE, when the buffer runs dry Chrome shows black, not a frozen frame, so a transparent overlay would be invisible. %>
   <div data-video-player-target="seekingOverlay" class="hidden absolute inset-0 flex items-center justify-center bg-black/80 z-20">
     <div class="flex flex-col items-center gap-4">
