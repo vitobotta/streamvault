@@ -50,7 +50,7 @@ class ContentController < ApplicationController
       @series_watched_episodes = series_progress.watched_episodes
       @series_total_episodes = series_progress.total_episodes
       @series_progress_percentage = series_progress.percentage
-      persist_series_total(@collection_entry, @series_total_episodes)
+      persist_series_total(@collection_entry, @series_total_episodes) if meta_result.success?
     else
       @movie_progress = current_user.playback_progresses.movies_only.find_by(imdb_id: @imdb_id)
       @movie_watched = @movie_progress.present? && PlaybackCompletionPolicy.movie_finished?(@movie_progress)

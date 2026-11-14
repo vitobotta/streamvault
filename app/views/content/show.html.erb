@@ -357,7 +357,7 @@
                   <%= button_to finished ? "Mark unwatched" : "Mark watched",
                                 content_watched_path(type: @type, imdb_id: @imdb_id),
                                 method: :patch,
-                                params: { watched: !finished, season: ep[:season], episode: ep[:episode], title: ep[:title], poster_url: @metadata[:poster_url], duration_seconds: ep[:runtime_seconds] },
+                                params: { watched: !finished, season: ep[:season], episode: ep[:episode], title: "#{@metadata[:title]} S#{ep[:season].to_s.rjust(2, '0')}E#{ep[:episode].to_s.rjust(2, '0')}", poster_url: @metadata[:poster_url], duration_seconds: ep[:runtime_seconds] },
                                 class: "chip transition-colors hover:border-ink-400 hover:text-ink-50" %>
                 </div>
               </div>

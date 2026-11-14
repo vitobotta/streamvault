@@ -129,6 +129,22 @@ RSpec.describe Playback::WatchedToggle do
       expect(rows.map(&:poster_url).uniq).to eq([ "https://img.example/bb.jpg" ])
     end
 
+    it "skips an episode with no air date when marking the series watched" do
+      allow(catalog).to receive(:metadata).and_return(ServiceResult.success(
+        title: "Breaking Bad",
+        poster_url: nil,
+        episodes: [
+          { season: 1, episode: 1, title: "Pilot", runtime_seconds: 2_400, released: "2008-01-20" },
+          { season: 2, episode: 1, title: "TBA", runtime_seconds: 2_400, released: nil }
+        ]
+      ))
+
+      result = service.call(imdb_id: "tt0903747", type: "show", watched: true, title: "Breaking Bad")
+
+      expect(result.data).to eq(1)
+      expect(user.playback_progresses.for_show("tt0903747").pluck(:season_number)).to eq([ 1 ])
+    end
+
     it "is idempotent when the series is marked watched again" do
       service.call(imdb_id: "tt0903747", type: "show", watched: true, title: "Breaking Bad")
 

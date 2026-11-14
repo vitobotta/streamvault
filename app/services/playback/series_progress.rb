@@ -52,11 +52,11 @@ module Playback
 
     def released?(episode)
       return false unless episode[:season].to_i.positive?
-      return true if episode[:released].blank?
+      return false if episode[:released].blank?
 
       Date.parse(episode[:released].to_s) <= Date.current
     rescue ArgumentError
-      true
+      false
     end
   end
 end

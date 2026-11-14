@@ -179,13 +179,16 @@ module Playback
       "#{show_title} S#{format('%02d', episode[:season].to_i)}E#{format('%02d', episode[:episode].to_i)}"
     end
 
+    # A null air date is a TBA placeholder in Cinemeta, and an unparseable one
+    # is unknown: neither counts as released, or the series actions would mark
+    # episodes that have not aired.
     def released?(episode)
       release_date = episode[:released]
-      return true if release_date.blank?
+      return false if release_date.blank?
 
       Date.parse(release_date.to_s) <= Date.current
     rescue ArgumentError
-      true
+      false
     end
 
     def duration_for(entry, duration_seconds)

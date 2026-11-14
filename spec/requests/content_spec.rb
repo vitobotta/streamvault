@@ -111,6 +111,30 @@ RSpec.describe "Content", type: :request do
         expect(entry.series_total_episodes_synced_at).to be_present
       end
 
+      it "does not count an episode with no air date" do
+        entry = create(:collection_entry, :show, user: user, imdb_id: "tt0903747")
+        stub_show_metadata(videos: [
+          { "id" => "tt0903747:1:1", "season" => 1, "episode" => 1, "name" => "Pilot", "released" => "2008-01-20" },
+          { "id" => "tt0903747:2:1", "season" => 2, "episode" => 1, "name" => "TBA", "released" => nil }
+        ])
+
+        get content_path(type: "show", imdb_id: "tt0903747")
+
+        expect(Nokogiri::HTML(response.body).text.squish).to include("0 of 1 episodes watched")
+        expect(entry.reload.series_total_episodes).to eq(1)
+        # The drawer stores the same label the player and the series actions use.
+        expect(response.body).to include("Breaking Bad S01E01")
+      end
+
+      it "keeps a stored series total when the catalogue fails" do
+        entry = create(:collection_entry, :show, user: user, imdb_id: "tt0903747", series_total_episodes: 62)
+        stub_request(:get, "https://v3-cinemeta.strem.io/meta/series/tt0903747.json").to_return(status: 500)
+
+        get content_path(type: "show", imdb_id: "tt0903747")
+
+        expect(entry.reload.series_total_episodes).to eq(62)
+      end
+
       it "shows the watched state for a completed movie" do
         create(:playback_progress, :movie, user: user, imdb_id: "tt1375666", completed: true)
         stub_request(:get, "https://v3-cinemeta.strem.io/meta/movie/tt1375666.json")
