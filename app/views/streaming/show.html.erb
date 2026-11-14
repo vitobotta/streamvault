@@ -180,6 +180,7 @@
           <span data-video-player-target="speedButtonLabel">1×</span>
         </button>
         <div data-video-player-target="speedMenu" role="menu"
+             data-action="keydown->video-player#onSpeedMenuKeydown"
              class="hidden absolute z-20 space-y-0.5 rounded-lg border border-white/20 bg-black/85 p-1.5 text-xs text-white/85"
              style="right: 0; bottom: 2.25rem; min-width: 6.5rem;">
           <% [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].each do |rate| %>

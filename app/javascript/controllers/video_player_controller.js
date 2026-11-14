@@ -2386,6 +2386,31 @@ export default class extends Controller {
     this.closeTrackMenus()
   }
 
+  // The menu is a radio group, so Up/Down walk the options instead of the
+  // document handler seeking the media by 15 seconds.
+  onSpeedMenuKeydown(event) {
+    if (event.key === "Escape") {
+      event.preventDefault()
+      this.closeTrackMenus()
+      this.speedMenuTarget.classList.add("hidden")
+      this.speedControlsTarget.querySelector("button")?.focus()
+      return
+    }
+
+    const direction = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0
+    if (direction === 0) return
+
+    const options = Array.from(this.speedMenuTarget.querySelectorAll("[data-video-player-speed]"))
+    if (options.length === 0) return
+
+    event.preventDefault()
+    const current = options.indexOf(event.target)
+    const next = current === -1
+      ? (direction > 0 ? 0 : options.length - 1)
+      : (current + direction + options.length) % options.length
+    options[next].focus()
+  }
+
   // defaultPlaybackRate survives the src reloads used when seeking a remux or
   // transcode, so the chosen speed sticks across a seek.
   applyPlaybackRate(rate) {
