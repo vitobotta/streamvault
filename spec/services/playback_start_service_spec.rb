@@ -22,6 +22,17 @@ RSpec.describe PlaybackStartService do
     allow(catalog).to receive(:metadata).and_return(ServiceResult.failure("metadata unavailable"))
   end
 
+  it "asks the catalogue once when the episode lookup fails" do
+    content_ref = ContentRef.new(imdb_id: "tt0903747", type: "show", season: 1, episode: 1)
+    allow(resolver).to receive(:start).with(content_ref).and_return(stream_result)
+
+    result = service.start(imdb_id: "tt0903747", type: "show", season: 1, episode: 1)
+
+    expect(result).to be_success
+    expect(result.data.duration).to eq(0)
+    expect(catalog).to have_received(:metadata).once
+  end
+
   it "builds a playback descriptor for an automatically selected stream" do
     content_ref = ContentRef.new(imdb_id: "tt1375666", type: "movie")
     allow(resolver).to receive(:start).with(content_ref).and_return(stream_result)

@@ -59,7 +59,8 @@
                  priority: index < 4 && @continue_watching.empty?,
                  link_path: content_path(type: item[:type], imdb_id: item[:imdb_id]),
                  subtitle: [item[:year], item[:type] == "show" ? "Series" : "Film"].compact.join(" · ") %>
-    <% end %>  <% end %>
+    <% end %>
+  <% end %>
 <% end %>
 
 <% if @recently_added.any? %>

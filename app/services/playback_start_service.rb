@@ -176,11 +176,11 @@ class PlaybackStartService
     requested = normalized_duration_seconds(requested_duration)
     return requested if requested.positive?
 
+    # A show resolves its episode list once.  When that lookup failed the
+    # duration is unknown, and asking again would only repeat the same timeout.
     if type == "show" && season.present? && episode.present?
-      content_ref = ContentRef.new(imdb_id: imdb_id, type: type, season: season, episode: episode)
-      context = episode_context(content_ref)
-      from_context = normalized_duration_seconds(context.success? ? context.data[:duration_seconds] : nil)
-      return from_context if from_context.positive?
+      context = episode_context(ContentRef.new(imdb_id: imdb_id, type: type, season: season, episode: episode))
+      return context.success? ? normalized_duration_seconds(context.data[:duration_seconds]) : 0
     end
 
     metadata_duration_seconds(imdb_id, type, season, episode)
