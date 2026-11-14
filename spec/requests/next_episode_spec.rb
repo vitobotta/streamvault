@@ -30,14 +30,22 @@ RSpec.describe "Next episode playback", type: :request do
     expect(PlaybackStartService).not_to receive(:new)
     expect { lookup }.not_to change(PlaybackProgress, :count)
     expect(response).to have_http_status(:ok)
-    expect(response.parsed_body).to include("available" => true, "season" => 1, "episode" => 2)
+    expect(response.parsed_body).to include(
+      "available" => true, "season" => 1, "episode" => 2,
+      "position" => "S01E02",
+      "title" => "Breaking Bad · S01E02 · Cat's in the Bag..."
+    )
     expect(response.parsed_body.fetch("url")).to eq(resume_streaming_index_path(after: playback, autoplay: "1"))
     expect(response.body).not_to include("download.real-debrid.com")
   end
 
   it "crosses a season boundary" do
     lookup signed_playback_for(user, imdb_id: "tt0903747", type: "show", season: 1, episode: 2)
-    expect(response.parsed_body).to include("available" => true, "season" => 2, "episode" => 1)
+    expect(response.parsed_body).to include(
+      "available" => true, "season" => 2, "episode" => 1,
+      "position" => "S02E01",
+      "title" => "Breaking Bad · S02E01 · Seven Thirty-Seven"
+    )
   end
 
   it "does not offer a next episode at the series finale" do
