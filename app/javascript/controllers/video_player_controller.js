@@ -9,6 +9,14 @@ const SUBTITLE_STARTUP_LOOK_BEHIND_SECONDS = 2
 const STREAM_STALL_TIMEOUT_MS = 60000
 const BUFFER_AHEAD_SECONDS = 30
 const BUFFER_AHEAD_MAX_WAIT_MS = 15000
+// A seek restarts the MSE session and its forward buffer from zero. Waiting
+// for the 30s startup cushion there meant every seek sat through ~11s of
+// encoding (30s of media at roughly 2.5x realtime on a 4K HEVC transcode)
+// before the first frame appeared. The seeking overlay already tells the user
+// the jump is in progress, so a seek resumes on a small cushion and lets the
+// paced producer build the rest. 4s covers the 2-4s write gaps observed on 4K
+// HEVC without letting playback outrun the encoder.
+const SEEK_RESUME_BUFFER_SECONDS = 4
 // After a stall, rebuild a meaningful buffer before resuming so ffmpeg
 // can catch up and transient upstream dips don't cause immediate
 // re-stall. 10s absorbs variable-rate sources (RealDebrid links from
@@ -31,10 +39,28 @@ const REBUFFER_STALL_TIMEOUT_MS = 20000
 // a slow source; the stall watchdog handles a genuinely dead source.
 const REBUFFER_MAX_WAIT_MS = 12000
 const MSE_FORWARD_BUFFER_HIGH_SECONDS = 45
-const MSE_FORWARD_BUFFER_LOW_SECONDS = 30
+// The gap between the high and low water marks is how long the reader
+// stays parked, and parking is what starves the response. One second of
+// playback drains one second of cushion, so 45→42 caps a park at ~3s.
+// The old 45→30 band parked for ~15s, which is longer than the app
+// server is willing to wait for a writable socket (see
+// MSE_READ_LIVENESS_MS) and killed the response a few times per film.
+const MSE_FORWARD_BUFFER_LOW_SECONDS = 42
 const MSE_PENDING_BUFFER_HIGH_BYTES = 16 * 1024 * 1024
 const MSE_PENDING_BUFFER_LOW_BYTES = 8 * 1024 * 1024
 const MSE_CAPACITY_POLL_MS = 250
+// A capacity wait shorter than this is ordinary loop noise; anything
+// longer means the read loop was genuinely parked (client backpressure).
+const MSE_READ_PAUSE_RECORD_MS = 5
+// Puma aborts a live response whose socket stays unwritable for 10s
+// (Puma::Const::WRITE_TIMEOUT in Response#fast_write_str). A parked
+// reader fills the kernel and proxy buffers, so Puma's wait expires and
+// the body dies mid-film: the player then burns its cushion and rebuilds
+// the MSE session, which is the black frame followed by a still frame
+// before playback resumes. Never let the response go unread this long,
+// even when the element is paused or frozen and the cushion stops
+// draining, so the write always makes progress inside Puma's window.
+const MSE_READ_LIVENESS_MS = 4000
 const MSE_MIME_TYPE = 'video/mp4; codecs="avc1.640028,mp4a.40.2"'
 const REMUX_PRESENTATION_PROBE_SECONDS = 0.001
 const REMUX_PRESENTATION_PROBE_TIMEOUT_MS = 500
@@ -42,6 +68,9 @@ const MAX_REMUX_PRESENTATION_OFFSET_SECONDS = 1
 const REMUX_SEEK_TOLERANCE_SECONDS = 0.25
 const REMUX_SEEK_TIMEOUT_MS = 500
 const INTERACTIVE_SELECTOR = "button, a, input, textarea, select, [contenteditable='true']"
+// Arrow-key seek step. Large enough to be a useful jump, small enough
+// that a couple of presses do not overshoot a scene.
+const KEYBOARD_SEEK_STEP_SECONDS = 15
 const SAFARI_AUTOPLAY_GUIDANCE_KEY = "streamvault:safari-autoplay-guidance-seen"
 
 export default class extends Controller {
@@ -54,7 +83,8 @@ export default class extends Controller {
       "sourceFilename", "backButton", "audioControls", "audioMenu", "audioOptions", "audioButtonLabel",
       "subtitleControls", "subtitleMenu", "subtitleOptions", "subtitleButtonLabel", "subtitleOverlay",
       "nextEpisodePrompt", "nextEpisodeButton", "nextEpisodeStatus", "nextEpisodeLabel",
-      "titleLabel", "positionLabel", "speedControls", "speedMenu", "speedButtonLabel"
+      "titleLabel", "positionLabel", "speedControls", "speedMenu", "speedButtonLabel",
+      "pipButton", "pipNotice"
     ]
   }
   static get values() {
@@ -149,6 +179,9 @@ export default class extends Controller {
     this.streamRecoveryActive = false
     this.playbackStarted = false
     this.isStalled = false
+    // Set by a seek; lets the restarted MSE session resume on a small
+    // forward buffer instead of the full startup cushion.
+    this.seekResumePending = false
     this.playbackObservation = null
     // True when the user deliberately paused (button/spacebar). The
     // rebuffer gate in maybeStartPlayback must never auto-resume a
@@ -193,6 +226,9 @@ export default class extends Controller {
     this.videoErrorHandler = (e) => this.onVideoError(e)
     this.videoTarget.addEventListener("error", this.videoErrorHandler)
 
+    this.pipChangeHandler = null
+    this.setupPictureInPicture()
+
     // Resume: transcode streams already start at the resume position
     // via ffmpeg -ss, so no client-side seek needed.  Direct play uses
     // the native <video> element which seeks via Range requests.
@@ -233,6 +269,7 @@ export default class extends Controller {
     clearTimeout(this.rebufferDeadlineTimer)
     clearTimeout(this.bufferAheadDeadlineTimer)
     clearTimeout(this.prematureEndRecoveryTimer)
+    clearTimeout(this.pipNoticeTimer)
     this.playbackStarted = false
     this.bufferAheadDeadline = null
     this.rebufferDeadline = null
@@ -241,6 +278,7 @@ export default class extends Controller {
     this.pendingAppendBuffer = null
     this.systemRebufferPaused = false
     this.cancelSeekDrag()
+    this.teardownPictureInPicture()
     this.element.removeEventListener("mousemove", this.mouseMoveHandler)
     document.removeEventListener("keydown", this.keydownHandler)
     document.removeEventListener("click", this.documentClickHandler)
@@ -963,6 +1001,15 @@ export default class extends Controller {
     // trigger recovery is this watchdog — neither onBufferUpdateEnd nor
     // a fresh "waiting" event will fire when no data ever arrives.
     this.startStallWatchdog()
+    // Per-stream diagnostics.  These are what separate a transport
+    // failure (bytes stopped arriving) from an application stall (reads
+    // parked on the capacity gate) in the telemetry we actually read.
+    this.streamBytesRead = 0
+    this.streamStartedAt = Date.now()
+    this.readPausedMs = 0
+    this.readPauseCount = 0
+    let firstChunk = true
+    let lastChunkAt = Date.now()
     try {
       const response = await fetch(this.urlWithPlaybackId(url), { signal: fetchController.signal })
       if (!response.ok) {
@@ -970,17 +1017,27 @@ export default class extends Controller {
         // A 502 means ffmpeg couldn't open the source (expired link,
         // auth failure).  Trigger recovery instead of leaving the
         // video frozen on "Buffering…".
+        this.reportStall("stream_error", {
+          fetch_error: `http_${response.status}`,
+          first_chunk: firstChunk,
+          last_chunk_age_ms: Math.max(0, Date.now() - lastChunkAt)
+        })
         this.handleStreamStall()
         return
       }
       const reader = response.body.getReader()
-      let firstChunk = true
       while (true) {
         // No per-chunk timeout: ffmpeg transcodes in bursts, and
         // pausing between bursts is normal. The stall watchdog on the
         // video element detects true playback stalls (buffer ran dry
         // with no new data arriving).
+        const capacityWaitStartedAt = Date.now()
         const capacityAvailable = await this.waitForMseReadCapacity(fetchController.signal)
+        const capacityWaited = Date.now() - capacityWaitStartedAt
+        if (capacityWaited >= MSE_READ_PAUSE_RECORD_MS) {
+          this.readPausedMs += capacityWaited
+          this.readPauseCount += 1
+        }
         if (!capacityAvailable) return
         const { done, value } = await reader.read()
         if (done) {
@@ -989,10 +1046,15 @@ export default class extends Controller {
           // is not actually near the end, recover by reconnecting.
           // Record the moment the body ended: the buffer state here says
           // whether the cushion was still healthy when the stream died.
-          this.reportStall("stream_end")
+          this.reportStall("stream_end", {
+            first_chunk: firstChunk,
+            last_chunk_age_ms: Math.max(0, Date.now() - lastChunkAt)
+          })
           this.handlePrematureStreamEnd()
           break
         }
+        this.streamBytesRead += value?.byteLength || 0
+        lastChunkAt = Date.now()
         if (firstChunk) {
           firstChunk = false
           this.streamRecoveryAttempts = 0
@@ -1013,15 +1075,24 @@ export default class extends Controller {
     } catch (e) {
       if (e.name === "AbortError") return
       console.warn("Stream fetch failed:", e)
-      this.reportStall("stream_error", { fetch_error: e?.name || "unknown" })
+      this.reportStall("stream_error", {
+        fetch_error: e?.name || "unknown",
+        // The name alone cannot tell a transport reset from a bug in
+        // this loop; keep the browser's own message (bounded, no URLs).
+        fetch_error_message: String(e?.message || "").slice(0, 120),
+        first_chunk: firstChunk,
+        last_chunk_age_ms: Math.max(0, Date.now() - lastChunkAt)
+      })
       this.handlePrematureStreamEnd()
-    }
-    finally {
+    } finally {
       if (this.fetchController === fetchController) this.fetchController = null
     }
   }
 
   async waitForMseReadCapacity(signal) {
+    let parkedAhead = null
+    let drainedAt = Date.now()
+
     while (!signal.aborted) {
       const bufferedAhead = this.playbackStarted
         ? this.bufferedAheadOfCurrent()
@@ -1040,6 +1111,17 @@ export default class extends Controller {
         bufferedAhead <= MSE_FORWARD_BUFFER_LOW_SECONDS &&
         pendingBytes <= MSE_PENDING_BUFFER_LOW_BYTES
       if (belowLowWater) {
+        this.mseReadPaused = false
+        return true
+      }
+
+      // A paused or frozen element keeps the cushion fixed, so the water
+      // marks alone would park this loop forever. Let a chunk through once
+      // the cushion has stopped draining so the response keeps moving and
+      // Puma's write timeout cannot tear it down.
+      if (parkedAhead === null || bufferedAhead < parkedAhead - 0.05) drainedAt = Date.now()
+      parkedAhead = bufferedAhead
+      if (Date.now() - drainedAt >= MSE_READ_LIVENESS_MS) {
         this.mseReadPaused = false
         return true
       }
@@ -1113,6 +1195,12 @@ export default class extends Controller {
       return
     }
 
+    // Before the startup gate has opened there is nothing to rebuffer:
+    // the startup overlay already owns this wait and maybeStartPlayback
+    // decides when to begin. Entering the gate here paused every rebuilt
+    // session on a black frame and showed "Buffering…" over it.
+    if (!this.playbackStarted) return
+
     // MSE path: Chrome does NOT set paused=true when the MSE buffer runs
     // dry — the video stays "playing" but currentTime stops advancing.
     // Debounce 200ms to filter genuinely transient waits (ffmpeg burst
@@ -1148,12 +1236,23 @@ export default class extends Controller {
     this.stopProgressWatchdog()
     this.isStalled = true
     this.systemRebufferPaused = true
+    // Everything below is per-hold state for the rebuffer telemetry: the
+    // durations are the only way to tell this hold apart from a session
+    // swap in the logs, and they pair with the eviction counters.
+    this.rebufferStartedAt = Date.now()
+    this.rebufferAheadAtBegin = this.bufferedAheadOfCurrent()
+    this.rebufferDeadlineFired = false
+    this.reportStall("rebuffer_begin", {
+      ahead_at_begin: Math.round(this.rebufferAheadAtBegin * 10) / 10,
+      had_buffered_ahead: this.hasBufferedAhead(2)
+    })
     this.showBufferingOverlay()
     this.videoTarget.pause()
     this.rebufferDeadline = Date.now() + REBUFFER_MAX_WAIT_MS
     clearTimeout(this.rebufferDeadlineTimer)
     this.rebufferDeadlineTimer = setTimeout(() => {
       this.rebufferDeadlineTimer = null
+      this.rebufferDeadlineFired = true
       this.maybeStartPlayback(true)
     }, REBUFFER_MAX_WAIT_MS)
   }
@@ -1163,6 +1262,22 @@ export default class extends Controller {
     this.rebufferDeadlineTimer = null
     this.rebufferDeadline = null
     this.systemRebufferPaused = false
+
+    // Report only a hold we deliberately started. setupMseSource,
+    // togglePlay and disconnect also clear this gate and must not
+    // manufacture a rebuffer that never happened.
+    const startedAt = this.rebufferStartedAt
+    if (startedAt == null) return
+    this.rebufferStartedAt = null
+    const aheadAtEnd = this.bufferedAheadOfCurrent()
+    this.reportStall("rebuffer_end", {
+      duration_ms: Math.max(0, Date.now() - startedAt),
+      ahead_at_begin: Math.round((this.rebufferAheadAtBegin ?? 0) * 10) / 10,
+      ahead_at_end: Math.round(aheadAtEnd * 10) / 10,
+      deadline_fired: this.rebufferDeadlineFired === true
+    })
+    this.rebufferAheadAtBegin = null
+    this.rebufferDeadlineFired = false
   }
 
   // Returns true if there's at least `minSeconds` (default 0.5s) of
@@ -1312,6 +1427,13 @@ export default class extends Controller {
   async reconnectFromCurrentPosition() {
     const targetSeconds = Math.floor(this.currentPlaybackPosition())
     const savedAttempts = this.streamRecoveryAttempts
+    // Record what the swap costs before it happens: the cushion is how
+    // much healthy playback the old session still had, and failure_age
+    // is how long the player waited before reconnecting.
+    this.reportStall("mse_swap", {
+      cushion_seconds: Math.round(this.bufferedAheadOfCurrent() * 10) / 10,
+      failure_age_ms: this.lastStallReportedAt ? Math.max(0, Date.now() - this.lastStallReportedAt) : 0
+    })
 
     // Backoff before the 2nd and 3rd reconnect attempts so a transient
     // upstream throttle has time to clear before we hammer the same RD
@@ -1360,6 +1482,12 @@ export default class extends Controller {
     const nextSrc = url.pathname + url.search
     this.streamingUrlValue = nextSrc
     this.element.dataset.videoPlayerStreamingUrlValue = nextSrc
+
+    // A recovery is a restart, not a cold start: the source was healthy
+    // until the response died, so resume on the small cushion instead of
+    // waiting for the 30s startup target. That wait was the visible black
+    // frame after every teardown.
+    this.seekResumePending = true
 
     this.setupMseSource(nextSrc)
 
@@ -1433,7 +1561,11 @@ export default class extends Controller {
     if (!this.playbackStarted) {
       const deadlineReached = deadlineTriggered ||
         (this.bufferAheadDeadline && Date.now() >= this.bufferAheadDeadline)
-      if (bufferedAhead >= BUFFER_AHEAD_SECONDS || (deadlineReached && bufferedAhead >= 0.5)) {
+      const startupBufferSeconds = this.seekResumePending
+        ? SEEK_RESUME_BUFFER_SECONDS
+        : BUFFER_AHEAD_SECONDS
+      if (bufferedAhead >= startupBufferSeconds || (deadlineReached && bufferedAhead >= 0.5)) {
+        this.seekResumePending = false
         this.playbackStarted = true
         this.bufferAheadDeadline = null
         clearTimeout(this.bufferAheadDeadlineTimer)
@@ -1504,21 +1636,32 @@ export default class extends Controller {
   }
 
   onKeyDown(event) {
-    if (event.repeat || this.isInteractiveElement(event.target)) return
+    if (event.key === " " || event.key === "Spacebar") {
+      if (event.repeat || this.isInteractiveElement(event.target)) return
+
+      event.preventDefault()
+      this.togglePlay()
+      this.showOverlayUi()
+      return
+    }
+
+    // Modifier chords belong to the browser/OS (Cmd+Left is "back" in most
+    // browsers), and a held key must not fire a burst of seeks: each one
+    // restarts ffmpeg or the MSE session.
+    if (event.repeat || event.metaKey || event.ctrlKey || event.altKey) return
+    if (this.isInteractiveElement(event.target)) return
+
+    const seekDelta = this.keyboardSeekDelta(event)
+    if (seekDelta !== null) {
+      if (event.shiftKey) return
+
+      event.preventDefault()
+      this.seekBySeconds(seekDelta)
+      this.showOverlayUi()
+      return
+    }
 
     switch (event.key) {
-      case " ":
-      case "Spacebar":
-        event.preventDefault()
-        this.togglePlay()
-        this.showOverlayUi()
-        return
-      case "ArrowLeft":
-      case "ArrowRight":
-        event.preventDefault()
-        this.seekRelative(event.key === "ArrowLeft" ? -10 : 10)
-        this.showOverlayUi()
-        return
       case "f":
       case "F":
         event.preventDefault()
@@ -1532,6 +1675,16 @@ export default class extends Controller {
         return
       default:
     }
+  }
+
+  keyboardSeekDelta(event) {
+    if (event.key === "ArrowRight" || event.key === "Right" || event.code === "ArrowRight") {
+      return KEYBOARD_SEEK_STEP_SECONDS
+    }
+    if (event.key === "ArrowLeft" || event.key === "Left" || event.code === "ArrowLeft") {
+      return -KEYBOARD_SEEK_STEP_SECONDS
+    }
+    return null
   }
 
   isInteractiveElement(element) {
@@ -1560,6 +1713,7 @@ export default class extends Controller {
   // save (navigateBack already saved).
   stopPlaybackForNavigation() {
     this.invalidatePlaybackRequest()
+    this.teardownPictureInPicture()
     if (this.hasVideoTarget) { try { this.videoTarget.pause() } catch {} }
     this.playbackCoordinator().disconnect()
     this.saveProgressSync()
@@ -1758,6 +1912,7 @@ export default class extends Controller {
     if (this.systemRebufferPaused || this.subtitlePlaybackHoldToken != null) return
 
     this.playbackStarted = true
+    this.seekResumePending = false
     clearTimeout(this.bufferingOverlayTimer)
     this.bufferingOverlayTimer = null
     this.isStalled = false
@@ -2288,6 +2443,290 @@ export default class extends Controller {
     this.closeTrackMenus()
   }
 
+  // ── Picture in picture ────────────────────────────────────────────
+  // Every playback path renders into the single <video> element, so PiP
+  // is a browser call on that element rather than a new stream. Chrome
+  // (Android included) exposes the standard API; Safari exposes
+  // webkitSetPresentationMode. A browser with neither keeps the button
+  // hidden instead of showing a dead control.
+
+  // Safari answers webkitSupportsPresentationMode for the mode it will
+  // really grant. iPhone returns false for inline video and only grants
+  // picture in picture from its native fullscreen player.
+  supportsWebkitPresentationMode() {
+    if (!this.hasVideoTarget) return false
+
+    const video = this.videoTarget
+    if (typeof video.webkitSetPresentationMode !== "function") return false
+    return typeof video.webkitSupportsPresentationMode === "function"
+      ? video.webkitSupportsPresentationMode("picture-in-picture") === true
+      : true
+  }
+
+  supportsStandardPictureInPicture() {
+    if (!this.hasVideoTarget) return false
+
+    // A missing flag means the browser does not implement the property.
+    // Only an explicit false means picture in picture is denied.
+    return typeof this.videoTarget.requestPictureInPicture === "function" &&
+      document.pictureInPictureEnabled !== false
+  }
+
+  pictureInPictureSupported() {
+    return this.supportsWebkitPresentationMode() || this.supportsStandardPictureInPicture()
+  }
+
+  pictureInPictureActive() {
+    if (!this.hasVideoTarget) return false
+
+    const video = this.videoTarget
+    return document.pictureInPictureElement === video ||
+      video.webkitPresentationMode === "picture-in-picture"
+  }
+
+  setupPictureInPicture() {
+    if (!this.hasPipButtonTarget || !this.hasVideoTarget) return
+    this.reportPictureInPictureDiagnostic("pip_setup", { supported: this.pictureInPictureSupported() })
+    if (!this.pictureInPictureSupported()) return
+
+    this.pipButtonTarget.classList.remove("hidden")
+    this.pipChangeHandler = () => this.updatePictureInPictureState()
+    this.videoTarget.addEventListener("enterpictureinpicture", this.pipChangeHandler)
+    this.videoTarget.addEventListener("leavepictureinpicture", this.pipChangeHandler)
+    this.videoTarget.addEventListener("webkitpresentationmodechanged", this.pipChangeHandler)
+    this.updatePictureInPictureState()
+  }
+
+  // Called from disconnect and before navigating away: a PiP window that
+  // outlives its page would keep a detached element on screen.
+  teardownPictureInPicture() {
+    if (!this.hasVideoTarget) return
+
+    if (this.pipChangeHandler) {
+      this.videoTarget.removeEventListener("enterpictureinpicture", this.pipChangeHandler)
+      this.videoTarget.removeEventListener("leavepictureinpicture", this.pipChangeHandler)
+      this.videoTarget.removeEventListener("webkitpresentationmodechanged", this.pipChangeHandler)
+      this.pipChangeHandler = null
+    }
+    if (this.pictureInPictureActive()) void this.exitPictureInPicture()
+  }
+
+  updatePictureInPictureState() {
+    if (!this.hasPipButtonTarget) return
+
+    const active = this.pictureInPictureActive()
+    const label = active ? "Exit picture in picture" : "Picture in picture"
+    this.pipButtonTarget.setAttribute("aria-pressed", active ? "true" : "false")
+    this.pipButtonTarget.setAttribute("aria-label", label)
+    this.pipButtonTarget.setAttribute("title", label)
+    this.pipButtonTarget.classList.toggle("text-iris-400", active)
+  }
+
+  isStandaloneWebApp() {
+    try {
+      return Boolean(globalThis.navigator?.standalone) ||
+        Boolean(globalThis.matchMedia?.("(display-mode: standalone)")?.matches)
+    } catch {
+      return false
+    }
+  }
+
+  // WebKit refuses picture in picture in iOS Home Screen web apps, with no
+  // API to detect it beyond the display mode itself. Say so instead of
+  // pretending the tap failed.
+  pictureInPictureBlockedByStandaloneMode() {
+    return this.isIOS() && this.isStandaloneWebApp()
+  }
+
+  async togglePictureInPicture() {
+    if (!this.hasVideoTarget) return
+    this.reportPictureInPictureDiagnostic("pip_tap")
+    if (this.pictureInPictureActive()) return this.exitPictureInPicture()
+
+    if (this.pictureInPictureBlockedByStandaloneMode()) {
+      this.reportPictureInPictureDiagnostic("pip_standalone_blocked")
+      this.showPictureInPictureNotice("Picture in picture isn't available in the Home Screen app. Open stream.botta.me in Safari to use it.")
+      return
+    }
+
+    if (!this.pictureInPictureSupported()) return this.showPictureInPictureNotice()
+
+    const video = this.videoTarget
+    // iOS only enters PiP for an element that is playing. The click is
+    // the gesture both play() and the PiP request need, so resume here
+    // rather than leaving the user with a control that does nothing.
+    if (video.paused) {
+      this.userPaused = false
+      void this.requestPlayback()
+    }
+
+    if (await this.enterPictureInPicture()) {
+      this.reportPictureInPictureDiagnostic("pip_entered")
+      return
+    }
+
+    // iPhone rejects both inline APIs and grants PiP only from its native
+    // fullscreen player, whose own control bar carries the system PiP
+    // button. Opening that player beats a tap with no visible effect; the
+    // retry inside it covers devices that accept the request once the
+    // native player owns the element.
+    if (this.isIOS()) {
+      this.reportPictureInPictureDiagnostic("pip_fallback_fullscreen")
+      this.openNativePlayerForPictureInPicture()
+      this.showPictureInPictureNotice("Picture in picture is not available here. Opening the fullscreen player instead.")
+    }
+    this.updatePictureInPictureState()
+  }
+
+  // Safari's presentation mode is the documented path there and keeps
+  // working on iPhones whose standard request rejects. The standard API
+  // stays as the fallback for Chromium and Firefox.
+  async enterPictureInPicture() {
+    const video = this.videoTarget
+
+    if (this.supportsWebkitPresentationMode()) {
+      try {
+        video.webkitSetPresentationMode("picture-in-picture")
+        // WebKit refuses a mode by doing nothing at all, so trust the
+        // element state rather than the call returning.
+        if (await this.confirmPictureInPicture()) return true
+        this.reportPictureInPictureDiagnostic("pip_noop", { stage: "webkit" })
+      } catch (error) {
+        this.reportPictureInPictureDiagnostic("pip_error", { stage: "webkit", error })
+        console.warn("Picture in picture could not start (webkit):", error?.name || "Error")
+      }
+    }
+
+    if (this.supportsStandardPictureInPicture()) {
+      try {
+        await video.requestPictureInPicture()
+        return true
+      } catch (error) {
+        this.reportPictureInPictureDiagnostic("pip_error", { stage: "standard", error })
+        console.warn("Picture in picture could not start:", error?.name || "Error")
+      }
+    }
+
+    return false
+  }
+
+  // Give the presentation-mode switch a moment to land, then report what
+  // the element actually shows. iPhone answers the setter with silence,
+  // so the mode change is the only honest signal.
+  confirmPictureInPicture(timeoutMs = 400) {
+    if (this.pictureInPictureActive()) return Promise.resolve(true)
+    if (!this.hasVideoTarget) return Promise.resolve(false)
+
+    const video = this.videoTarget
+    return new Promise((resolve) => {
+      let settled = false
+      const finish = (value) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        video.removeEventListener?.("webkitpresentationmodechanged", check)
+        video.removeEventListener?.("enterpictureinpicture", check)
+        resolve(value)
+      }
+      const check = () => { if (this.pictureInPictureActive()) finish(true) }
+      const timer = setTimeout(() => finish(this.pictureInPictureActive()), timeoutMs)
+
+      video.addEventListener?.("webkitpresentationmodechanged", check)
+      video.addEventListener?.("enterpictureinpicture", check)
+    })
+  }
+
+  openNativePlayerForPictureInPicture() {
+    const video = this.videoTarget
+    if (video.webkitDisplayingFullscreen) return
+    if (typeof video.webkitEnterFullscreen !== "function") return
+
+    const retryInFullscreen = () => {
+      video.removeEventListener("webkitbeginfullscreen", retryInFullscreen)
+      void this.enterPictureInPicture()
+    }
+
+    video.addEventListener("webkitbeginfullscreen", retryInFullscreen)
+    try {
+      video.webkitEnterFullscreen()
+    } catch (error) {
+      video.removeEventListener("webkitbeginfullscreen", retryInFullscreen)
+      console.warn("Picture in picture could not open the native player:", error?.name || "Error")
+    }
+  }
+
+  showPictureInPictureNotice(message = "Picture in picture is not available for this video.") {
+    if (!this.hasPipNoticeTarget) return
+
+    this.pipNoticeTarget.textContent = message
+    this.pipNoticeTarget.classList.remove("hidden")
+    clearTimeout(this.pipNoticeTimer)
+    this.pipNoticeTimer = setTimeout(() => {
+      this.pipNoticeTarget.classList.add("hidden")
+      this.pipNoticeTimer = null
+    }, 6000)
+  }
+
+  // Temporary diagnosis for the iPhone path: the server log carries the
+  // API surface this device actually exposes, which the phone itself
+  // cannot show without a cable. Whitelisted fields only.
+  reportPictureInPictureDiagnostic(eventName, { stage = null, error = null, supported = null } = {}) {
+    try {
+      const video = this.videoTarget
+      const enabled = document.pictureInPictureEnabled
+      const flags = [
+        `wk=${typeof video?.webkitSetPresentationMode === "function" ? 1 : 0}`,
+        `wkSup=${this.supportsWebkitPresentationMode() ? 1 : 0}`,
+        `std=${typeof video?.requestPictureInPicture === "function" ? 1 : 0}`,
+        `flag=${enabled === undefined ? "u" : (enabled ? 1 : 0)}`,
+        `ios=${this.isIOS() ? 1 : 0}`,
+        `sa=${this.isStandaloneWebApp() ? 1 : 0}`,
+        `sup=${supported === null ? "?" : (supported ? 1 : 0)}`,
+        `src=${String(video?.currentSrc || video?.src || "").split(":")[0].slice(0, 5)}`,
+        `full=${video?.webkitDisplayingFullscreen ? 1 : 0}`
+      ].join(";")
+
+      const body = JSON.stringify({
+        event: eventName,
+        playback_id: this.playbackId,
+        path: this.playbackPath(),
+        ready_state: video?.readyState ?? 0,
+        paused: Boolean(video?.paused),
+        fetch_error: [ stage, error?.name ].filter(Boolean).join(":") || "none",
+        fetch_error_message: flags
+      })
+
+      Promise.resolve(fetch("/streaming/stall_telemetry", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": document.querySelector("meta[name='csrf-token']")?.content
+        },
+        body,
+        keepalive: true
+      })).catch(() => {})
+    } catch {
+      // Diagnostics must never break playback.
+    }
+  }
+
+  async exitPictureInPicture() {
+    if (!this.hasVideoTarget) return
+
+    const video = this.videoTarget
+    try {
+      if (video.webkitPresentationMode === "picture-in-picture" &&
+        typeof video.webkitSetPresentationMode === "function") {
+        video.webkitSetPresentationMode("inline")
+      } else if (document.pictureInPictureElement && document.exitPictureInPicture) {
+        await document.exitPictureInPicture()
+      }
+    } catch (error) {
+      console.warn("Picture in picture could not exit:", error?.name || "Error")
+    }
+    this.updatePictureInPictureState()
+  }
+
   // ── Fullscreen ────────────────────────────────────────────────────
 
   toggleFullscreen() {
@@ -2377,8 +2816,25 @@ export default class extends Controller {
 
   performSeek(percent) {
     if (this.knownDuration <= 0) return
-    const targetSeconds = Math.floor(percent * this.knownDuration)
+    this.seekToSeconds(Math.floor(percent * this.knownDuration))
+  }
+
+  // Keyboard seeking jumps by a fixed offset from the current position
+  // instead of a percentage, then reuses the same restart path as a
+  // click on the seek bar.
+  seekBySeconds(offsetSeconds) {
+    if (this.knownDuration <= 0) return
+    const position = this.currentPlaybackPosition()
+    const targetSeconds = Math.max(0, Math.min(this.knownDuration, position + offsetSeconds))
+    this.seekToSeconds(targetSeconds)
+  }
+
+  seekToSeconds(requestedSeconds) {
+    if (this.knownDuration <= 0) return
+    const duration = this.knownDuration
+    const targetSeconds = Math.max(0, Math.min(duration, Math.floor(requestedSeconds)))
     if (targetSeconds === Math.floor(this.currentPlaybackPosition())) return
+    this.seekResumePending = true
 
     if (this.isSeeking) {
       if (this.isRemuxDirectPlay()) {

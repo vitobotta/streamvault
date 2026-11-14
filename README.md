@@ -1,36 +1,66 @@
 <p align="center">
-  <img src="public/icon.png" width="120" height="120" alt="StreamVault logo">
+  <img src="public/icon.png" width="104" height="104" alt="StreamVault logo">
 </p>
 
 <h1 align="center">StreamVault</h1>
 
-<p align="center"><em>Your personal cinema: search, stream, and manage movies and TV shows, all in one place.</em></p>
+<p align="center">
+  <strong>Your own cinema, in a browser tab.</strong><br>
+  Self-hosted movies and TV with direct play, smart transcoding, and no media library to store.
+</p>
 
 <p align="center">
   <a href="https://github.com/vitobotta/streamvault/actions/workflows/ci.yml"><img src="https://github.com/vitobotta/streamvault/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
   <a href="https://github.com/vitobotta/streamvault/releases/latest"><img src="https://img.shields.io/github/v/release/vitobotta/streamvault?color=4f63e6" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/ruby-4.0.5-CC342D?logo=ruby&amp;logoColor=white" alt="Ruby 4.0.5">
-  <img src="https://img.shields.io/badge/rails-8.1-CC0000?logo=rubyonrails&amp;logoColor=white" alt="Rails 8.1">
+  <a href="https://github.com/vitobotta/streamvault/blob/main/LICENSE"><img src="https://img.shields.io/github/license/vitobotta/streamvault?color=4f63e6" alt="MIT license"></a>
+  <a href="https://github.com/vitobotta/streamvault/stargazers"><img src="https://img.shields.io/github/stars/vitobotta/streamvault?style=social" alt="GitHub stars"></a>
+  <a href="https://github.com/vitobotta/streamvault/discussions"><img src="https://img.shields.io/github/discussions/vitobotta/streamvault" alt="Discussions"></a>
 </p>
 
 <p align="center">
-  <a href="#screenshots">Screenshots</a> ·
+  <a href="https://streamvault.page"><strong>streamvault.page</strong></a> ·
+  <a href="#why-streamvault">Why StreamVault</a> ·
+  <a href="#how-it-compares">Comparisons</a> ·
   <a href="#features">Features</a> ·
   <a href="#quick-start">Quick start</a> ·
-  <a href="#environment-variables">Configuration</a> ·
-  <a href="#troubleshooting">Troubleshooting</a> ·
-  <a href="#testing">Development</a>
+  <a href="#sponsor">Sponsor</a>
 </p>
+
+<p align="center">
+  <a href="https://github.com/sponsors/vitobotta"><img src="https://img.shields.io/badge/Sponsor-%E2%9D%A4-ea4aaa?style=for-the-badge&amp;logo=github" alt="Sponsor on GitHub"></a>
+</p>
+
+> **StreamVault is built and maintained by one developer.**
+> No company, no venture money, no paid tier. If it has earned a place in your setup, sponsoring is the most direct way to fund the next release.
+>
+> **[Become a sponsor](https://github.com/sponsors/vitobotta)** · from $1/month
 
 ---
 
-## What is StreamVault?
+## Why StreamVault
 
-StreamVault is a self-hosted Rails application for discovering, organising, and watching media in a browser. It combines metadata and stream providers with your own RealDebrid account, then chooses the lightest playback path the browser can handle: direct play, video remuxing, or FFmpeg transcoding.
+Most media setups ask you to choose between a pile of moving parts and a client app on every device. StreamVault is one Docker stack and one URL.
 
-The player supports movies and episodic TV, multiple audio tracks, embedded and external subtitles, progress tracking, automatic recovery, and responsive desktop/mobile controls.
+- **Nothing to download, nothing to store.** Streams are resolved on demand. No terabytes of media, no download queue, no files to rename or deduplicate.
+- **One URL for every screen.** Phone, tablet, laptop, TV browser. No app to install, no addon to configure per device, no platform support matrix.
+- **It picks the cheapest way to play.** Direct play when the browser can handle the source, a low-cost remux when it nearly can, and a full transcode only when it cannot. Older hardware plays modern files.
+- **A real household setup.** Separate accounts with their own library, history, wishlist, and language preferences. Child accounts with age limits and a lock password.
+- **Private by design.** Your RealDebrid key is encrypted at rest, never written to logs, and never sent to the browser. No analytics, no third-party telemetry.
+- **Open source, MIT.** Read it, change it, self-host it. There is no account with the author and no feature held back for a paid plan.
 
-StreamVault does not ship with a media catalogue or maintain a persistent library of source files. Media is requested from the services you configure and delivered on demand; source data may pass through temporary buffers while it is proxied or transcoded.
+## How it compares
+
+|  | **StreamVault** | **Plex + Sonarr/Radarr** | **Stremio** |
+|---|---|---|---|
+| **Time to first movie** | One Compose stack, about ten minutes | Hours: indexers, download client, paths, naming, storage | Install the app, then add sources |
+| **Media storage** | None. Streamed on demand | Full copies, often several terabytes | None |
+| **Software to install** | A browser | Plex app on every platform | Stremio app on every platform |
+| **Transcoding** | Built in, automatic, per stream | Plex Pass for hardware transcoding | Depends on the device's codec support |
+| **Accounts** | Per-user library, history, and languages | Managed users | One library per account |
+| **Child controls** | Age caps, fail-closed, lock password | Rating limits per managed user | Not built in |
+| **Running cost** | Server plus RealDebrid | Server, disk, Plex Pass, indexers, VPN | RealDebrid only |
+
+Different tools for different jobs. If you want a permanent offline library, a download stack is the right choice. StreamVault is for watching now, in a browser, with as little machinery as possible.
 
 ## Screenshots
 
@@ -47,166 +77,102 @@ StreamVault does not ship with a media catalogue or maintain a persistent librar
   <sub>On a phone: the same rails, with a floating bottom bar.</sub>
 </p>
 
-## Disclaimer & responsible use
+## Features
 
-StreamVault is a **general-purpose media client** - like a web browser or BitTorrent client, it is neutral regarding what users choose to access. The repository does not include or publish copyrighted media or pre-configured lists of pirated material. The running application proxies or transcodes only the data requested by its operator and may buffer it temporarily for playback. All discovery and streaming is driven by the user's own choices and subscriptions.
+### Find something to watch
 
-**The author does not endorse, encourage, or support the use of StreamVault to access copyrighted content without proper authorisation.** Users are solely responsible for ensuring they have the legal right to access any content they stream. StreamVault is intended for use with:
+- **Search** any movie or show, with posters, plots, cast, genres, and age ratings.
+- **Ratings** from IMDb, Rotten Tomatoes, and Metacritic on every title.
+- **Popular and trending** rows for films and TV, refreshed from live metadata.
+- **Recommendations** based on what you have watched, using TMDB's collaborative filtering.
+- **Rich title pages** with backdrop, overview, cast, ratings, seasons, and every available source.
 
-- Public domain films and media
-- Creative Commons and open-licensed content
-- Any other content the user has the legal right to access
+### Play it properly
 
-This project is provided as-is for educational and personal use. The author accepts no responsibility for how the application is used.
+- **Three playback paths**: native direct play, video remux, and full transcode. StreamVault picks the lightest one the source and browser can support.
+- **Audio track selection** when a release carries multiple languages.
+- **Subtitle support** for embedded text tracks and image formats (PGS, VobSub), with SubDL as a fallback when nothing is embedded. Bitmap subtitles are burned in because browsers cannot render them.
+- **Timestamp correction** keeps audio and video aligned after a resume, a seek, or a recovery.
+- **Automatic stall recovery** reconnects the stream and preserves the playhead before asking you to intervene.
+- **iPhone support** through an HLS fallback for Safari, which lacks the MSE support the main player relies on.
+- **Keyboard controls**, playback speed, volume, and precise seeking.
+- **Resume and progress tracking** saved every few seconds and shared across sessions.
+
+### Watch TV like TV
+
+- **Season and episode browser** with air dates, overviews, and per-episode progress.
+- **Auto-advance** to the next episode when one finishes.
+- **Skip to the next episode** at a closing-credits chapter, or in the final seconds when no chapter exists. It is offered, never forced: no countdown, no automatic skip.
+
+### A household, not a single login
+
+- **Separate accounts**, each with its own library, wishlist, watch history, and recommendations.
+- **Child accounts** limited by age rating, resolved from OMDB and TMDB certifications and failing closed when a rating cannot be found.
+- **Child lock** for turning restrictions off or changing the age limit.
+- **Language preferences**: 17 audio languages, filtered and sorted per user, with a default track.
+- **Sign-ups disabled by default**, so a public instance stays private until you open it.
+
+### Built to be left alone
+
+- **One Compose stack**: Rails, PostgreSQL, and Solid Queue in a single deployment.
+- **Encrypted secrets**: RealDebrid keys are encrypted at rest with Active Record Encryption.
+- **Health endpoint** at `/up` for uptime checks.
+- **No analytics and no call-home.** The only outbound requests are to the metadata, stream, and subtitle services listed above.
+- **MIT licensed**, with no telemetry and no paid edition.
 
 ## How it works
 
 ```
-You (browser)
+Browser
   │
   ▼
-StreamVault (Rails app)
-  │
-  ├──► Cinemeta / OMDB    →  provides metadata, artwork, and ratings
-  │
-  ├──► Torrentio / Comet  →  finds available streams
-  │
-  ├──► RealDebrid         →  resolves the selected stream to a direct link
-  │
-  └──► Playback layer
-       ├── Direct proxy   →  passes compatible media to the browser
-       └── FFmpeg         →  remuxes or transcodes incompatible media,
-                             synchronises timestamps, and burns bitmap subtitles
+StreamVault (Rails)
+  ├──► Cinemeta / OMDB   metadata, artwork, ratings
+  ├──► Torrentio / Comet available streams
+  ├──► RealDebrid        resolves the selected stream
+  └──► Playback
+       ├── direct proxy  compatible media, no encoder
+       └── FFmpeg        remux or transcode, subtitle burn-in, HLS
 ```
 
-1. **Search**: Type a title. StreamVault queries metadata catalogues (Cinemeta) and returns matching content with posters, ratings, and plots.
-2. **Pick a stream**: Each title shows a list of available streams with quality (4K, 1080p, 720p), file size, and audio languages. Streams are sorted by your language preferences.
-3. **Press play**: StreamVault resolves the selected stream through RealDebrid and probes its tracks. Compatible media plays directly; other sources are remuxed or transcoded into browser-friendly H.264/AAC fragmented MP4 or HLS. Audio timestamps are normalised, and bitmap subtitles are burned in when necessary.
-4. **Watch**: The custom in-browser player handles playback with seeking, audio track switching, subtitles, and progress tracking. Close the tab and come back later - you'll resume right where you left off.
+1. **Search.** StreamVault queries metadata catalogues and returns matching titles with posters, ratings, and plots.
+2. **Pick a source.** Each title lists available streams with quality, size, and audio languages, sorted by your preferences.
+3. **Press play.** StreamVault resolves the source through RealDebrid, probes its tracks, and chooses direct play, remux, or transcode.
+4. **Keep watching.** Progress is saved as you watch, so the same title resumes on any device you sign in from.
 
-## Features
+StreamVault does not ship a catalogue and does not keep a media library. Bytes pass through the server on demand and may be buffered while proxied or transcoded.
 
-### Discovery & browsing
-- **Search**: Find any movie or TV show by title, with rich metadata: posters, plots, cast, genres, age ratings.
-- **Ratings**: IMDb, Rotten Tomatoes, and Metacritic scores displayed on every title (via OMDB).
-- **Popular & Trending**: Browse what's popular and trending right now, for both movies and shows.
-- **Recommendations**: A "Recommended for You" carousel that learns from your watch history using TMDB's collaborative filtering ("viewers also watched…").
-- **Content detail pages**: Full overview with poster, plot, cast, ratings, and available streams.
+## What it connects to
 
-### Library management
-- **Library**: Add movies and shows to your personal library. Track what you've watched and what's pending.
-- **Wishlist**: Save content for later. Move items to your library when you're ready to watch.
-- **Watch History**: See everything you've watched, with progress indicators. Clear history anytime.
-- **Continue Watching**: Resume any title from where you left off, right from the home page.
+| Service | Role | Needed |
+|---|---|---|
+| [RealDebrid](https://real-debrid.com) | Resolves the selected stream into a direct link | Required |
+| [OMDB](https://www.omdbapi.com/apikey.aspx) | IMDb, Rotten Tomatoes, and Metacritic ratings | Required, free key |
+| [Torrentio](https://torrentio.strem.fun) | Finds available streams | Default provider |
+| [Comet](proxy/comet) | Self-hosted alternative stream provider | Optional |
+| [Cinemeta](https://v3-cinemeta.strem.io) | Titles, posters, plots, episodes | Built in, no key |
+| [TMDB](https://www.themoviedb.org/settings/api) | Recommendations from your watch history | Optional, free key |
+| [SubDL](https://subdl.com/panel/api) | External subtitles when none are embedded | Optional, free key |
 
-### TV show support
-- **Season & episode browser**: Browse seasons and episodes with air dates, overviews, and progress tracking per episode.
-- **Episode streaming**: Stream individual episodes with the same quality and language options as movies.
-- **Auto-advance**: When an episode finishes, the next one is ready to go.
-- **Skip to the next episode**: An optional button appears at a labelled closing-credits chapter, or during the last 90 seconds when no usable marker exists (capped to the final 10% of short episodes). It is offered only when a following catalogue episode exists and is not known to be unreleased; there is no countdown or automatic skip, and seeking back hides it.
+## Quick start
 
-### Streaming & playback
-- **Adaptive playback paths**: Uses native direct play when possible, low-cost video remuxing when safe, and full transcoding only when required.
-- **Custom video player**: Built from scratch with seeking, volume control, playback speed, and full keyboard support.
-- **Audio track selection**: Switch between audio languages when a stream has multiple tracks.
-- **A/V timestamp synchronisation**: Corrects source timestamp gaps and keeps resumed, sought, and recovered streams aligned.
-- **Subtitles**: Select from embedded subtitle tracks (text and image-based). Falls back to external subtitles from SubDL when none are embedded.
-- **Burned subtitles**: Image-based subtitles (PGS, VobSub) are burned onto the video via FFmpeg since browsers can't render them natively.
-- **Resume playback**: Automatically resumes from your last position.
-- **Stall recovery**: If a stream stalls, the player attempts automatic recovery before failing.
-- **Progress tracking**: Watch progress is saved every few seconds and synced across sessions.
-
-### Personalisation
-- **Language preferences**: Choose your preferred audio languages (17 supported). Streams are filtered and sorted to prioritise your languages.
-- **Default language**: Set which language is selected by default when starting a stream.
-- **Per-user configuration**: Each user has their own library, history, wishlist, and settings. API keys are encrypted at rest.
-
-### Interface
-- **Cinema-style dark theme**: Cool ink surfaces, an indigo accent kept for the primary action and progress, and an editorial serif for titles paired with a cleaner sans for controls.
-- **Responsive layout**: A persistent sidebar on desktop and a floating bottom bar on mobile.
-- **Content rails**: Horizontally scrollable rows with title counts, scroll arrows and per-card progress.
-- **Designed empty states**: Library, wishlist, search and history explain what belongs there and offer the next action instead of a blank page.
-
-## Integrations & services
-
-StreamVault relies on several external services. Here's what each one does and how to get set up:
-
-| Service | Role | Required? | How to get access |
-|---------|------|-----------|-------------------|
-| **RealDebrid** | Resolves selected files and provides direct streaming links | **Yes** - streaming won't work without it | Sign up at [real-debrid.com](https://real-debrid.com), then get your API key at [real-debrid.com/apitoken](https://real-debrid.com/apitoken) |
-| **Torrentio** | Finds available streams for a given title | Yes (default provider) | Works out of the box with the public instance. May need a proxy if your server IP is blocked (see below) |
-| **Comet** | Alternative stream provider - self-hosted, independent of Torrentio | Optional (recommended) | Self-host via Docker - see [proxy/comet](proxy/comet) |
-| **Cinemeta** | Provides content metadata (titles, posters, plots, episodes) | Yes (built-in) | No setup needed - uses the public Stremio metadata service |
-| **OMDB** | Enriches content with IMDb, Rotten Tomatoes, and Metacritic ratings | Yes | Get a free API key at [omdbapi.com/apikey.aspx](https://www.omdbapi.com/apikey.aspx) |
-| **TMDB** | Powers the "Recommended for You" feature using your watch history | Optional | Create an account at [themoviedb.org](https://www.themoviedb.org), then get a Read Access Token at [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api) |
-| **SubDL** | Provides external subtitles when embedded ones aren't available | Optional | Get a free API key at [subdl.com/panel/api](https://subdl.com/panel/api) |
-
-### How the services work together
-
-- **Torrentio and Comet** are both stream *providers*. They search torrent networks for available streams and return a list with quality, size, and language information. You can use either one or both - when both are configured (`STREAM_PROVIDER=auto`), StreamVault queries them in parallel and picks the best stream regardless of which provider found it. If one is down, the other fills in.
-
-- **RealDebrid** is the *resolver*. Once you pick a stream, StreamVault sends its magnet link to RealDebrid, which retrieves or resolves the selected file and returns a direct HTTPS link. StreamVault does not add the source file to a persistent local media library, but its bytes pass through the server on demand and may be buffered temporarily during proxying or transcoding.
-
-- **FFmpeg** is the *translator*. StreamVault bypasses it for sources the browser can play directly. Otherwise FFmpeg copies compatible video when safe, normalises audio to AAC with timestamp correction, or re-encodes incompatible/UHD video to browser-friendly 1080p H.264. It also produces HLS for iPhone playback and burns image-based subtitles that browsers cannot render.
-
-- **Cinemeta and OMDB** are the *librarians*. Cinemeta (Stremio's metadata service) provides titles, posters, plots, cast, and episode lists. OMDB adds ratings from IMDb, Rotten Tomatoes, and Metacritic.
-
-- **TMDB** is the *recommender*. It looks at what you've watched and finds similar content that other viewers enjoyed - powering the "Recommended for You" carousel.
-
-- **SubDL** is the *subtitle backup*. When a stream has no embedded subtitles, StreamVault fetches external ones from SubDL so you always have subtitles available.
-
-## Deployment
-
-### Minimum server requirements
-
-The most demanding component is **FFmpeg transcoding**, which happens on-the-fly when a stream needs format conversion. For smooth playback:
-
-| Component | Minimum | Recommended |
-|-----------|---------|-------------|
-| **CPU** | 2 cores | 4+ cores (transcoding 1080p in real time is CPU-intensive) |
-| **RAM** | 2 GB | 4 GB+ (Rails + Postgres + FFmpeg + jemalloc) |
-| **Storage** | 10 GB | 20 GB+ (Postgres data, logs, Docker images) |
-| **Network** | 50 Mbps | 100 Mbps+ (streaming bandwidth) |
-| **OS** | Any Linux with Docker | Ubuntu/Debian LTS |
-
-> **Note on transcoding:** Compatible H.264/AAC MP4 sources can play directly without FFmpeg. At the beginning of a compatible source, StreamVault may copy the video while normalising audio; after a resume or seek, it may re-encode video to prevent keyframe pre-roll from putting audio and video on different timelines. The heaviest cases are 4K/UHD and incompatible codecs such as HEVC or AV1. VideoToolbox acceleration is used when StreamVault runs natively on supported macOS hardware; Docker does not expose it by default.
-
-### Prerequisites
-
-- A server or VPS with **Docker** and **Docker Compose** installed
-- A **RealDebrid subscription** (starts at ~€3/month)
-- API keys for **OMDB** (free) and optionally **TMDB** (free) and **SubDL** (free)
-
-### Quick start
+**You need:** a Linux server or VPS with Docker and Docker Compose, a [RealDebrid](https://real-debrid.com) account, and a free [OMDB API key](https://www.omdbapi.com/apikey.aspx). A 2-core, 2 GB machine is enough for direct play; 4 cores and 4 GB or more keeps transcoding comfortable.
 
 ```bash
-# Clone the repository
 git clone https://github.com/vitobotta/streamvault.git
 cd streamvault
-
-# Create environment config
 cp .env.example .env
-
-# Generate secrets, then copy each result to the matching .env variable
-openssl rand -hex 64  # SECRET_KEY_BASE
-openssl rand -hex 32  # run separately for each encryption key and POSTGRES_PASSWORD
-
-# Edit .env - see the configuration table below
+openssl rand -hex 64   # SECRET_KEY_BASE
+openssl rand -hex 32   # run separately for each encryption key and POSTGRES_PASSWORD
 ${EDITOR:-nano} .env
-
-# Build and start the container
 docker compose up -d --build
 ```
 
-At minimum, set `SECRET_KEY_BASE`, the three `ACTIVE_RECORD_ENCRYPTION_*` values, `POSTGRES_PASSWORD`, and `OMDB_API_KEY`. Set `APP_DOMAIN` for a public deployment. `RAILS_MASTER_KEY` is only needed if you add Rails encrypted credentials.
-
-The app is available at `http://localhost:3000` unless you change `PORT`.
-
-Assets are precompiled inside the image during build - no local Ruby or Node installation needed. The PostgreSQL database is persisted in a local `./data` directory and survives container rebuilds.
+Set at minimum `SECRET_KEY_BASE`, the three `ACTIVE_RECORD_ENCRYPTION_*` values, `POSTGRES_PASSWORD`, and `OMDB_API_KEY`. Set `APP_DOMAIN` for a public deployment. The app is then on `http://localhost:3000` unless you changed `PORT`.
 
 ### Create your first user
 
-Sign-ups are disabled by default for security. Create your user via the Rails console:
+Sign-ups are disabled by default. Create the first account from the Rails console:
 
 ```bash
 docker compose exec web bin/rails c
@@ -215,21 +181,11 @@ docker compose exec web bin/rails c
 > puts password
 ```
 
-Store the generated password in your password manager, then sign in and change it from your profile if desired.
+Save the password, sign in, and change it from Settings if you like. To allow self-registration, set `ENABLE_SIGNUPS=true` and restart.
 
-To enable self-registration, set `ENABLE_SIGNUPS=true` in `.env` and restart.
+### Add your RealDebrid key
 
-### Configure your RealDebrid key
-
-After logging in, go to **Settings** and enter your RealDebrid API key. The app verifies the key automatically and shows a confirmation. Your key is encrypted at rest using Active Record Encryption - it never appears in logs or is transmitted in plain text.
-
-### Auto-start on boot
-
-Containers restart automatically after crashes and system reboots (`restart: unless-stopped`). Ensure the Docker daemon is enabled at boot:
-
-```bash
-sudo systemctl enable docker
-```
+Open **Settings**, paste your RealDebrid API key from [real-debrid.com/apitoken](https://real-debrid.com/apitoken), and save. StreamVault verifies it immediately. The key is encrypted at rest and never appears in logs.
 
 ### Updating
 
@@ -238,38 +194,34 @@ git pull
 docker compose up -d --build
 ```
 
-### Environment variables
+The database lives in `./data` and survives rebuilds. Containers restart on crash and on boot (`restart: unless-stopped`); make sure Docker itself starts at boot with `sudo systemctl enable docker`.
 
-| Variable | Description | Default |
+## Configuration
+
+| Variable | Purpose | Default |
 |---|---|---|
-| `RAILS_MASTER_KEY` | Master key for Rails encrypted credentials; only required if you create an encrypted credentials file | Optional |
-| `SECRET_KEY_BASE` | Session cookie secret (generate with `openssl rand -hex 64`) | Required |
-| `ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY` | Encryption key for API keys (generate with `openssl rand -hex 32`) | Required |
-| `ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY` | Deterministic encryption key (generate with `openssl rand -hex 32`) | Required |
-| `ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT` | Key derivation salt (generate with `openssl rand -hex 32`) | Required |
-| `APP_DOMAIN` | Domain the app is served from (recommended for Rails host authorisation in public deployments) | Optional |
-| `ENABLE_SIGNUPS` | Set to `true` to allow new user registration | `false` |
-| `NEXT_EPISODE_PROMPT_SECONDS` | Near-end fallback window for the TV next-episode button (0–600 seconds, capped to the final 10% of the episode). `0` disables the estimate but keeps credits chapter markers. Restart/redeploy after changing. | `90` |
-| `POSTGRES_USER` | PostgreSQL database user | `streamvault` |
-| `POSTGRES_PASSWORD` | PostgreSQL database password (generate with `openssl rand -hex 16`) | Required |
-| `POSTGRES_DB` | PostgreSQL database name | `streamvault` |
-| `PORT` | Host port to expose the app on | `3000` |
-| `STREAM_PROVIDER` | Which stream provider to use: `torrentio`, `comet`, or `auto` (see below) | `torrentio` |
-| `TORRENTIO_API_BASE_URL` | Torrentio API base URL | `https://torrentio.strem.fun` |
-| `COMET_URL` | URL of your self-hosted Comet instance | Optional |
-| `REALDEBRID_API_BASE_URL` | RealDebrid API base URL | `https://api.real-debrid.com/rest/1.0` |
-| `OMDB_API_KEY` | OMDB API key for ratings metadata | Required |
-| `TMDB_READ_ACCESS_TOKEN` | TMDB v4 bearer token for recommendations | Optional |
-| `SUBDL_API_KEY` | SubDL API key for external subtitle fallback | Optional |
-| `TORRENTIO_PROXY` | Forward proxy URL for Torrentio requests (if IP is blocked) | Optional |
-| `CINEMETA_PROXY` | Forward proxy URL for Cinemeta requests (if needed) | Optional |
-| `COMET_PROXY` | Forward proxy URL for Comet requests (if needed) | Optional |
-| `HTTP_WRITE_TIMEOUT` | Thruster response write deadline in seconds; keep `0` for movie-length streams | `0` |
-| `HTTP_IDLE_TIMEOUT` | Thruster keep-alive idle timeout in seconds; keep `0` to avoid interrupting reconnects | `0` |
+| `SECRET_KEY_BASE` | Session cookies | required |
+| `ACTIVE_RECORD_ENCRYPTION_*` | Encrypt stored API keys | required |
+| `POSTGRES_PASSWORD` | Database password | required |
+| `OMDB_API_KEY` | Ratings metadata | required |
+| `APP_DOMAIN` | Public host name | empty |
+| `ENABLE_SIGNUPS` | Allow self-registration | `false` |
+| `STREAM_PROVIDER` | `torrentio`, `comet`, or `auto` | `torrentio` |
+| `TMDB_READ_ACCESS_TOKEN` | Recommendations | empty |
+| `SUBDL_API_KEY` | External subtitle fallback | empty |
+
+The full list, provider modes, Cloudflare proxy setups, and reverse proxy notes are in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
 ## Troubleshooting
 
-Start with the container status, application logs, and health endpoint:
+| Symptom | First thing to check |
+|---|---|
+| No streams, 403s, or intermittent provider failures | Your server IP may be blocked by Cloudflare. See [the proxy guide](docs/CONFIGURATION.md#proxies-when-you-might-need-one) |
+| Playback buffers during transcoding | CPU saturation in the web logs. Try a 1080p H.264 source before 4K, HEVC, or AV1 |
+| A resumed stream is CPU-heavy | Expected: a non-zero seek may re-encode to keep audio and video aligned |
+| Sign-in does not persist behind a proxy | HTTPS on the public URL, and the proxy must forward the original scheme and host |
+
+Logs and health:
 
 ```bash
 docker compose ps
@@ -277,143 +229,47 @@ docker compose logs --tail=200 -f web
 curl -I http://localhost:${PORT:-3000}/up
 ```
 
-| Symptom | What to check |
-|---|---|
-| No streams, HTTP 403s, or intermittent provider failures | Your server IP may be blocked by Cloudflare. See the [proxy guide](#proxies-when-and-why-you-might-need-them). |
-| Playback buffers during transcoding | Check CPU saturation and FFmpeg throughput in the web logs; try a 1080p/H.264 source before a 4K, HEVC, or AV1 source. |
-| Direct play works but a resumed stream is CPU-heavy | Expected: non-zero seeks may re-encode video to keep audio and video timestamps aligned. |
-| Subtitles appear slowly on a remote file | The first extraction may need to seek through a large container. StreamVault retries transient extraction timeouts automatically. |
-| The site is reachable but sign-in does not persist behind a proxy | Confirm the public URL uses HTTPS and that the proxy forwards the original scheme and host. Production cookies are Secure. |
+More in [docs/CONFIGURATION.md](docs/CONFIGURATION.md#troubleshooting).
 
-## Proxies: when and why you might need them
+## Sponsor
 
-Some of the services StreamVault uses are behind **Cloudflare**, which may block requests coming from datacentre IP ranges (common with VPS providers). If you see 403 errors or empty stream lists, you likely need a proxy.
+StreamVault is one person's work, built in the evenings and at weekends. Sponsorship pays for the time that goes into it:
 
-### The Torrentio problem
+- **Fixes land sooner.** Playback bugs, device quirks, and provider changes are worked through in order of impact.
+- **The app keeps up.** RealDebrid, Torrentio, Cinemeta, and the metadata APIs change without warning. Keeping up is ongoing work, not a one-off.
+- **No lock-in stays possible.** MIT license, self-hosted, no account with the author. Sponsorship is what makes that sustainable instead of a paid tier.
 
-The public Torrentio instance (`torrentio.strem.fun`) is behind Cloudflare. Cloudflare frequently blocks or rate-limits requests from datacentre IPs - meaning your VPS might not be able to reach it. Symptoms include 403 errors, empty stream lists, or intermittent failures during peak hours.
+<a href="https://github.com/sponsors/vitobotta"><img src="https://img.shields.io/badge/Become%20a%20sponsor-%E2%9D%A4-ea4aaa?style=for-the-badge&amp;logo=github" alt="Sponsor on GitHub"></a>
 
-### The solution: a two-server setup
+From $1/month. Sponsoring funds maintenance and development, not content.
 
-The author's deployment uses a **two-server architecture** that separates compute from network access:
+**Other ways to help, all free:** star the repo so other self-hosters find it, report bugs with logs and your setup, answer a question in [Discussions](https://github.com/vitobotta/streamvault/discussions), or send a pull request.
 
-```
-┌─────────────────────────────────────┐             ┌──────────────────────────────────┐
-│  Dedicated server (powerful)        │             │  Cheap VPS (clean IP)            │
-│                                     │             │                                  │
-│  • StreamVault (Rails app)          │  Tailscale  │  • Torrentio proxy (Tinyproxy)   │
-│  • PostgreSQL                       │ ◄─────────► │  • Comet (self-hosted)           │
-│  • FFmpeg (transcoding)             │   tunnel    │  • Jackett (torrent indexer)     │
-│                                     │             │                                  │
-│  Why: needs CPU/RAM for transcoding │             │  Why: clean IP not blocked by    │
-│  and bandwidth for streaming        │             │  Cloudflare; cheap to run        │
-└─────────────────────────────────────┘             └──────────────────────────────────┘
-```
+## Who am I
 
-- **Dedicated server** (e.g. Hetzner dedicated, OVH Eco) - runs StreamVault, PostgreSQL, and FFmpeg. This machine needs enough CPU and RAM for smooth transcoding. Its IP may or may not be blocked by Cloudflare - that's fine, because it doesn't talk to Torrentio directly.
+I'm Vito Botta, a developer in Finland. I build web applications by day and maintain a few open source projects in the time around it, including [hetzner-k3s](https://github.com/vitobotta/hetzner-k3s). StreamVault is what I wanted for my own movie nights: a proper cinema interface, one server, and nothing to babysit.
 
-- **Cheap VPS** (e.g. €3–5/month from a provider with clean IPs) - runs the Torrentio proxy and/or Comet. This machine's IP is not blocked by Cloudflare, so it can reach Torrentio. It's lightweight (proxies use ~5 MB RAM; Comet uses ~512 MB).
+More at [vitobotta.com](https://vitobotta.com).
 
-- **Tailscale** (free for personal use) - connects both machines securely over an encrypted WireGuard tunnel. No ports need to be opened on either machine - Tailscale handles it. The app on the dedicated server reaches the proxy on the VPS via its Tailscale IP (`100.x.x.x`).
+## Contributing
 
-### Proxy options
+Contributions are welcome. Development setup, the test suites, architecture notes, CI, and the release process are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
-StreamVault includes three proxy setups in the `proxy/` directory:
+For a bug report, include your deployment type, the relevant log lines, and what you were playing. For a playback problem, the server log and the browser console together are worth more than either alone.
 
-#### 1. Torrentio Proxy (Tinyproxy)
+## Disclaimer and responsible use
 
-A lightweight forward proxy that routes Torrentio and Cinemeta requests through a VPS with a clean IP. Uses ~5 MB RAM, handles HTTPS transparently.
+StreamVault is a **general-purpose media client**. Like a web browser or a BitTorrent client, it is neutral about what its operator chooses to access. The repository does not include or publish copyrighted media, and it ships no pre-configured list of pirated material.
 
-- **When you need it:** Your server's IP is blocked by Cloudflare (403 errors, empty stream lists).
-- **How it works:** StreamVault sends requests *through* the proxy (via `TORRENTIO_PROXY` env var). The proxy forwards them to Torrentio. Tinyproxy is locked down with an IP allowlist and domain whitelist - it can only reach torrentio and Cinemeta domains.
-- **Setup:** See [`proxy/torrentio/README.md`](proxy/torrentio/README.md) for full instructions.
+**The author does not endorse, encourage, or support the use of StreamVault to access copyrighted content without proper authorisation.** Whoever runs an instance is responsible for what it accesses and for ensuring they have the right to access it. StreamVault is intended for:
 
-#### 2. Comet (self-hosted stream provider)
+- Public domain films and media
+- Creative Commons and open-licensed content
+- Your own media
+- Any other content you are legally entitled to watch
 
-A self-hosted alternative to Torrentio that uses its own scrapers (Jackett + Zilean) instead of the Torrentio API. No Cloudflare dependency, no rate limits, no peak-hour congestion.
-
-- **When you need it:** Torrentio is unreliable (frequent blocks, rate limits, downtime) or you want a more stable stream source.
-- **How it works:** Comet runs on your VPS and scrapes torrent indexers directly. StreamVault queries Comet first (`STREAM_PROVIDER=auto`), falling back to Torrentio only if Comet is unavailable.
-- **Setup:** See [`proxy/comet/README.md`](proxy/comet/README.md) for full instructions, including Jackett indexer configuration.
-
-#### 3. Tailscale Proxy (VPS → home)
-
-If you run StreamVault on your home computer (which has a residential IP that RealDebrid prefers) but want a public URL with TLS, this setup puts Caddy on a VPS and tunnels traffic to your home machine via Tailscale.
-
-- **When you need it:** You're running the app at home but want a public HTTPS URL without exposing your home network.
-- **Setup:** See [`proxy/app/README.md`](proxy/app/README.md) for full instructions.
-
-### Do you need a proxy?
-
-| Your setup | Proxy needed? |
-|-----------|---------------|
-| Running at home (residential IP) | Usually no - residential IPs aren't blocked by Cloudflare |
-| VPS with a clean IP | Try first - if you get 403s or empty streams, set up the Torrentio proxy |
-| VPS with a blocked IP | Yes - set up the Torrentio proxy or self-host Comet |
-| Dedicated server with blocked IP | Yes - run the app on the dedicated server, proxy through a cheap VPS |
-
-### STREAM_PROVIDER modes
-
-| Value | Primary | Fallback | When to use |
-|-------|---------|----------|-------------|
-| `torrentio` | Torrentio | n/a | Default, simplest setup (no Comet needed) |
-| `comet` | Comet | Torrentio | Explicit Comet-first with Torrentio fallback |
-| `auto` | Comet (if `COMET_URL` set) | Torrentio | **Recommended** - best of both worlds |
-
-## Testing
-
-Local development uses Ruby 4.0.5. Development and test run on SQLite, so no database server is needed; FFmpeg must be installed to exercise transcoding. The JavaScript regression suite uses Node's built-in test runner and needs no npm install.
-
-```bash
-# Prepare Ruby dependencies and the test database
-bundle install
-bin/rails db:prepare
-
-# Run the Rails suite
-bundle exec rspec
-
-# Run the player regressions (450 examples, no npm install needed)
-node --test spec/javascript/*_test.mjs
-
-# Run Ruby style checks
-bin/rubocop
-
-# Run specific test types
-bundle exec rspec spec/models/      # Model specs
-bundle exec rspec spec/services/    # Service specs
-bundle exec rspec spec/requests/    # Request specs
-```
-
-## Architecture
-
-```
-app/
-├── controllers/     # HTML pages, playback orchestration, and signed media endpoints
-├── models/          # User-owned state, HLS records, and immutable playback contracts
-├── services/        # Catalog, stream resolution, playback, and media processing
-├── javascript/      # Stimulus controllers and isolated player services
-├── jobs/            # Recommendation refresh and HLS cleanup
-└── views/           # Server-rendered dark-themed Tailwind views
-```
-
-### Services
-
-| Boundary | Role |
-|----------|------|
-| **Catalog::CinemetaClient / Catalog::OmdbClient** | Fetch canonical metadata, catalogs, and ratings |
-| **Streams::TorrentioProvider / CometService** | Fetch typed `StreamCandidate` values from configured providers |
-| **AvailableStreamsService / Streams::Resolver** | Cache candidates, rank them, resolve a playback-safe RealDebrid source |
-| **PlaybackStartService / PlaybackResumeService** | Build signed `PlaybackDescriptor` values and choose resume targets |
-| **Playback::ProgressWriter / Playback::ContinueWatchingQuery** | Persist unified progress and build Continue Watching |
-| **Media::Probe / Media::Subtitles / Media::Transcoder** | Probe tracks, extract subtitles, and produce fMP4 or HLS output |
-| **HlsSessionManager** | Persist, monitor, expire, and clean up HLS processes |
-| **RecommendationService / TmdbService** | Cache personalized TMDB recommendations outside user media state |
-| **RealDebridService** | Verify user API keys |
-
-### Authorisation
-
-Every user-owned query is scoped through `current_user` associations. Playback and media URLs use signed, expiring, user-bound tokens; raw RealDebrid URLs never cross the server/browser boundary. API keys are encrypted at rest with Active Record Encryption.
+The software is provided as-is, for personal use, with no warranty. The author accepts no responsibility for how an instance is used.
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).

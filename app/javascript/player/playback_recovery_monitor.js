@@ -287,6 +287,7 @@ export class PlaybackRecoveryMonitor {
 
   report(eventType, details = {}) {
     const player = this.player
+    player.lastStallReportedAt = Date.now()
     const ranges = player.sourceBuffer?.buffered || player.videoTarget.buffered
     const bufferedRanges = []
     for (let index = 0; index < Math.min(ranges?.length || 0, 8); index++) {
@@ -319,6 +320,16 @@ export class PlaybackRecoveryMonitor {
       video_width: player.tracksData?.video_width,
       video_height: player.tracksData?.video_height,
       start_seconds: player.startSecondsValue,
+      // Stream-level stall counters. Without these a recorded teardown
+      // cannot be attributed to the transport, to our own capacity gate,
+      // or to buffer maintenance.
+      bytes_read: player.streamBytesRead || 0,
+      stream_age_ms: player.streamStartedAt ? Math.max(0, Date.now() - player.streamStartedAt) : 0,
+      read_paused_ms: Math.round(player.readPausedMs || 0),
+      read_pause_count: player.readPauseCount || 0,
+      evictions_count: player.evictionCount || 0,
+      evicted_seconds_total: Math.round((player.evictedSecondsTotal || 0) * 10) / 10,
+      last_eviction_age_ms: player.lastEvictionAt ? Math.max(0, Date.now() - player.lastEvictionAt) : -1,
       ...details
     })
 

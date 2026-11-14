@@ -29,6 +29,10 @@ class TranscodeController < ApplicationController
     started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     written_bytes = 0
     outcome = "complete"
+    # Records the write cadence so a disconnect can be attributed: an idle
+    # response (intermediary read timeout) versus a socket closed while
+    # data was still flowing.
+    write_meter = Media::StreamWriteMeter.new
 
     begin
       source = resolved_source
@@ -46,6 +50,12 @@ class TranscodeController < ApplicationController
       ) do |chunk|
         response.stream.write(chunk)
         written_bytes += chunk.bytesize
+        if (heartbeat = write_meter.record(chunk.bytesize))
+          Rails.logger.info(
+            "[TranscodeStream] playback_id=#{playback_id} load_id=#{load_id} heartbeat " \
+            "#{heartbeat.map { |key, value| "#{key}=#{value}" }.join(' ')}"
+          )
+        end
       end
     rescue ResolvedSource::Invalid
       outcome = "invalid_source"
@@ -69,7 +79,10 @@ class TranscodeController < ApplicationController
       end
     rescue ActionController::Live::ClientDisconnected, IOError => e
       outcome = "client_disconnected"
-      Rails.logger.info("[TranscodeStream] playback_id=#{playback_id} load_id=#{load_id} client_disconnect=#{e.class}")
+      Rails.logger.info(
+        "[TranscodeStream] playback_id=#{playback_id} load_id=#{load_id} client_disconnect=#{e.class} " \
+        "cause=#{e.cause&.class} errno=#{cause_errno(e)} #{write_meter.summary.map { |key, value| "#{key}=#{value}" }.join(' ')}"
+      )
     ensure
       elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at
       Rails.logger.info(
@@ -97,5 +110,16 @@ class TranscodeController < ApplicationController
     return 0 unless seconds.finite? && seconds.positive?
 
     [ seconds, MAX_START_SECONDS ].min
+  end
+
+  # The socket error behind ActionController::Live::ClientDisconnected says
+  # how the connection died (EPIPE, ECONNRESET, ...). Logged as a number so
+  # the line stays greppable.
+  def cause_errno(error)
+    cause = error.cause
+    return "none" unless cause
+    return "none" unless cause.respond_to?(:errno)
+
+    cause.errno
   end
 end
