@@ -1,9 +1,11 @@
 module ApplicationHelper
-  # A child account only sees titles whose certification resolves. With no
-  # rating source configured, every title is "unrated" and hidden, so say why
-  # rather than showing an empty catalogue.
+  # A child account capped below 18 only sees titles whose certification
+  # resolves. With no rating source configured those titles are "unrated" and
+  # hidden, so say why rather than showing an empty catalogue.  At 18 the cap
+  # allows unrated content, so the notice would be false there.
   def parental_rating_sources_missing?
     return false unless current_user&.child_account?
+    return false unless current_user.max_rating_age.to_i < ParentalControls::Rating::UNKNOWN_AGE
     return @parental_rating_sources_missing unless @parental_rating_sources_missing.nil?
 
     @parental_rating_sources_missing = !ParentalControls::RatingResolver.sources_configured?

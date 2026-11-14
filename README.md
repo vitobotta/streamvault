@@ -120,6 +120,7 @@ StreamVault (Rails app)
 - **Language preferences**: Choose your preferred audio languages (17 supported). Streams are filtered and sorted to prioritise your languages.
 - **Default language**: Set which language is selected by default when starting a stream.
 - **Per-user configuration**: Each user has their own library, history, wishlist, and settings. API keys are encrypted at rest.
+- **Child accounts**: Age caps with a settings lock hide titles above the cap. Configure `OMDB_API_KEY` or `TMDB_READ_ACCESS_TOKEN` so titles can be certified; without either, uncertified titles stay hidden below the 18+ cap.
 
 ### Interface
 - **Cinema-style dark theme**: Cool ink surfaces, an indigo accent kept for the primary action and progress, and an editorial serif for titles paired with a cleaner sans for controls.
@@ -258,8 +259,8 @@ docker compose up -d --build
 | `TORRENTIO_API_BASE_URL` | Torrentio API base URL | `https://torrentio.strem.fun` |
 | `COMET_URL` | URL of your self-hosted Comet instance | Optional |
 | `REALDEBRID_API_BASE_URL` | RealDebrid API base URL | `https://api.real-debrid.com/rest/1.0` |
-| `OMDB_API_KEY` | OMDB API key for ratings metadata | Required |
-| `TMDB_READ_ACCESS_TOKEN` | TMDB v4 bearer token for recommendations | Optional |
+| `OMDB_API_KEY` | OMDB API key for ratings metadata; one of OMDB/TMDB is required for child accounts capped below 18 | Required |
+| `TMDB_READ_ACCESS_TOKEN` | TMDB v4 bearer token for recommendations and the fallback certification source for child accounts | Optional |
 | `SUBDL_API_KEY` | SubDL API key for external subtitle fallback | Optional |
 | `TORRENTIO_PROXY` | Forward proxy URL for Torrentio requests (if IP is blocked) | Optional |
 | `CINEMETA_PROXY` | Forward proxy URL for Cinemeta requests (if needed) | Optional |
