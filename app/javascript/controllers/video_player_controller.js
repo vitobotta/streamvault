@@ -40,15 +40,47 @@ const REBUFFER_STALL_TIMEOUT_MS = 20000
 const REBUFFER_MAX_WAIT_MS = 12000
 const MSE_FORWARD_BUFFER_HIGH_SECONDS = 45
 // The gap between the high and low water marks is how long the reader
-// stays parked, and parking is what starves the response. One second of
-// playback drains one second of cushion, so 45→42 caps a park at ~3s.
-// The old 45→30 band parked for ~15s, which is longer than the app
-// server is willing to wait for a writable socket (see
-// MSE_READ_LIVENESS_MS) and killed the response a few times per film.
+// stays parked once the forward cushion is full, and parking is what
+// starves the response. One second of playback drains one second of
+// cushion, so 45→42 caps a park at ~3s. The band only means anything
+// while appends keep up with reads: the read loop below also waits for
+// an in-flight append whenever a complete fragment is already queued
+// (see MSE_APPEND_WAIT_TIMEOUT_MS), so the cushion it measures includes
+// everything read but not yet appended.
 const MSE_FORWARD_BUFFER_LOW_SECONDS = 42
 const MSE_PENDING_BUFFER_HIGH_BYTES = 16 * 1024 * 1024
 const MSE_PENDING_BUFFER_LOW_BYTES = 8 * 1024 * 1024
 const MSE_CAPACITY_POLL_MS = 250
+// A queued fragment that is already complete must land before the reader
+// pulls more bytes. Without this, the loop drains everything the browser
+// has buffered in one microtask burst while `updateend` tasks wait, so the
+// 45/42 band trails an unappended byte queue by up to MSE_PENDING_BUFFER_
+// HIGH_BYTES and every park overshoots. The wait is bounded: if no
+// updateend arrives the reader resumes anyway, and a fragment that is not
+// yet whole never blocks the read (it could not be appended at all).
+const MSE_APPEND_WAIT_TIMEOUT_MS = 1000
+// Seamless continuation: when a stream body dies mid-film, a new /transcode
+// response at the buffered end is appended into the same SourceBuffer
+// instead of rebuilding the MediaSource (which is the black frame). One
+// second of overlap replaces the last second of old frames rather than
+// risking a gap, because a re-encode starts on an IDR at the requested
+// timestamp but not necessarily the same frame the old encoder emitted.
+const CONTINUATION_OVERLAP_SECONDS = 1.0
+// Below this much forward buffer a continuation cannot outrun playback, so
+// the MediaSource swap (the old recovery) is the only option left.
+const CONTINUATION_MIN_CUSHION_SECONDS = 8
+// A paused element keeps its cushion fixed. Defer the continuation until
+// playback resumes, unless the cushion is already this low, so a long pause
+// cannot loop reconnects while the user is away.
+const CONTINUATION_PAUSE_CUSHION_SECONDS = 10
+// A hole at the join smaller than this is jumped once; a larger one means
+// the two responses are not on the same timeline and the session is swapped.
+const CONTINUATION_MAX_JOIN_GAP_SECONDS = 1.0
+const CONTINUATION_MAX_FAILURES = 2
+// The replacement response must deliver its first bytes before the cushion
+// drains to this; below it the swap is the only recovery left.
+const CONTINUATION_FIRST_CHUNK_DEADLINE_SECONDS = 5
+const CONTINUATION_SOURCE_BUFFER_IDLE_MS = 2000
 // A capacity wait shorter than this is ordinary loop noise; anything
 // longer means the read loop was genuinely parked (client backpressure).
 const MSE_READ_PAUSE_RECORD_MS = 5
@@ -163,6 +195,24 @@ export default class extends Controller {
     this.quotaBlockedAtTime = null
     this.mseReadPaused = false
     this.mseQuotaErrorCount = 0
+    this.maxParkMs = 0
+    // Seamless continuation state (see continueMseStream). continuationCount
+    // and continuationFailures describe the entire playback, not one session:
+    // a source that failed two continuations falls back to session swaps.
+    this.continuationCount = 0
+    this.continuationFailures = 0
+    this.continuationInFlight = false
+    this.continuationAwaitingFirstAppend = false
+    this.continuationAppendBaseline = 0
+    this.continuationFirstChunkAt = null
+    this.continuationFailureAt = null
+    this.continuationGapMs = null
+    this.continuationGapJump = null
+    this.continuationDeadlineTimer = null
+    this.continuationDeferTimer = null
+    this.continuationLoadId = 0
+    this.lastResumeOffsetSeconds = null
+    this.mseEndReason = null
     this.systemRebufferPaused = false
     this.rebufferDeadlineTimer = null
     this.bufferAheadDeadlineTimer = null
@@ -267,6 +317,7 @@ export default class extends Controller {
     clearTimeout(this.bufferAheadDeadlineTimer)
     clearTimeout(this.prematureEndRecoveryTimer)
     clearTimeout(this.pipNoticeTimer)
+    this.cancelMseContinuation()
     this.playbackStarted = false
     this.bufferAheadDeadline = null
     this.rebufferDeadline = null
@@ -383,6 +434,11 @@ export default class extends Controller {
     // The new session restarts the element timeline, so the previous
     // session's freeze clock must not carry over (see startProgressWatchdog).
     this.stopProgressWatchdog()
+    // A swap or seek replaces the SourceBuffer: an in-flight continuation
+    // belongs to the session being discarded.
+    this.cancelMseContinuation()
+    this.continuationGapJump = null
+    this.lastResumeOffsetSeconds = null
     return this.playbackEngine().setupMseSource(streamUrl)
   }
 
@@ -989,15 +1045,21 @@ export default class extends Controller {
     return this.hlsSessionClient().stop()
   }
 
-  async startStreamingFetch(url) {
+  async startStreamingFetch(url, { continuation = false, loadId = null } = {}) {
     const fetchController = new AbortController()
     this.fetchController = fetchController
-    // Arm the stall watchdog before awaiting the fetch.  If the source
-    // is dead (e.g. an expired RealDebrid link) the server returns a
-    // 502 after its first-data timeout, and the only thing that will
-    // trigger recovery is this watchdog — neither onBufferUpdateEnd nor
-    // a fresh "waiting" event will fire when no data ever arrives.
-    this.startStallWatchdog()
+    if (continuation) {
+      // The cushion is the only clock during a continuation: the stall
+      // watchdog would fire long after the join guard has already decided.
+      this.clearStallWatchdog()
+    } else {
+      // Arm the stall watchdog before awaiting the fetch.  If the source
+      // is dead (e.g. an expired RealDebrid link) the server returns a
+      // 502 after its first-data timeout, and the only thing that will
+      // trigger recovery is this watchdog — neither onBufferUpdateEnd nor
+      // a fresh "waiting" event will fire when no data ever arrives.
+      this.startStallWatchdog()
+    }
     // Per-stream diagnostics.  These are what separate a transport
     // failure (bytes stopped arriving) from an application stall (reads
     // parked on the capacity gate) in the telemetry we actually read.
@@ -1005,10 +1067,17 @@ export default class extends Controller {
     this.streamStartedAt = Date.now()
     this.readPausedMs = 0
     this.readPauseCount = 0
+    this.maxParkMs = 0
+    let requestUrl = url
+    if (loadId !== null) {
+      const parsed = new URL(url, window.location.origin)
+      parsed.searchParams.set("load_id", loadId)
+      requestUrl = parsed.pathname + parsed.search
+    }
     let firstChunk = true
     let lastChunkAt = Date.now()
     try {
-      const response = await fetch(this.urlWithPlaybackId(url), { signal: fetchController.signal })
+      const response = await fetch(this.urlWithPlaybackId(requestUrl), { signal: fetchController.signal })
       if (!response.ok) {
         console.warn("Stream fetch failed:", response.status)
         // A 502 means ffmpeg couldn't open the source (expired link,
@@ -1019,7 +1088,11 @@ export default class extends Controller {
           first_chunk: firstChunk,
           last_chunk_age_ms: Math.max(0, Date.now() - lastChunkAt)
         })
-        this.handleStreamStall()
+        if (continuation) {
+          this.handleContinuationFailure(`http_${response.status}`)
+        } else {
+          this.handleStreamStall()
+        }
         return
       }
       const reader = response.body.getReader()
@@ -1047,7 +1120,16 @@ export default class extends Controller {
             first_chunk: firstChunk,
             last_chunk_age_ms: Math.max(0, Date.now() - lastChunkAt)
           })
-          this.handlePrematureStreamEnd()
+          if (continuation && this.continuationInFlight) {
+            // A continuation that ends before its join is a failed attempt,
+            // whether it produced nothing or stopped short of a fragment.
+            this.handleContinuationFailure(this.streamBytesRead === 0 ? "empty_body" : "ended_before_join")
+          } else {
+            // A continued response that outlived its join is just another
+            // dead body now: route it through the normal recovery path so
+            // it can continue again or swap.
+            this.handlePrematureStreamEnd("stream_end")
+          }
           break
         }
         this.streamBytesRead += value?.byteLength || 0
@@ -1056,16 +1138,23 @@ export default class extends Controller {
           firstChunk = false
           this.streamRecoveryAttempts = 0
           this.streamRecoveryActive = false
-          // Set a deadline: if the buffer-ahead threshold isn't reached
-          // within BUFFER_AHEAD_MAX_WAIT_MS, start playback with whatever
-          // we have — better to play with a small buffer than stall on
-          // a slow source forever.
-          this.bufferAheadDeadline = Date.now() + BUFFER_AHEAD_MAX_WAIT_MS
-          clearTimeout(this.bufferAheadDeadlineTimer)
-          this.bufferAheadDeadlineTimer = setTimeout(() => {
-            this.bufferAheadDeadlineTimer = null
-            this.maybeStartPlayback(true)
-          }, BUFFER_AHEAD_MAX_WAIT_MS)
+          if (continuation) {
+            // The deadline stays armed: it now guards the first *append*,
+            // not just the first bytes (an init segment appends without
+            // extending the timeline).
+            this.continuationFirstChunkAt = Date.now()
+          } else {
+            // Set a deadline: if the buffer-ahead threshold isn't reached
+            // within BUFFER_AHEAD_MAX_WAIT_MS, start playback with whatever
+            // we have — better to play with a small buffer than stall on
+            // a slow source forever.
+            this.bufferAheadDeadline = Date.now() + BUFFER_AHEAD_MAX_WAIT_MS
+            clearTimeout(this.bufferAheadDeadlineTimer)
+            this.bufferAheadDeadlineTimer = setTimeout(() => {
+              this.bufferAheadDeadlineTimer = null
+              this.maybeStartPlayback(true)
+            }, BUFFER_AHEAD_MAX_WAIT_MS)
+          }
         }
         this.queueBufferChunk(value)
       }
@@ -1080,7 +1169,14 @@ export default class extends Controller {
         first_chunk: firstChunk,
         last_chunk_age_ms: Math.max(0, Date.now() - lastChunkAt)
       })
-      this.handlePrematureStreamEnd()
+      if (continuation && this.continuationInFlight) {
+        this.handleContinuationFailure("stream_error")
+      } else {
+        // Either an ordinary fetch, or a continued response that already
+        // joined and died later. The latter needs the normal recovery path,
+        // or nothing restarts the stream and the cushion runs dry.
+        this.handlePrematureStreamEnd("stream_error")
+      }
     } finally {
       if (this.fetchController === fetchController) this.fetchController = null
     }
@@ -1089,26 +1185,54 @@ export default class extends Controller {
   async waitForMseReadCapacity(signal) {
     let parkedAhead = null
     let drainedAt = Date.now()
+    let parkStartedAt = null
+    let bandParked = false
+
+    const endPark = () => {
+      if (parkStartedAt === null) return
+      this.maxParkMs = Math.max(this.maxParkMs || 0, Date.now() - parkStartedAt)
+      parkStartedAt = null
+    }
 
     while (!signal.aborted) {
       const bufferedAhead = this.playbackStarted
         ? this.bufferedAheadOfCurrent()
         : Math.max(0, this.currentBufferEnd() - this.videoTarget.currentTime)
       const pendingBytes = this.fmp4BufferSize || 0
+      const manager = this.mseBufferManager()
+      const appendInFlight = !!(this.bufferAppending || this.sourceBuffer?.updating)
+      // A complete fragment waiting behind an append in flight is the read
+      // burst the band could not see. Hold the next read until it lands,
+      // then re-check: with nothing queued this is not a band park.
+      const completeBoxPending = manager.hasCompleteBoxPending()
+      if (appendInFlight && completeBoxPending) {
+        if (parkStartedAt === null) parkStartedAt = Date.now()
+        this.mseReadPaused = true
+        await manager.awaitUpdateEnd(MSE_APPEND_WAIT_TIMEOUT_MS)
+        this.mseReadPaused = bandParked
+        endPark()
+        continue
+      }
+
       const overHighWater =
         this.pendingAppendBuffer !== null ||
         bufferedAhead >= MSE_FORWARD_BUFFER_HIGH_SECONDS ||
-        pendingBytes >= MSE_PENDING_BUFFER_HIGH_BYTES
+        // The byte cap is an absolute memory guard for appendable data. It
+        // must never park the reader mid-fragment: those bytes cannot be
+        // appended until the last chunk arrives, so waiting there deadlocks
+        // a fragment larger than the cap.
+        (completeBoxPending && pendingBytes >= MSE_PENDING_BUFFER_HIGH_BYTES)
 
-      if (!this.mseReadPaused && !overHighWater) return true
-      this.mseReadPaused = true
+      if (!bandParked && !overHighWater) return true
 
       const belowLowWater =
         this.pendingAppendBuffer === null &&
         bufferedAhead <= MSE_FORWARD_BUFFER_LOW_SECONDS &&
         pendingBytes <= MSE_PENDING_BUFFER_LOW_BYTES
       if (belowLowWater) {
+        bandParked = false
         this.mseReadPaused = false
+        endPark()
         return true
       }
 
@@ -1116,16 +1240,23 @@ export default class extends Controller {
       // marks alone would park this loop forever. Let a chunk through once
       // the cushion has stopped draining so the response keeps moving and
       // Puma's write timeout cannot tear it down.
+      bandParked = true
+      this.mseReadPaused = true
+      if (parkStartedAt === null) parkStartedAt = Date.now()
       if (parkedAhead === null || bufferedAhead < parkedAhead - 0.05) drainedAt = Date.now()
       parkedAhead = bufferedAhead
       if (Date.now() - drainedAt >= MSE_READ_LIVENESS_MS) {
+        bandParked = false
         this.mseReadPaused = false
+        endPark()
         return true
       }
 
       await this.#sleep(MSE_CAPACITY_POLL_MS)
     }
 
+    this.mseReadPaused = false
+    endPark()
     return false
   }
 
@@ -1145,6 +1276,9 @@ export default class extends Controller {
   // fires and the watchdog never triggers.
 
   onVideoWaiting() {
+    // A continuation can leave a sub-second hole at the join. Step over it
+    // instead of treating the hole as a stall and swapping the session.
+    if (this.maybeJumpContinuationGap()) return
     // Progress before this wait cannot prove that the new stall recovered.
     this.playbackObservation = null
     const waitingVideo = this.videoTarget
@@ -1387,20 +1521,25 @@ export default class extends Controller {
     return this.recoveryMonitor().handleHlsStall(eventType)
   }
 
-  handlePrematureStreamEnd() {
-    return this.recoveryMonitor().handlePrematureEnd()
+  handlePrematureStreamEnd(reason = "premature_end") {
+    return this.recoveryMonitor().handlePrematureEnd(reason)
   }
 
   finishOrRecoverMseEnd() {
     return this.recoveryMonitor().finishOrRecoverMseEnd()
   }
 
-  schedulePrematureEndRecovery() {
-    return this.recoveryMonitor().schedulePrematureEndRecovery()
-  }
-
   bufferedAheadOfCurrent() {
     return this.recoveryMonitor().bufferedAhead()
+  }
+
+  // End of the furthest buffered range, independent of the playhead. Used
+  // to tell "a fragment landed on the timeline" from "an init segment just
+  // appended" during a continuation.
+  furthestBufferedEnd() {
+    const ranges = this.sourceBuffer?.buffered || this.videoTarget?.buffered
+    if (!ranges || ranges.length === 0) return 0
+    return ranges.end(ranges.length - 1)
   }
 
   reportStall(eventType, details = {}) {
@@ -1409,6 +1548,35 @@ export default class extends Controller {
 
   playbackPath() {
     return this.recoveryMonitor().path()
+  }
+
+  // The one place the MSE stream URL is built.  A recovery, a seek and a
+  // continuation must not drift apart on track selection or start time.
+  buildMseStreamUrl(absoluteStartSeconds) {
+    const url = new URL(this.streamingUrlValue, window.location.origin)
+    const seconds = Math.max(0, Number(absoluteStartSeconds) || 0)
+    if (seconds > 0) {
+      // Keep sub-second precision: a continuation resumes at the buffered
+      // end minus its overlap, and rounding to a whole second there would
+      // either repeat or skip up to a second of media.
+      url.searchParams.set("start_seconds", Math.round(seconds * 1000) / 1000)
+    } else {
+      url.searchParams.delete("start_seconds")
+    }
+
+    if (this.selectedAudioStream) {
+      url.searchParams.set("audio_stream", this.selectedAudioStream)
+    } else {
+      url.searchParams.delete("audio_stream")
+    }
+
+    if (this.burnedSubtitleSelected()) {
+      url.searchParams.set("subtitle_stream", this.selectedSubtitleStream)
+    } else {
+      url.searchParams.delete("subtitle_stream")
+    }
+
+    return url.pathname + url.search
   }
 
   // Abort the current fetch, tear down the MSE pipeline, and restart
@@ -1457,26 +1625,7 @@ export default class extends Controller {
     this.startSecondsValue = targetSeconds
     this.element.dataset.videoPlayerStartSecondsValue = targetSeconds.toString()
 
-    const url = new URL(this.streamingUrlValue, window.location.origin)
-    if (targetSeconds > 0) {
-      url.searchParams.set("start_seconds", targetSeconds)
-    } else {
-      url.searchParams.delete("start_seconds")
-    }
-
-    if (this.selectedAudioStream) {
-      url.searchParams.set("audio_stream", this.selectedAudioStream)
-    } else {
-      url.searchParams.delete("audio_stream")
-    }
-
-    if (this.burnedSubtitleSelected()) {
-      url.searchParams.set("subtitle_stream", this.selectedSubtitleStream)
-    } else {
-      url.searchParams.delete("subtitle_stream")
-    }
-
-    const nextSrc = url.pathname + url.search
+    const nextSrc = this.buildMseStreamUrl(targetSeconds)
     this.streamingUrlValue = nextSrc
     this.element.dataset.videoPlayerStreamingUrlValue = nextSrc
 
@@ -1491,6 +1640,236 @@ export default class extends Controller {
     this.clearSubtitleCues()
     this.reloadTextSubtitlesAt(targetSeconds)
     this.streamRecoveryAttempts = savedAttempts
+  }
+
+  // ── Seamless continuation ─────────────────────────────────────────
+  //
+  // Rebuilding the MediaSource is what puts a black frame on screen after
+  // a stream death: the element loses its decoded frame, then waits for a
+  // new source and a new cushion. A continuation instead appends a new
+  // response into the existing SourceBuffer at the buffered end, so the
+  // frame on screen stays and playback resumes as soon as the first
+  // fragment lands.
+
+  mseContinuationBlockReason() {
+    if (this.playbackDisconnected || this.navigatingAway) return "inactive"
+    if (this.isHls() || this.isDirectPlay()) return "path"
+    if (!this.sourceBuffer || this.mediaSource?.readyState !== "open") return "no_source"
+    if (!this.playbackStarted) return "not_started"
+    if ((this.continuationFailures || 0) >= CONTINUATION_MAX_FAILURES) return "failed"
+    if (this.bufferedAheadOfCurrent() <= CONTINUATION_MIN_CUSHION_SECONDS) return "cushion"
+    return null
+  }
+
+  async continueMseStream(reason = "premature_end") {
+    if (this.continuationInFlight) return false
+
+    // A paused element keeps its cushion, so a continuation started now
+    // would sit on a response that nobody consumes until playback resumes.
+    if (this.userPaused) {
+      this.deferMseContinuation(reason)
+      return false
+    }
+
+    if (this.mseContinuationBlockReason()) {
+      this.handleStreamStall("premature_end")
+      return false
+    }
+
+    const sourceBuffer = this.sourceBuffer
+    const manager = this.mseBufferManager()
+    const cushion = this.bufferedAheadOfCurrent()
+    const resumePoint = Math.max(0, this.currentBufferEnd() - CONTINUATION_OVERLAP_SECONDS)
+
+    this.continuationInFlight = true
+    this.continuationAwaitingFirstAppend = true
+    this.continuationAppendBaseline = manager.appendCount
+    this.continuationBufferedEndBefore = this.furthestBufferedEnd()
+    this.continuationFirstChunkAt = null
+    this.continuationCount = (this.continuationCount || 0) + 1
+    this.continuationFailureAt ||= Date.now()
+    this.lastResumeOffsetSeconds = resumePoint
+    this.reportStall("stream_continue", {
+      continuation_reason: reason,
+      cushion_seconds: Math.round(cushion * 10) / 10,
+      resume_offset_seconds: Math.round(resumePoint * 1000) / 1000
+    })
+
+    // The dead response's tail may end mid-box and belongs to no timeline.
+    this.fmp4Buffer = null
+    this.fmp4BufferSize = 0
+    this.pendingAppendBuffer = null
+    this.mseFetchEnded = false
+    this.clearStallWatchdog()
+
+    const idle = await this.#waitForSourceBufferIdle(sourceBuffer, CONTINUATION_SOURCE_BUFFER_IDLE_MS)
+    if (!idle || this.sourceBuffer !== sourceBuffer) {
+      this.handleContinuationFailure(idle ? "source_buffer_replaced" : "source_buffer_busy")
+      return false
+    }
+
+    try {
+      // abort() resets the segment parser so the new init segment is read
+      // as a new stream; the offset places its t=0 at the join.
+      sourceBuffer.abort()
+      sourceBuffer.timestampOffset = resumePoint
+    } catch (error) {
+      console.warn("Could not start the continuation segment parser:", error)
+      this.handleContinuationFailure("timestamp_offset")
+      return false
+    }
+
+    // The cushion is the only deadline that matters: if the first bytes, or
+    // the first appended fragment, do not land before it runs down, the swap
+    // is the safer recovery.
+    clearTimeout(this.continuationDeadlineTimer)
+    this.continuationDeadlineTimer = setTimeout(() => {
+      this.continuationDeadlineTimer = null
+      if (!this.continuationAwaitingFirstAppend) return
+      this.handleContinuationFailure(this.continuationFirstChunkAt != null ? "no_first_append" : "no_first_chunk")
+    }, Math.max(1000, (cushion - CONTINUATION_FIRST_CHUNK_DEADLINE_SECONDS) * 1000))
+
+    const url = this.buildMseStreamUrl(this.startSecondsValue + resumePoint)
+    this.continuationLoadId = (this.continuationLoadId || 0) + 1
+    void this.startStreamingFetch(url, { continuation: true, loadId: this.continuationLoadId })
+    return true
+  }
+
+  deferMseContinuation(reason) {
+    clearTimeout(this.continuationDeferTimer)
+    const check = () => {
+      this.continuationDeferTimer = null
+      if (this.playbackDisconnected || this.navigatingAway) return
+      if (this.userPaused && this.bufferedAheadOfCurrent() > CONTINUATION_PAUSE_CUSHION_SECONDS) {
+        this.continuationDeferTimer = setTimeout(check, 1000)
+        return
+      }
+      void this.continueMseStream(reason)
+    }
+    this.continuationDeferTimer = setTimeout(check, 250)
+  }
+
+  handleContinuationFailure(reason) {
+    if (!this.continuationInFlight) return
+
+    this.cancelMseContinuation()
+    this.continuationFailures = (this.continuationFailures || 0) + 1
+    this.reportStall("continuation_failed", { continuation_reason: reason })
+    if (this.sourceBuffer) {
+      try { this.sourceBuffer.timestampOffset = 0 } catch {}
+    }
+    if (this.fetchController) { this.fetchController.abort(); this.fetchController = null }
+    this.handleStreamStall("premature_end")
+  }
+
+  cancelMseContinuation() {
+    clearTimeout(this.continuationDeadlineTimer)
+    clearTimeout(this.continuationDeferTimer)
+    this.continuationDeadlineTimer = null
+    this.continuationDeferTimer = null
+    this.continuationInFlight = false
+    this.continuationAwaitingFirstAppend = false
+    this.continuationFirstChunkAt = null
+  }
+
+  // The first append after a continuation start proves the new response is
+  // on the SourceBuffer. It is also where the join can be inspected for a
+  // hole, and where the failure-to-first-frame gap is measured.
+  finishMseContinuation() {
+    if (!this.continuationAwaitingFirstAppend) return
+    const manager = this.mseBufferManager()
+    if (manager.appendCount <= (this.continuationAppendBaseline || 0)) return
+    // An init segment appends without moving the timeline. Wait for the
+    // first media fragment, or the join has nothing to inspect yet.
+    if (this.furthestBufferedEnd() <= (this.continuationBufferedEndBefore || 0) + 0.01) return
+
+    this.continuationAwaitingFirstAppend = false
+    this.continuationInFlight = false
+    clearTimeout(this.continuationDeadlineTimer)
+    this.continuationDeadlineTimer = null
+
+    const gapMs = this.continuationFailureAt ? Math.max(0, Date.now() - this.continuationFailureAt) : null
+    this.continuationGapMs = gapMs
+    this.continuationFailureAt = null
+    this.reportStall("stream_continue_ok", {
+      continuation_gap_ms: gapMs,
+      buffer_ahead: Math.round(this.bufferedAheadOfCurrent() * 10) / 10
+    })
+
+    const gap = this.continuationJoinGap()
+    if (!gap) {
+      // A clean join is the only thing that earns a reset: a join with a
+      // hole below must leave the count climbing toward the failure cap.
+      this.continuationFailures = 0
+      return
+    }
+    this.reportStall("continuation_gap", {
+      continuation_gap_seconds: Math.round(gap.size * 1000) / 1000
+    })
+    if (gap.size > CONTINUATION_MAX_JOIN_GAP_SECONDS) {
+      console.warn(`Continuation join left a ${gap.size.toFixed(2)}s hole — swapping the session.`)
+      this.reportStall("continuation_failed", {
+        continuation_reason: "join_gap",
+        continuation_gap_seconds: Math.round(gap.size * 1000) / 1000
+      })
+      this.continuationFailures = (this.continuationFailures || 0) + 1
+      if (this.sourceBuffer) {
+        try { this.sourceBuffer.timestampOffset = 0 } catch {}
+      }
+      this.handleStreamStall("premature_end")
+      return
+    }
+    this.continuationFailures = 0
+    this.continuationGapJump = { from: gap.start, to: gap.end }
+  }
+
+  continuationJoinGap() {
+    const ranges = this.sourceBuffer?.buffered
+    if (!ranges) return null
+    for (let index = 1; index < ranges.length; index++) {
+      const start = ranges.end(index - 1)
+      const end = ranges.start(index)
+      const size = end - start
+      if (size <= 0.05) continue
+      // Only a hole around the join matters; older evictions are not gaps.
+      if (end < (this.lastResumeOffsetSeconds || 0) - 0.5) continue
+      return { start, end, size }
+    }
+    return null
+  }
+
+  // hls.js-style gap jump: step the playhead over a small hole once, when
+  // it reaches the join. A hole larger than the tolerance never gets here;
+  // it takes the session swap instead.
+  maybeJumpContinuationGap() {
+    const jump = this.continuationGapJump
+    if (!jump) return false
+    const position = this.videoTarget.currentTime
+    if (position > jump.to + 0.5) {
+      this.continuationGapJump = null
+      return false
+    }
+    if (position < jump.from - 0.3) return false
+    this.continuationGapJump = null
+    try {
+      this.videoTarget.currentTime = jump.to + 0.05
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  #waitForSourceBufferIdle(sourceBuffer, timeoutMs) {
+    if (!sourceBuffer?.updating) return Promise.resolve(true)
+    const deadline = Date.now() + timeoutMs
+    return new Promise((resolve) => {
+      const check = () => {
+        if (!sourceBuffer.updating) return resolve(true)
+        if (Date.now() >= deadline) return resolve(false)
+        setTimeout(check, 50)
+      }
+      setTimeout(check, 50)
+    })
   }
 
   // Private: promise-based sleep. Used by reconnectFromCurrentPosition
@@ -1530,7 +1909,9 @@ export default class extends Controller {
   }
 
   onBufferUpdateEnd() {
-    return this.mseBufferManager().onUpdateEnd()
+    const manager = this.mseBufferManager()
+    manager.onUpdateEnd()
+    this.finishMseContinuation()
   }
 
   // Start (or resume) playback once the buffer holds at least
@@ -1675,6 +2056,7 @@ export default class extends Controller {
   // save (navigateBack already saved).
   stopPlaybackForNavigation() {
     this.invalidatePlaybackRequest()
+    this.cancelMseContinuation()
     this.teardownPictureInPicture()
     if (this.hasVideoTarget) { try { this.videoTarget.pause() } catch {} }
     this.playbackCoordinator().disconnect()
@@ -2815,26 +3197,7 @@ export default class extends Controller {
     this.startSecondsValue = targetSeconds
     this.element.dataset.videoPlayerStartSecondsValue = targetSeconds.toString()
 
-    const url = new URL(this.streamingUrlValue, window.location.origin)
-    if (targetSeconds > 0) {
-      url.searchParams.set("start_seconds", targetSeconds)
-    } else {
-      url.searchParams.delete("start_seconds")
-    }
-
-    if (this.selectedAudioStream) {
-      url.searchParams.set("audio_stream", this.selectedAudioStream)
-    } else {
-      url.searchParams.delete("audio_stream")
-    }
-
-    if (this.burnedSubtitleSelected()) {
-      url.searchParams.set("subtitle_stream", this.selectedSubtitleStream)
-    } else {
-      url.searchParams.delete("subtitle_stream")
-    }
-
-    const nextSrc = url.pathname + url.search
+    const nextSrc = this.buildMseStreamUrl(targetSeconds)
     this.streamingUrlValue = nextSrc
     this.element.dataset.videoPlayerStreamingUrlValue = nextSrc
 
@@ -2847,6 +3210,7 @@ export default class extends Controller {
   // ── Time / progress updates ───────────────────────────────────────
 
   onTimeUpdate() {
+    this.maybeJumpContinuationGap()
     const currentPos = this.currentPlaybackPosition()
     const duration = this.effectiveDuration()
 

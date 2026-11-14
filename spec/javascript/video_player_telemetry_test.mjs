@@ -251,6 +251,57 @@ test("back-buffer eviction is reported with its size and accumulated in the payl
   assert.ok(player.lastEvictionAt > 0)
 })
 
+test("park and continuation counters reach the telemetry payload", () => {
+  const posts = []
+  const player = {
+    playbackId: "playback-1",
+    startSecondsValue: 400,
+    videoTarget: { currentTime: 12, seeking: false, readyState: 4, networkState: 2, paused: false, ended: false, buffered: { length: 0 } },
+    sourceBuffer: null,
+    streamRecoveryAttempts: 0,
+    streamBytesRead: 4096,
+    streamStartedAt: Date.now() - 60000,
+    readPausedMs: 12000,
+    readPauseCount: 3,
+    maxParkMs: 4321,
+    continuationCount: 2,
+    continuationGapMs: 1850,
+    lastResumeOffsetSeconds: 103.456,
+    evictionCount: 0,
+    evictedSecondsTotal: 0,
+    lastEvictionAt: null,
+    fmp4BufferSize: 0,
+    pendingAppendBuffer: null,
+    mseQuotaErrorCount: 0,
+    systemRebufferPaused: false,
+    tracksData: null,
+    isHls: () => false,
+    isRemuxDirectPlay: () => false,
+    isNativeDirectPlay: () => false,
+    currentPlaybackPosition: () => 412,
+    lastProgressPosition: 12,
+    lastProgressTime: Date.now() - 500,
+    playbackPath: () => "mse_transcode",
+    bufferedAheadOfCurrent: () => 30
+  }
+  const monitor = new PlaybackRecoveryMonitor(player, {
+    fetcher: (_url, init) => { posts.push(JSON.parse(init.body)); return Promise.resolve({}) },
+    documentRoot: null
+  })
+
+  monitor.report("stream_continue", { continuation_reason: "stream_error", cushion_seconds: 44, resume_offset_seconds: 103 })
+  monitor.report("stream_continue_ok", { continuation_gap_ms: 1850, buffer_ahead: 30 })
+
+  assert.equal(posts[0].event, "stream_continue")
+  assert.equal(posts[0].continuation_reason, "stream_error")
+  assert.equal(posts[0].resume_offset_seconds, 103)
+  assert.equal(posts[0].continuation_count, 2)
+  assert.equal(posts[0].max_park_ms, 4321)
+  assert.equal(posts[1].event, "stream_continue_ok")
+  assert.equal(posts[1].continuation_gap_ms, 1850)
+  assert.equal(posts[1].buffer_ahead, 30)
+})
+
 test("the telemetry payload carries the stall counters that explain a pause", () => {
   const posts = []
   const player = {
