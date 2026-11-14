@@ -43,6 +43,47 @@ RSpec.describe Playback::ProgressWriter do
     expect(catalog).not_to have_received(:metadata)
   end
 
+  it "trusts a canonical episode label instead of relabelling it" do
+    create(:collection_entry, :wishlist, user: user, imdb_id: "tt0903747", title: "Breaking Bad",
+      poster_url: "https://img.example/poster.jpg")
+
+    result = writer.call(content_ref: episode, progress_seconds: 600, duration_seconds: 2_400,
+      title: "Breaking Bad · S01E01 · Pilot")
+
+    expect(result.data.title).to eq("Breaking Bad · S01E01 · Pilot")
+    expect(catalog).not_to have_received(:metadata)
+  end
+
+  it "resolves the episode label when the client sends no title" do
+    allow(catalog).to receive(:metadata).and_return(ServiceResult.success(
+      title: "Breaking Bad",
+      poster_url: "https://img.example/catalog.jpg",
+      episodes: [ { season: 1, episode: 1, title: "Pilot", runtime_seconds: 2_400 } ]
+    ))
+
+    result = writer.call(content_ref: episode, progress_seconds: 600, duration_seconds: 2_400)
+
+    expect(result.data.title).to eq("Breaking Bad · S01E01 · Pilot")
+    expect(catalog).to have_received(:metadata).with("tt0903747", "show", include_ratings: false).at_least(:once)
+  end
+
+  it "degrades to show and position when the catalogue cannot name the episode" do
+    create(:collection_entry, :wishlist, user: user, imdb_id: "tt0903747", title: "Breaking Bad")
+    allow(catalog).to receive(:metadata).and_return(ServiceResult.failure("Unavailable"))
+
+    result = writer.call(content_ref: episode, progress_seconds: 600, duration_seconds: 2_400)
+
+    expect(result.data.title).to eq("Breaking Bad · S01E01")
+  end
+
+  it "falls back to Unknown when a movie has no supplied or stored title" do
+    allow(catalog).to receive(:metadata).and_return(ServiceResult.failure("Unavailable"))
+
+    result = writer.call(content_ref: movie, progress_seconds: 60, duration_seconds: 120)
+
+    expect(result.data.title).to eq("Unknown")
+  end
+
   it "rejects progress that has not started" do
     expect(writer.call(content_ref: movie, progress_seconds: 0, duration_seconds: 120)).to be_failure
   end
@@ -103,21 +144,29 @@ RSpec.describe Playback::ContinueWatchingQuery do
     expect(item.slice(:season, :episode, :progress_seconds)).to eq(season: 1, episode: 1, progress_seconds: 2_340)
   end
 
-  it "advances a completed episode" do
+  it "advances a completed episode and labels the successor" do
     create(:playback_progress, :episode, user: user, imdb_id: "tt0903747",
       progress_seconds: 2_352, duration_seconds: 2_400)
-    next_ref = ContentRef.new(imdb_id: "tt0903747", type: "show", season: 1, episode: 2)
-    allow(episode_sequence).to receive(:next_after).and_return(ServiceResult.success(next_ref))
+    next_episode = Playback::EpisodeSequence::Next.new(
+      content_ref: ContentRef.new(imdb_id: "tt0903747", type: "show", season: 1, episode: 2),
+      show_title: "Breaking Bad",
+      title: "Cat's in the Bag...",
+      label: "Breaking Bad · S01E02 · Cat's in the Bag...",
+      duration_seconds: 2_400
+    )
+    allow(episode_sequence).to receive(:next_episode_after).and_return(ServiceResult.success(next_episode))
 
     item = query.call.data.first
 
     expect(item.slice(:season, :episode, :progress_seconds)).to eq(season: 1, episode: 2, progress_seconds: 0)
+    expect(item.slice(:title, :episode_title))
+      .to eq(title: "Breaking Bad", episode_title: "Cat's in the Bag...")
   end
 
   it "removes only a completed series finale" do
     create(:playback_progress, :episode, user: user, imdb_id: "tt0903747",
       progress_seconds: 2_400, duration_seconds: 2_400)
-    allow(episode_sequence).to receive(:next_after)
+    allow(episode_sequence).to receive(:next_episode_after)
       .and_return(ServiceResult.failure("No more episodes", :series_complete))
 
     expect(query.call.data).to be_empty
@@ -129,13 +178,19 @@ RSpec.describe Playback::ContinueWatchingQuery do
         progress_seconds: 2_400, duration_seconds: 2_400,
         watched_at: (index + 1).minutes.ago)
     end
-    next_ref = ContentRef.new(imdb_id: "tt0903747", type: "show", season: 1, episode: 2)
-    allow(episode_sequence).to receive(:next_after).and_return(ServiceResult.success(next_ref))
+    next_episode = Playback::EpisodeSequence::Next.new(
+      content_ref: ContentRef.new(imdb_id: "tt0903747", type: "show", season: 1, episode: 2),
+      show_title: "Breaking Bad",
+      title: "Cat's in the Bag...",
+      label: "Breaking Bad · S01E02 · Cat's in the Bag...",
+      duration_seconds: 2_400
+    )
+    allow(episode_sequence).to receive(:next_episode_after).and_return(ServiceResult.success(next_episode))
 
     items = query.call.data
 
     expect(items.length).to eq(described_class::LIMIT)
-    expect(episode_sequence).to have_received(:next_after)
+    expect(episode_sequence).to have_received(:next_episode_after)
       .at_most(described_class::LIMIT + described_class::RESOLUTION_BATCH - 1).times
     expect(items.map { |item| item[:last_watched] }).to eq(items.map { |item| item[:last_watched] }.sort.reverse)
   end

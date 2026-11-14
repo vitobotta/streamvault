@@ -378,15 +378,15 @@ RSpec.describe "Streaming", type: :request do
 
       get resume_streaming_index_path(imdb_id: "tt0903747", type: "show")
 
-      # Metadata (title, duration) now comes from the DB progress row,
-      # not a Cinemeta round-trip — resume is faster and no external
-      # metadata call is made.
+      # Duration comes from the DB progress row.  The label is resolved from
+      # the catalogue because the stored title carries no position, which is
+      # exactly how episodes used to reach the player with the wrong title.
       expect_playback_redirect(
         user: user,
         source_url: "https://download.real-debrid.com/d/bb/bb.mp4",
         filename: "bb.mp4",
         content_ref: { imdb_id: "tt0903747", type: "show", season: 1, episode: 1 },
-        title: progress.title,
+        title: "Breaking Bad · S01E01 · Pilot",
         poster_url: nil,
         resume_at: 3_393.0,
         duration: 3_480
@@ -409,17 +409,17 @@ RSpec.describe "Streaming", type: :request do
 
       get resume_streaming_index_path(imdb_id: "tt0903747", type: "show")
 
-      # Title comes from the DB progress row's show_title; duration is 0
-      # because no progress row exists yet for the next episode.
+      # The successor's own catalogue label and runtime — not the finished
+      # episode's title, and not a zero duration.
       expect_playback_redirect(
         user: user,
         source_url: "https://download.real-debrid.com/d/bb2/bb2.mp4",
         filename: "bb2.mp4",
         content_ref: { imdb_id: "tt0903747", type: "show", season: 1, episode: 2 },
-        title: progress.title,
-        poster_url: nil,
+        title: "Breaking Bad · S01E02 · Cat's in the Bag...",
+        poster_url: progress.poster_url,
         resume_at: 0.0,
-        duration: 0
+        duration: 2_880
       )
     end
 

@@ -50,7 +50,11 @@
         <% end %>
 
         <div class="min-w-0 flex-1">
-          <h3 class="text-sm font-medium text-ink-100 truncate"><%= entry.title %></h3>
+          <% label = entry.episode? ? Playback::EpisodeLabel.split(entry.title) : nil %>
+          <h3 class="text-sm font-medium text-ink-100 truncate"><%= label&.dig(:episode_title) || label&.dig(:show_title) || entry.title %></h3>
+          <% if label&.dig(:episode_title).present? && label[:show_title].present? %>
+            <p class="mt-0.5 truncate text-xs text-ink-400"><%= label[:show_title] %></p>
+          <% end %>
           <p class="mt-0.5 text-xs text-ink-400 t-num">
             <% if entry.episode? %>
               S<%= format("%02d", entry.season_number.to_i) %>E<%= format("%02d", entry.episode_number.to_i) %>

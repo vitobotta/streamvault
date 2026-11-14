@@ -137,7 +137,10 @@ module Catalog
       Array(videos).select { |video| video["episode"] }.map do |video|
         {
           season: video["season"], episode: video["episode"],
-          title: video["name"].presence || "Episode #{video['episode']}",
+          # Keep a genuinely missing name nil: Playback::EpisodeLabel decides
+          # how to render it, instead of baking in a placeholder that then
+          # leaks into the player and watch history.
+          title: video["name"].presence,
           released: video["released"]&.to_date&.to_s,
           imdb_id: video["id"], overview: video["overview"], runtime: video["runtime"],
           runtime_seconds: parse_runtime_seconds(video["runtime"])

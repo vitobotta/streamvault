@@ -82,7 +82,9 @@ export default class extends Controller {
       "seekingOverlay", "seekingOverlayMessage", "sourceInfo", "sourceToggle", "sourceDetails", "sourceUrl",
       "sourceFilename", "backButton", "audioControls", "audioMenu", "audioOptions", "audioButtonLabel",
       "subtitleControls", "subtitleMenu", "subtitleOptions", "subtitleButtonLabel", "subtitleOverlay",
-      "nextEpisodePrompt", "nextEpisodeButton", "nextEpisodeStatus", "pipButton", "pipNotice"
+      "nextEpisodePrompt", "nextEpisodeButton", "nextEpisodeStatus", "nextEpisodeLabel",
+      "titleLabel", "positionLabel", "speedControls", "speedMenu", "speedButtonLabel",
+      "pipButton", "pipNotice"
     ]
   }
   static get values() {
@@ -105,6 +107,7 @@ export default class extends Controller {
     this.nextEpisodeAbortController = null
     this.advancingEpisode = false
     this.progressInterval = null
+    this.playbackRate = 1
     this.uiHideTimer = null
     this.knownDuration = this.validDuration(this.durationValue) ? this.durationValue : 0
     this.isSeeking = false
@@ -1596,6 +1599,22 @@ export default class extends Controller {
 
   // ── Play / pause ──────────────────────────────────────────────────
 
+  // Relative seeks (skip buttons and arrow keys) reuse performSeek so remux
+  // streams, transcodes, and direct play all take their normal seek path.
+  seekRelative(offset) {
+    const duration = this.knownDuration
+    if (!(duration > 0) || !Number.isFinite(offset) || offset === 0) return
+
+    const target = Math.max(0, Math.min(duration, this.currentPlaybackPosition() + offset))
+    this.performSeek(target / duration)
+  }
+
+  seekBy(event) {
+    event.preventDefault()
+    this.seekRelative(Number(event.currentTarget.dataset.seekOffset))
+    this.showOverlayUi()
+  }
+
   togglePlay() {
     if (this.videoTarget.paused && !this.systemRebufferPaused) {
       this.userPaused = false
@@ -1626,17 +1645,36 @@ export default class extends Controller {
       return
     }
 
-    const seekDelta = this.keyboardSeekDelta(event)
-    if (seekDelta === null) return
-    // Modifier chords belong to the browser/OS (Cmd+Left is "back" in
-    // most browsers), and a held key must not fire a burst of seeks:
-    // each one restarts ffmpeg or the MSE session.
-    if (event.repeat || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
+    // Modifier chords belong to the browser/OS (Cmd+Left is "back" in most
+    // browsers), and a held key must not fire a burst of seeks: each one
+    // restarts ffmpeg or the MSE session.
+    if (event.repeat || event.metaKey || event.ctrlKey || event.altKey) return
     if (this.isInteractiveElement(event.target)) return
 
-    event.preventDefault()
-    this.seekBySeconds(seekDelta)
-    this.showOverlayUi()
+    const seekDelta = this.keyboardSeekDelta(event)
+    if (seekDelta !== null) {
+      if (event.shiftKey) return
+
+      event.preventDefault()
+      this.seekBySeconds(seekDelta)
+      this.showOverlayUi()
+      return
+    }
+
+    switch (event.key) {
+      case "f":
+      case "F":
+        event.preventDefault()
+        this.toggleFullscreen()
+        return
+      case "m":
+      case "M":
+        event.preventDefault()
+        this.toggleMute()
+        this.showOverlayUi()
+        return
+      default:
+    }
   }
 
   keyboardSeekDelta(event) {
@@ -1738,6 +1776,9 @@ export default class extends Controller {
       this.currentPlaybackPosition() >= start
     this.nextEpisodePromptTarget.classList.toggle("hidden", !visible)
     this.nextEpisodeButtonTarget.disabled = !!this.advancingEpisode
+    if (this.hasNextEpisodeLabelTarget) {
+      this.nextEpisodeLabelTarget.textContent = this.nextEpisode?.title || ""
+    }
   }
 
   async skipToNextEpisode() {
@@ -2329,6 +2370,75 @@ export default class extends Controller {
     if (!this.subtitleMenuTarget.classList.contains("hidden")) this.prefetchLikelyExternalSubtitle()
   }
 
+  toggleSpeedMenu(event) {
+    event.stopPropagation()
+    if (this.hasAudioMenuTarget) this.audioMenuTarget.classList.add("hidden")
+    if (this.hasSubtitleMenuTarget) this.subtitleMenuTarget.classList.add("hidden")
+    this.toggleTrackMenu(this.speedMenuTarget, null)
+  }
+
+  selectSpeed(event) {
+    event.preventDefault()
+    const rate = Number(event.currentTarget.dataset.speed)
+    if (!Number.isFinite(rate) || rate <= 0) return
+
+    this.applyPlaybackRate(rate)
+    this.closeTrackMenus()
+  }
+
+  // The menu is a radio group, so Up/Down walk the options instead of the
+  // document handler seeking the media by 15 seconds.
+  onSpeedMenuKeydown(event) {
+    if (event.key === "Escape") {
+      event.preventDefault()
+      this.closeTrackMenus()
+      this.speedMenuTarget.classList.add("hidden")
+      this.speedControlsTarget.querySelector("button")?.focus()
+      return
+    }
+
+    const direction = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0
+    if (direction === 0) return
+
+    const options = Array.from(this.speedMenuTarget.querySelectorAll("[data-video-player-speed]"))
+    if (options.length === 0) return
+
+    event.preventDefault()
+    const current = options.indexOf(event.target)
+    const next = current === -1
+      ? (direction > 0 ? 0 : options.length - 1)
+      : (current + direction + options.length) % options.length
+    options[next].focus()
+  }
+
+  // defaultPlaybackRate survives the src reloads used when seeking a remux or
+  // transcode, so the chosen speed sticks across a seek.
+  applyPlaybackRate(rate) {
+    const video = this.videoTarget
+    this.playbackRate = rate
+    video.defaultPlaybackRate = rate
+    video.playbackRate = rate
+    this.updateSpeedLabel()
+    this.markSpeedOptions()
+  }
+
+  updateSpeedLabel() {
+    if (!this.hasSpeedButtonLabelTarget) return
+
+    this.speedButtonLabelTarget.textContent = `${this.playbackRate || 1}×`
+  }
+
+  markSpeedOptions() {
+    if (!this.hasSpeedMenuTarget) return
+
+    this.speedMenuTarget.querySelectorAll("[data-video-player-speed]").forEach((option) => {
+      const selected = Number(option.dataset.videoPlayerSpeed) === this.playbackRate
+      option.setAttribute("aria-checked", selected ? "true" : "false")
+      option.classList.toggle("bg-white/15", selected)
+      option.classList.toggle("font-semibold", selected)
+    })
+  }
+
   toggleTrackMenu(menu, otherMenu) {
     otherMenu?.classList.add("hidden")
     menu.classList.toggle("hidden")
@@ -2339,18 +2449,21 @@ export default class extends Controller {
   closeTrackMenus() {
     if (this.hasAudioMenuTarget) this.audioMenuTarget.classList.add("hidden")
     if (this.hasSubtitleMenuTarget) this.subtitleMenuTarget.classList.add("hidden")
+    if (this.hasSpeedMenuTarget) this.speedMenuTarget.classList.add("hidden")
     this.scheduleUiHide()
   }
 
   trackMenuOpen() {
     return (this.hasAudioMenuTarget && !this.audioMenuTarget.classList.contains("hidden")) ||
-      (this.hasSubtitleMenuTarget && !this.subtitleMenuTarget.classList.contains("hidden"))
+      (this.hasSubtitleMenuTarget && !this.subtitleMenuTarget.classList.contains("hidden")) ||
+      (this.hasSpeedMenuTarget && !this.speedMenuTarget.classList.contains("hidden"))
   }
 
   onDocumentClick(event) {
     if (!this.trackMenuOpen()) return
     if (this.hasAudioControlsTarget && this.audioControlsTarget.contains(event.target)) return
     if (this.hasSubtitleControlsTarget && this.subtitleControlsTarget.contains(event.target)) return
+    if (this.hasSpeedControlsTarget && this.speedControlsTarget.contains(event.target)) return
 
     this.closeTrackMenus()
   }
@@ -2987,7 +3100,10 @@ export default class extends Controller {
 
   showOverlayUi() {
     this.backButtonTarget.style.opacity = "1"
-    this.backButtonTarget.style.pointerEvents = "auto"
+    // The bar spans the full width above the player, so it must not swallow
+    // clicks meant for the Stream info control; only its link is interactive.
+    this.backButtonTarget.style.pointerEvents = "none"
+    this.backButtonTarget.style.visibility = "visible"
     this.sourceInfoTarget.style.opacity = "1"
     this.sourceInfoTarget.style.pointerEvents = "auto"
     this.controlsTarget.style.opacity = "1"
@@ -2999,6 +3115,9 @@ export default class extends Controller {
     if (!this.videoTarget.paused && !this.trackMenuOpen()) {
       this.backButtonTarget.style.opacity = "0"
       this.backButtonTarget.style.pointerEvents = "none"
+      // Its link keeps pointer events so the bar can pass clicks through, so
+      // the faded bar must also leave the click path entirely.
+      this.backButtonTarget.style.visibility = "hidden"
       this.sourceInfoTarget.style.opacity = "0"
       this.sourceInfoTarget.style.pointerEvents = "none"
       this.controlsTarget.style.opacity = "0"
@@ -3027,6 +3146,7 @@ export default class extends Controller {
     this.clearUiHideTimer()
     if (!this.sourceDetailsTarget.classList.contains("hidden")) {
       this.backButtonTarget.style.opacity = "1"
+      this.backButtonTarget.style.visibility = "visible"
       this.sourceInfoTarget.style.opacity = "1"
       this.controlsTarget.style.opacity = "1"
     } else {

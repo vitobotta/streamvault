@@ -37,7 +37,7 @@ class PlaybackResumeService
   end
 
   def next_episode_target(imdb_id, last)
-    next_episode = Playback::EpisodeSequence.new.next_after(
+    next_episode = Playback::EpisodeSequence.new.next_episode_after(
       ContentRef.new(
         imdb_id: imdb_id,
         type: "show",
@@ -47,10 +47,14 @@ class PlaybackResumeService
     )
 
     if next_episode.success?
+      # Carry the *next* episode's catalogue label.  Inheriting last.title here
+      # is what made auto-advance show the previous episode's name.
       return base_target(
         season: next_episode.data.season,
         episode: next_episode.data.episode,
-        title: last.title
+        title: next_episode.data.label,
+        poster_url: last.poster_url,
+        duration_seconds: next_episode.data.duration_seconds.to_i
       )
     end
 

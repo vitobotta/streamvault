@@ -21,7 +21,7 @@ module Playback
         episode_number: content_ref.episode || 0
       ) { is_new = true }
       entry.assign_attributes(
-        title: title.presence || stored_title(content_ref) || "Unknown",
+        title: display_title(content_ref, title),
         poster_url: poster_url.presence || stored_poster(content_ref),
         watched_at: Time.current,
         progress_seconds: progress,
@@ -45,6 +45,28 @@ module Playback
 
     def stored_title(content_ref)
       collection_entry(content_ref)&.title
+    end
+
+    # History rows for episodes used to fall back to the bare show title, so
+    # every episode of a show looked identical.  Keep a supplied label, and
+    # otherwise resolve the catalogue label (or at least show · S01E02).
+    def display_title(content_ref, title)
+      provided = title.presence
+      return provided || stored_title(content_ref) || "Unknown" unless content_ref.show?
+      return provided if provided
+
+      context = Playback::EpisodeContext.new(catalog: @catalog).call(
+        imdb_id: content_ref.imdb_id,
+        season: content_ref.season,
+        episode: content_ref.episode
+      )
+      return context.data[:label] if context.success? && context.data[:label].present?
+
+      Playback::EpisodeLabel.build(
+        show_title: stored_title(content_ref),
+        season: content_ref.season,
+        episode: content_ref.episode
+      ) || "Unknown"
     end
 
     def stored_poster(content_ref)

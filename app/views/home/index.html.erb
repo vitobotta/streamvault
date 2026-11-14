@@ -42,7 +42,7 @@
                  item: item,
                  priority: index < 4,
                  link_path: resume_streaming_index_path(type: item[:content_type] == "episode" ? "show" : "movie", imdb_id: item[:imdb_id]),
-                 subtitle: item[:content_type] == "episode" ? "S#{format('%02d', item[:season].to_i)}E#{format('%02d', item[:episode].to_i)}" : "Continue",
+                 subtitle: item[:content_type] == "episode" ? [ "S#{format('%02d', item[:season].to_i)}E#{format('%02d', item[:episode].to_i)}", item[:episode_title] ].compact.join(" · ") : "Continue",
                  progress: item[:progress_percentage],
                  remove_path: watch_history_path(item[:history_id]),
                  remove_method: :delete,
@@ -59,8 +59,7 @@
                  priority: index < 4 && @continue_watching.empty?,
                  link_path: content_path(type: item[:type], imdb_id: item[:imdb_id]),
                  subtitle: [item[:year], item[:type] == "show" ? "Series" : "Film"].compact.join(" · ") %>
-    <% end %>
-  <% end %>
+    <% end %>  <% end %>
 <% end %>
 
 <% if @recently_added.any? %>
