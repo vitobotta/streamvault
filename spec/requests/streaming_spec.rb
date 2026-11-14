@@ -464,6 +464,8 @@ RSpec.describe "Streaming", type: :request do
       expect(response.body).to include(%(data-video-player-subtitles-url-value="/transcode/subtitles"))
       expect(response.body).to include(%(data-video-player-target="audioControls"))
       expect(response.body).to include(%(data-video-player-target="subtitleControls"))
+      expect(response.body).to include(%(data-video-player-target="pipButton"))
+      expect(response.body).to include("togglePictureInPicture")
       expect(response.body).to include(%(data-video-player-target="subtitleOverlay"))
       expect(response.body).to include(%(click-&gt;video-player#navigateBack))
       expect(response.body).to include("toggleAudioMenu")
