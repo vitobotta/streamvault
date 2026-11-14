@@ -12,6 +12,7 @@ class PlaylistItem < ApplicationRecord
   }
   validates :year, numericality: { greater_than: 1800, less_than: 2100 }, allow_nil: true
 
+  before_validation :normalize_year
   before_create :assign_position
 
   scope :ordered, -> { order(position: :asc, id: :asc) }
@@ -36,6 +37,17 @@ class PlaylistItem < ApplicationRecord
   end
 
   private
+
+  # Cinemeta reports a series year as a range, and numericality validates the
+  # value before it is cast to an integer, so a range rejects the whole row.
+  # Keep the first year from anything that carries one.
+  def normalize_year
+    raw = read_attribute_before_type_cast(:year)
+    return if raw.nil? || raw.is_a?(Integer)
+
+    digits = raw.to_s[/\d{4}/]
+    self.year = digits if digits
+  end
 
   def assign_position
     self.position = (playlist.playlist_items.maximum(:position) || -1) + 1

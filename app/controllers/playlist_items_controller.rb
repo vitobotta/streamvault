@@ -40,7 +40,13 @@ class PlaylistItemsController < ApplicationController
   end
 
   def move
-    unless @item.move!(params[:direction])
+    direction = params[:direction].to_s
+    unless %w[up down].include?(direction)
+      redirect_to playlist_path(@playlist), alert: "Invalid move direction."
+      return
+    end
+
+    unless @item.move!(direction)
       redirect_to playlist_path(@playlist), alert: "That item is already at the edge of the playlist."
       return
     end

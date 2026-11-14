@@ -35,7 +35,7 @@
 
   <% if @items.any? %>
     <div class="grid gap-4" style="grid-template-columns: repeat(auto-fill, 160px)">
-      <% @items.each_with_index do |item, index| %>
+      <% @items.each do |item| %>
         <div class="poster-card group">
           <%= link_to content_path(type: item.content_type, imdb_id: item.imdb_id), data: { page_loader: "link" } do %>
             <% if item.poster_url.present? %>
@@ -59,14 +59,15 @@
                   title: "Remove from playlist", aria: { label: "Remove #{item.title} from #{@playlist.name}" } do %>
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
             <% end %>
-            <% if index.positive? %>
+            <% full_index = @ordered_ids.index(item.id) %>
+            <% if full_index&.positive? %>
               <%= button_to move_playlist_playlist_item_path(@playlist, item), method: :patch, params: { direction: "up" },
                     class: "w-7 h-7 bg-black/60 rounded-full flex items-center justify-center text-white hover:bg-sv-accent",
                     title: "Move earlier", aria: { label: "Move #{item.title} earlier" } do %>
                 <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
               <% end %>
             <% end %>
-            <% if index < @items.length - 1 %>
+            <% if full_index && full_index < @ordered_ids.length - 1 %>
               <%= button_to move_playlist_playlist_item_path(@playlist, item), method: :patch, params: { direction: "down" },
                     class: "w-7 h-7 bg-black/60 rounded-full flex items-center justify-center text-white hover:bg-sv-accent",
                     title: "Move later", aria: { label: "Move #{item.title} later" } do %>

@@ -7,10 +7,16 @@ class PlaylistsController < ApplicationController
   def index
     @playlists = playlists_for_index
     @playlist = current_user.playlists.new
+    @item_counts = @playlists.index_with do |playlist|
+      items = playlist.playlist_items.to_a
+      visible = parental_content_policy.filter(items).size
+      { visible: visible, hidden: items.size - visible }
+    end
   end
 
   def show
     @items = parental_content_policy.filter(@playlist.playlist_items.ordered)
+    @ordered_ids = @playlist.playlist_items.ordered.pluck(:id)
   end
 
   def create
@@ -41,6 +47,7 @@ class PlaylistsController < ApplicationController
       redirect_to playlist_path(@playlist), notice: "Playlist updated."
     else
       @items = parental_content_policy.filter(@playlist.playlist_items.ordered)
+    @ordered_ids = @playlist.playlist_items.ordered.pluck(:id)
       render :show, status: :unprocessable_entity
     end
   end

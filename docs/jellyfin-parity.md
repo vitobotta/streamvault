@@ -46,7 +46,7 @@ Status: ✅ done · 🟡 partial · ⬜ missing
 | 31 | Playback | Intro and credits detection | 🟡 | Near-end next-episode prompt; no fingerprint-based intro skip |
 | 32 | Playback | Playback speed | ✅ | Speed menu, persistence across seeks |
 | 33 | Playback | Keyboard shortcuts | ✅ | Play/pause, seek, mute, fullscreen, speed menu |
-| 34 | Playback | Picture-in-picture | ⬜ | Native PiP button and state handling |
+| 34 | Playback | Picture-in-picture | ✅ | Native PiP button and state handling |
 | 35 | Playback | Casting and remote control | ⬜ | Chromecast/AirPlay plus a remote-control channel |
 | 36 | Playback | SyncPlay (watch together) | ⬜ | Realtime room protocol, host/guest state, drift correction |
 | 37 | Live TV | Tuners and channel guide | ⬜ | Separate Live TV subsystem |
@@ -70,7 +70,7 @@ Status: ✅ done · 🟡 partial · ⬜ missing
 | 55 | Platform | Mobile apps | 🟡 | Installable PWA; no native clients |
 | 56 | Platform | Themes and branding | 🟡 | One dark theme and accent token; no theme picker |
 | 57 | Platform | Localisation and RTL | ⬜ | UI is English-only with no locale files for product copy |
-| 58 | Platform | Accessibility audit | 🟡 | Focus states and labels exist; no full audit or reduced-motion mode |
+| 58 | Platform | Accessibility audit | 🟡 | Focus states, labels and reduced-motion handling exist; no full audit |
 
 ## Suggested one-feature-per-PR order
 

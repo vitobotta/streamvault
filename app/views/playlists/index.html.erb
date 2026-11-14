@@ -30,7 +30,11 @@
             <div class="min-w-0">
               <h2 class="text-lg font-semibold text-white truncate"><%= playlist.name %></h2>
               <p class="text-sm text-sv-text-muted mt-1">
-                <%= pluralize(playlist.playlist_items.size, "title") %>
+                <% counts = @item_counts.fetch(playlist) %>
+                <%= pluralize(counts[:visible], "title") %>
+                <% if counts[:hidden].positive? %>
+                  · <%= counts[:hidden] %> hidden for this account
+                <% end %>
               </p>
             </div>
             <svg class="w-8 h-8 shrink-0 text-sv-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.7">

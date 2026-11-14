@@ -73,6 +73,18 @@ RSpec.describe "Playlists", type: :request do
       expect(playlist.playlist_items.last.position).to eq(0)
     end
 
+    it "accepts a series year range from the content page" do
+      expect {
+        post playlist_playlist_items_path(playlist), params: {
+          playlist_item: item_attributes.merge(
+            imdb_id: "tt0903747", content_type: "show", title: "Breaking Bad", year: "2008–2013"
+          )
+        }
+      }.to change(playlist.playlist_items, :count).by(1)
+
+      expect(playlist.playlist_items.last.year).to eq(2008)
+    end
+
     it "does not add the same title twice" do
       create(:playlist_item, playlist: playlist, imdb_id: "tt1375666", content_type: :movie)
 
@@ -98,6 +110,17 @@ RSpec.describe "Playlists", type: :request do
       patch move_playlist_playlist_item_path(playlist, second), params: { direction: "up" }
 
       expect(playlist.playlist_items.reload.map(&:title)).to eq([ "Second", "First" ])
+    end
+
+    it "refuses a move direction it does not understand" do
+      first = create(:playlist_item, playlist: playlist, title: "First")
+      create(:playlist_item, playlist: playlist, title: "Second")
+
+      patch move_playlist_playlist_item_path(playlist, first), params: { direction: "sideways" }
+
+      expect(response).to redirect_to(playlist_path(playlist))
+      expect(flash[:alert]).to include("Invalid move direction")
+      expect(playlist.playlist_items.reload.map(&:title)).to eq([ "First", "Second" ])
     end
 
     it "never adds to another user's playlist" do
@@ -130,6 +153,20 @@ RSpec.describe "Playlists", type: :request do
 
       expect(response).to redirect_to(playlist_path(playlist))
       expect(flash[:alert]).to include("not available")
+    end
+
+    it "counts only the titles this account can see on the index" do
+      resolver = instance_double(ParentalControls::RatingResolver)
+      allow(resolver).to receive(:min_age) { |imdb_id| imdb_id == "tt0994312" ? 18 : 5 }
+      allow(ParentalControls::RatingResolver).to receive(:new).and_return(resolver)
+      playlist = create(:playlist, user: child, name: "Mixed")
+      create(:playlist_item, playlist: playlist, imdb_id: "tt0111161", title: "Allowed")
+      create(:playlist_item, playlist: playlist, imdb_id: "tt0994312", title: "Restricted")
+
+      get playlists_path
+
+      expect(response.body).to include("1 title")
+      expect(response.body).to include("1 hidden for this account")
     end
   end
 end
