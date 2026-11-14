@@ -606,3 +606,23 @@ test("native HEVC decode and unsupported-source errors bypass copy remux", () =>
     assert.equal(player.remuxDirectPlay, false)
   }
 })
+
+
+test("auto quality downgrade moves direct playback onto the transcode path", () => {
+  const player = new VideoPlayerController()
+  player.quality = "auto"
+  player.autoQuality = true
+  player.autoQualityStalls = 1
+  player.directPlayActive = true
+  player.remuxDirectPlay = true
+  player.syncQualitySelect = () => {}
+  player.reportStall = () => {}
+
+  player.maybeDowngradeAutoQuality()
+
+  assert.equal(player.quality, "720p")
+  // The rung only applies on the transcode path, so a direct/remux reconnect
+  // must not be allowed to load the unlimited source.
+  assert.equal(player.directPlayActive, false)
+  assert.equal(player.remuxDirectPlay, false)
+})

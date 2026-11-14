@@ -19,9 +19,24 @@ class ApplicationController < ActionController::Base
   end
 
   # Rating-limit policy for child accounts (no-op for regular accounts).
+  helper_method :debrid_access_configured?
+
+  # True when playback can resolve streams: the account has a key (own, team,
+  # or environment), or a shared AIOStreams instance supplies its own debrid
+  # credentials.
+  def debrid_access_configured?
+    current_user&.debrid_configured? || StreamProvider.keyless_provider_available?
+  end
+
   private
 
   def parental_content_policy
     ParentalControls::ContentPolicy.new(current_user)
+  end
+
+  def require_admin!
+    return if current_user&.admin?
+
+    redirect_to root_path, alert: "That page is restricted to administrators."
   end
 end

@@ -6,6 +6,10 @@ RSpec.describe Media::Transcoder do
     # Tests run against the software fallback (libx264) so the specs
     # don't depend on VideoToolbox being available on the CI machine.
     described_class.instance_variable_set(:@videotoolbox_available, false)
+    # Hardware detection and the tonemap probe shell out to ffmpeg; specs that
+    # care about them stub these explicitly.
+    allow(described_class).to receive(:detect_hardware_encoder).and_return(nil)
+    allow(described_class).to receive(:tonemap_available?).and_return(false)
   end
 
   describe ".probe_duration" do
@@ -526,15 +530,72 @@ RSpec.describe Media::Transcoder do
         subtitle_stream: "4"
       )
 
-      subtitle_filter = "[0:v:0][0:s:0]overlay," \
+      subtitle_filter = "[0:v:0]" \
         "scale=w='min(1920,iw)':h='min(1080,ih)':" \
-        "force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p[v]"
+        "force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p[vbase];" \
+        "[vbase][0:s:0]overlay,format=yuv420p[v]"
 
       expect(argument_pairs(command)).to include([ "-filter_complex", subtitle_filter ])
       expect(argument_pairs(command)).to include([ "-map", "[v]" ])
       expect(argument_pairs(command)).not_to include([ "-map", "0:v:0" ])
       expect(argument_pairs(command)).to include([ "-c:v", "libx264" ])
       expect(argument_pairs(command)).not_to include([ "-c:v", "copy" ])
+    end
+
+    it "scales bitmap subtitles to a scaled base before overlaying them" do
+      allow(described_class).to receive(:scale2ref_available?).and_return(true)
+      video_output = {
+        "streams" => [ { "codec_name" => "h264", "width" => 1920, "height" => 1080, "pix_fmt" => "yuv420p" } ]
+      }.to_json
+      track_output = {
+        "streams" => [
+          { "index" => 4, "codec_type" => "subtitle", "codec_name" => "hdmv_pgs_subtitle", "tags" => { "language" => "fre" }, "disposition" => { "default" => 0 } }
+        ]
+      }.to_json
+      allow(described_class).to receive(:capture_command) do |cmd, **_kwargs|
+        cmd.include?("-select_streams") ? capture_result(video_output) : capture_result(track_output)
+      end
+
+      command = described_class.send(:build_ffmpeg_command,
+        "https://example.test/video-pgs-subtitles.mkv",
+        headers: {},
+        start_seconds: 0,
+        subtitle_stream: "4",
+        quality: "480p"
+      )
+
+      graph = argument_pairs(command).to_h["-filter_complex"]
+      expect(graph).to include("[0:s:0][vbase]scale2ref[sub][vbase2];[vbase2][sub]overlay")
+      expect(graph).to include("min(853,iw)")
+    end
+
+    it "re-encodes instead of copying when a quality rung is requested" do
+      video_output = {
+        "streams" => [ { "codec_name" => "h264", "width" => 1920, "height" => 1080, "pix_fmt" => "yuv420p" } ]
+      }.to_json
+      allow(described_class).to receive(:capture_command).and_return(capture_result(video_output))
+
+      hls_command = described_class.send(:build_ffmpeg_command,
+        "https://example.test/video-hls.mkv",
+        headers: {},
+        start_seconds: 0,
+        output_spec: :hls,
+        segment_dir: Rails.root.join("tmp", "hls-quality-spec").to_s,
+        quality: "480p"
+      )
+      remux_command = described_class.send(:build_ffmpeg_command,
+        "https://example.test/video-remux.mkv",
+        headers: {},
+        start_seconds: 0,
+        remux: true,
+        quality: "480p"
+      )
+
+      [ hls_command, remux_command ].each do |command|
+        expect(argument_pairs(command)).not_to include([ "-c:v", "copy" ])
+        expect(argument_pairs(command)).to include([ "-maxrate", "1200k" ])
+      end
+      expect(hls_command.join(" ")).to include("min(853,iw)")
     end
 
     it "does not use the bitmap overlay filter for text subtitle streams" do
@@ -617,6 +678,141 @@ RSpec.describe Media::Transcoder do
         [ "-profile:v", "high" ],
         [ "-level:v", "4.0" ]
       )
+    end
+  end
+
+  describe "quality ladder" do
+    let(:video_output) do
+      { "streams" => [ { "codec_name" => "hevc", "width" => 3840, "height" => 2160, "pix_fmt" => "yuv420p10le" } ] }.to_json
+    end
+
+    before { allow(described_class).to receive(:capture_command).and_return(capture_result(video_output)) }
+
+    it "caps resolution and bitrate for a fixed rung" do
+      command = described_class.send(:build_ffmpeg_command,
+        "https://example.test/video-4k.mkv",
+        headers: {},
+        start_seconds: 0,
+        quality: "720p"
+      )
+
+      expect(argument_pairs(command)).to include([ "-maxrate", "3000k" ], [ "-bufsize", "6000k" ])
+      expect(command.join(" ")).to include(
+        "scale=w='min(1280,iw)':h='min(720,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p"
+      )
+      expect(argument_pairs(command)).to include([ "-c:v", "libx264" ])
+    end
+
+    it "keeps the CRF encode with the 1080p cap for auto" do
+      command = described_class.send(:build_ffmpeg_command,
+        "https://example.test/video-4k.mkv",
+        headers: {},
+        start_seconds: 0,
+        quality: "auto"
+      )
+
+      expect(argument_pairs(command)).not_to include([ "-maxrate", "3000k" ])
+      expect(command).to include(described_class::SAFE_VIDEO_FILTER)
+    end
+
+    it "ignores an unknown rung" do
+      command = described_class.send(:build_ffmpeg_command,
+        "https://example.test/video-4k.mkv",
+        headers: {},
+        start_seconds: 0,
+        quality: "4320p"
+      )
+
+      expect(described_class.normalized_quality("4320p")).to be_nil
+      expect(argument_pairs(command)).not_to include([ "-maxrate", "3000k" ])
+    end
+
+    it "accepts rung names case-insensitively" do
+      expect(described_class.normalized_quality("720P")).to eq("720p")
+      expect(described_class.normalized_quality(nil)).to be_nil
+    end
+  end
+
+  describe "HDR tone mapping" do
+    def command_for(video_stream)
+      allow(described_class).to receive(:capture_command)
+        .and_return(capture_result({ "streams" => [ video_stream ] }.to_json))
+      described_class.send(:build_ffmpeg_command, "https://example.test/video.mkv", headers: {}, start_seconds: 0)
+    end
+
+    def video_filter(command)
+      command[command.index("-vf") + 1]
+    end
+
+    it "tone maps HDR sources when zscale is available" do
+      allow(described_class).to receive(:tonemap_available?).and_return(true)
+      command = command_for(
+        "codec_name" => "hevc", "width" => 3840, "height" => 2160,
+        "pix_fmt" => "yuv420p10le", "color_transfer" => "smpte2084", "color_primaries" => "bt2020"
+      )
+
+      expect(video_filter(command)).to start_with("zscale=t=linear:npl=100")
+      expect(video_filter(command)).to include("tonemap=tonemap=hable:desat=0")
+      expect(video_filter(command)).to include("format=yuv420p")
+    end
+
+    it "skips tone mapping when the build lacks zscale" do
+      command = command_for(
+        "codec_name" => "hevc", "width" => 3840, "height" => 2160,
+        "pix_fmt" => "yuv420p10le", "color_transfer" => "smpte2084", "color_primaries" => "bt2020"
+      )
+
+      expect(video_filter(command)).not_to include("zscale")
+    end
+
+    it "leaves SDR BT.2020 sources untouched" do
+      allow(described_class).to receive(:tonemap_available?).and_return(true)
+      command = command_for(
+        "codec_name" => "h264", "width" => 1920, "height" => 1080,
+        "pix_fmt" => "yuv420p", "color_transfer" => "bt709", "color_primaries" => "bt2020"
+      )
+
+      expect(video_filter(command)).not_to include("zscale")
+    end
+
+    it "leaves SDR sources untouched" do
+      allow(described_class).to receive(:tonemap_available?).and_return(true)
+      command = command_for(
+        "codec_name" => "h264", "width" => 1920, "height" => 1080,
+        "pix_fmt" => "yuv420p", "color_transfer" => "bt709", "color_primaries" => "bt709"
+      )
+
+      expect(video_filter(command)).not_to include("zscale")
+    end
+  end
+
+  describe ".detect_hardware_encoder" do
+    before do
+      allow(described_class).to receive(:detect_hardware_encoder).and_call_original
+      if described_class.instance_variable_defined?(:@detected_hardware_encoder)
+        described_class.remove_instance_variable(:@detected_hardware_encoder)
+      end
+    end
+
+    after do
+      if described_class.instance_variable_defined?(:@detected_hardware_encoder)
+        described_class.remove_instance_variable(:@detected_hardware_encoder)
+      end
+    end
+
+    it "only uses an encoder that produces a frame" do
+      allow(described_class).to receive(:capture_command) do |args, **_options|
+        encoder = args.index("-c:v") ? args[args.index("-c:v") + 1] : nil
+        capture_result("", success: encoder == "h264_nvenc")
+      end
+
+      expect(described_class.detect_hardware_encoder[:name]).to eq("h264_nvenc")
+    end
+
+    it "falls back to software when no encoder works" do
+      allow(described_class).to receive(:capture_command).and_return(capture_result("", success: false))
+
+      expect(described_class.detect_hardware_encoder).to be_nil
     end
   end
 

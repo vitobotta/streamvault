@@ -115,7 +115,8 @@ Different tools for different jobs. If you want a permanent offline library, a d
 ### Built to be left alone
 
 - **One Compose stack**: Rails, PostgreSQL, and Solid Queue in a single deployment.
-- **Encrypted secrets**: RealDebrid keys are encrypted at rest with Active Record Encryption.
+- **Encrypted secrets**: RealDebrid and TorBox keys are encrypted at rest with Active Record Encryption.
+- **Multiple debrid accounts**: RealDebrid and TorBox can both be configured. When both have keys, streams from both are queried and merged, and each account can use its own key or share an administrator's team key.
 - **Health endpoint** at `/up` for uptime checks.
 - **No analytics and no call-home.** The only outbound requests are to the metadata, stream, and subtitle services listed above.
 - **MIT licensed**, with no telemetry and no paid edition.
@@ -146,10 +147,12 @@ StreamVault does not ship a catalogue and does not keep a media library. Bytes p
 
 | Service | Role | Needed |
 |---|---|---|
-| [RealDebrid](https://real-debrid.com) | Resolves the selected stream into a direct link | Required |
+| [RealDebrid](https://real-debrid.com) | Resolves the selected stream into a direct link | One of RealDebrid or TorBox |
+| [TorBox](https://torbox.app) | Alternative debrid resolver; used alongside RealDebrid when both keys are set | One of RealDebrid or TorBox |
 | [OMDB](https://www.omdbapi.com/apikey.aspx) | IMDb, Rotten Tomatoes, and Metacritic ratings | Required, free key |
 | [Torrentio](https://torrentio.strem.fun) | Finds available streams | Default provider |
 | [Comet](proxy/comet) | Self-hosted alternative stream provider | Optional |
+| [AIOStreams](https://github.com/Viren070/AIOStreams) | Aggregating stream provider over your own sources and debrid services | Optional |
 | [Cinemeta](https://v3-cinemeta.strem.io) | Titles, posters, plots, episodes | Built in, no key |
 | [TMDB](https://www.themoviedb.org/settings/api) | Recommendations from your watch history | Optional, free key |
 | [SubDL](https://subdl.com/panel/api) | External subtitles when none are embedded | Optional, free key |
@@ -206,7 +209,7 @@ The database lives in `./data` and survives rebuilds. Containers restart on cras
 | `OMDB_API_KEY` | Ratings metadata | required |
 | `APP_DOMAIN` | Public host name | empty |
 | `ENABLE_SIGNUPS` | Allow self-registration | `false` |
-| `STREAM_PROVIDER` | `torrentio`, `comet`, or `auto` | `torrentio` |
+| `STREAM_PROVIDER` | `torrentio`, `comet`, `aiostreams`, or `auto` | `torrentio` |
 | `TMDB_READ_ACCESS_TOKEN` | Recommendations | empty |
 | `SUBDL_API_KEY` | External subtitle fallback | empty |
 

@@ -6,6 +6,7 @@ class User < ApplicationRecord
 
   # Encryption
   encrypts :realdebrid_api_key, deterministic: false
+  encrypts :torbox_api_key, deterministic: false
 
   # Associations
   has_many :collection_entries, dependent: :destroy
@@ -30,6 +31,16 @@ class User < ApplicationRecord
   validate :preferred_languages_must_be_array, on: :update
 
   validates :display_name, length: { maximum: 50 }
+
+  # Debrid services.  Each account can use its own key; when it has none the
+  # installation-wide key set by an administrator (or the environment) is used.
+  DEBRID_SERVICES = {
+    "realdebrid" => "RealDebrid",
+    "torbox" => "TorBox"
+  }.freeze
+
+  validates :debrid_service, inclusion: { in: DEBRID_SERVICES.keys }
+  before_validation :normalize_debrid_service
 
   # Child accounts / parental controls
   CHILD_LOCK_MIN_LENGTH = 4
@@ -66,7 +77,58 @@ class User < ApplicationRecord
   end
 
   def has_realdebrid_key?
-    realdebrid_api_key.present?
+    effective_realdebrid_api_key.present?
+  end
+
+  def has_torbox_key?
+    effective_torbox_api_key.present?
+  end
+
+  # Whether any debrid account is usable.  Both services are queried when both
+  # keys exist, so this is not limited to the selected service.
+  def debrid_configured?
+    debrid_credentials.any?
+  end
+
+  # Every (service, key) pair this account can use for streams, most-preferred
+  # first.  Both services are included so their streams can be merged for more
+  # diversity instead of picking a single pool.
+  def debrid_credentials
+    pairs = []
+    pairs << [ "realdebrid", effective_realdebrid_api_key ] if effective_realdebrid_api_key.present?
+    pairs << [ "torbox", effective_torbox_api_key ] if effective_torbox_api_key.present?
+    pairs.sort_by { |service, _key| service == effective_debrid_service ? 0 : 1 }
+  end
+
+  def effective_realdebrid_api_key
+    realdebrid_api_key.presence || shared_debrid_setting(:realdebrid_api_key)
+  end
+
+  def effective_torbox_api_key
+    torbox_api_key.presence || shared_debrid_setting(:torbox_api_key)
+  end
+
+  def effective_debrid_api_key
+    debrid_service.to_s == "torbox" ? effective_torbox_api_key : effective_realdebrid_api_key
+  end
+
+  def effective_debrid_service
+    DEBRID_SERVICES.key?(debrid_service.to_s) ? debrid_service.to_s : "realdebrid"
+  end
+
+  def debrid_service_label
+    DEBRID_SERVICES.fetch(effective_debrid_service, effective_debrid_service)
+  end
+
+  # :user, :global (admin setting), :environment, or nil.  The value is used
+  # for a status line only; the key itself is never rendered.
+  def debrid_key_source
+    own_key = debrid_service.to_s == "torbox" ? torbox_api_key : realdebrid_api_key
+    return :user if own_key.present?
+    return :global if app_settings.public_send(debrid_setting_column).present?
+    return :environment if ENV[debrid_env_var].present?
+
+    nil
   end
 
   def preferred_stream_languages
@@ -85,6 +147,30 @@ class User < ApplicationRecord
   end
 
   private
+
+  def normalize_debrid_service
+    self.debrid_service = debrid_service.to_s.presence || "realdebrid"
+  end
+
+  def debrid_setting_column
+    debrid_service.to_s == "torbox" ? :torbox_api_key : :realdebrid_api_key
+  end
+
+  def debrid_env_var
+    debrid_service.to_s == "torbox" ? "TORBOX_API_KEY" : "REALDEBRID_API_KEY"
+  end
+
+  # Admin-set key first, then an environment key.  Blank values are ignored so
+  # an empty .env line does not shadow a configured one.  The settings row is
+  # read once per user instance; media segment requests therefore do not each
+  # add a settings query.
+  def shared_debrid_setting(column)
+    app_settings.public_send(column).presence || ENV[column == :torbox_api_key ? "TORBOX_API_KEY" : "REALDEBRID_API_KEY"].presence
+  end
+
+  def app_settings
+    @app_settings ||= AppSetting.current
+  end
 
   def digest_child_lock_password
     return if child_lock_password.blank?

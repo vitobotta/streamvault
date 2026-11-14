@@ -72,6 +72,9 @@ const INTERACTIVE_SELECTOR = "button, a, input, textarea, select, [contenteditab
 // that a couple of presses do not overshoot a scene.
 const KEYBOARD_SEEK_STEP_SECONDS = 15
 const SAFARI_AUTOPLAY_GUIDANCE_KEY = "streamvault:safari-autoplay-guidance-seen"
+// Remembers the quality menu across page loads; episode changes keep the rung.
+const QUALITY_STORAGE_KEY = "streamvault:quality"
+const QUALITY_OPTIONS = [ "auto", "1080p", "720p", "480p" ]
 
 export default class extends Controller {
   static get targets() {
@@ -82,7 +85,7 @@ export default class extends Controller {
       "seekingOverlay", "seekingOverlayMessage", "sourceInfo", "sourceToggle", "sourceDetails", "sourceUrl",
       "sourceFilename", "backButton", "audioControls", "audioMenu", "audioOptions", "audioButtonLabel",
       "subtitleControls", "subtitleMenu", "subtitleOptions", "subtitleButtonLabel", "subtitleOverlay",
-      "nextEpisodePrompt", "nextEpisodeButton", "nextEpisodeStatus", "pipButton", "pipNotice"
+      "quality", "nextEpisodePrompt", "nextEpisodeButton", "nextEpisodeStatus", "pipButton", "pipNotice"
     ]
   }
   static get values() {
@@ -125,6 +128,13 @@ export default class extends Controller {
       this.bufferingOverlayTimer = null
       this.updateNextEpisodePrompt()
     }
+    // Transcode quality: "auto" lets the server pick (CRF, capped at 1080p).
+    // A fixed rung caps resolution and bitrate; auto mode also steps down a
+    // rung after repeated stalls so a slow link settles instead of looping.
+    this.quality = this.storedQuality()
+    this.autoQuality = this.quality === "auto"
+    this.autoQualityStalls = 0
+    this.syncQualitySelect()
     this.audioTracks = []
     this.subtitleTracks = []
     this.selectedAudioStream = this.currentUrlParam("audio_stream")
@@ -1330,7 +1340,105 @@ export default class extends Controller {
   }
 
   handleStreamStall(eventType = "stall") {
+    // The monitor ignores stalls that arrive while a recovery is already
+    // running, so those must not count toward the auto-quality ladder either.
+    if (!this.streamRecoveryActive) this.maybeDowngradeAutoQuality()
     return this.recoveryMonitor().handleStreamStall(eventType)
+  }
+
+  // Quality menu: "auto" keeps the server's default encode, a fixed rung caps
+  // resolution and bitrate.  Playback restarts at the same position so the
+  // change takes effect immediately instead of on the next episode.
+  changeQuality(event) {
+    const value = event?.target?.value || "auto"
+    this.quality = value === "auto" ? "auto" : value
+    this.autoQuality = value === "auto"
+    this.autoQualityStalls = 0
+    this.element.dataset.videoPlayerQualityValue = this.quality
+    this.persistQuality()
+
+    if (!this.playbackStarted) return
+
+    // Direct play copies the source untouched, so a fixed rung has to move
+    // playback onto the transcode path.
+    if (this.isDirectPlay()) {
+      this.directPlayActive = false
+      this.remuxDirectPlay = false
+    }
+
+    this.restartPlaybackAt(Math.floor(this.currentPlaybackPosition()))
+  }
+
+  // The rung the user pinned, or null when the server should decide.
+  fixedQuality() {
+    return this.quality === "auto" ? null : this.quality
+  }
+
+  storedQuality() {
+    try {
+      const stored = window.localStorage.getItem(QUALITY_STORAGE_KEY)
+      return QUALITY_OPTIONS.includes(stored) ? stored : "auto"
+    } catch {
+      return "auto"
+    }
+  }
+
+  persistQuality() {
+    try {
+      window.localStorage.setItem(QUALITY_STORAGE_KEY, this.quality)
+    } catch {
+      // Private browsing modes can refuse storage; the choice still applies
+      // for this page.
+    }
+  }
+
+  // Keeps the menu in sync when automatic quality steps down on its own.
+  syncQualitySelect() {
+    if (this.hasQualityTarget) this.qualityTarget.value = this.quality
+  }
+
+  // Automatic quality: every second stall drops one rung (720p, then 480p).
+  // One stall is normal on a torrent-backed link; two mean the encoder is
+  // outrunning the connection.
+  maybeDowngradeAutoQuality() {
+    if (!this.autoQuality) return
+
+    this.autoQualityStalls += 1
+    if (this.autoQualityStalls % 2 !== 0) return
+
+    const ladder = [ "720p", "480p" ]
+    const current = ladder.indexOf(this.quality)
+    const next = current === -1 ? ladder[0] : ladder[current + 1]
+    if (!next) return
+
+    this.quality = next
+    this.syncQualitySelect()
+    // Direct play ignores the rung, so the next reconnect has to move onto the
+    // transcode path for the downgrade to actually cap the stream.
+    if (this.isDirectPlay()) {
+      this.directPlayActive = false
+      this.remuxDirectPlay = false
+    }
+    console.info(`[Player] Auto quality stepped down to ${next} after repeated stalls`)
+    this.reportStall("quality_downgrade", { quality: next })
+  }
+
+  // Every rebuild of the transcode URL carries the selected rung, so seeks,
+  // stall recovery and manual quality changes agree on the encoder settings.
+  // Streaming URL for the current quality selection (used by the MSE path,
+  // whose URL otherwise comes straight from the server-rendered data value).
+  transcodeUrlWithQuality(streamUrl) {
+    const url = new URL(streamUrl, window.location.origin)
+    this.applyQualityParam(url)
+    return url.pathname + url.search
+  }
+
+  applyQualityParam(url) {
+    if (this.quality && this.quality !== "auto") {
+      url.searchParams.set("quality", this.quality)
+    } else {
+      url.searchParams.delete("quality")
+    }
   }
 
   // Restart direct/remux playback from the current position.  Unlike
@@ -1475,6 +1583,8 @@ export default class extends Controller {
     } else {
       url.searchParams.delete("subtitle_stream")
     }
+
+    this.applyQualityParam(url)
 
     const nextSrc = url.pathname + url.search
     this.streamingUrlValue = nextSrc
@@ -2833,6 +2943,8 @@ export default class extends Controller {
     } else {
       url.searchParams.delete("subtitle_stream")
     }
+
+    this.applyQualityParam(url)
 
     const nextSrc = url.pathname + url.search
     this.streamingUrlValue = nextSrc

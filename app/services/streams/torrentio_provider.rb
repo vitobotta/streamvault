@@ -6,8 +6,11 @@ module Streams
     REQUEST_TIMEOUT = 30
     OPEN_TIMEOUT = 5
 
-    def initialize(rd_api_key: nil, connection: nil, parser: ReleaseParser.new, logger: Rails.logger)
-      @rd_api_key = rd_api_key
+    def initialize(rd_api_key: nil, api_key: nil, debrid_service: "realdebrid", connection: nil, parser: ReleaseParser.new, logger: Rails.logger)
+      @api_key = api_key.presence || rd_api_key
+      # Keep the old accessor name for callers that still pass rd_api_key.
+      @rd_api_key = @api_key
+      @debrid_service = debrid_service.to_s.presence || "realdebrid"
       @parser = parser
       @logger = logger
       @connection = connection || Faraday.new(url: BASE_URL) do |faraday|
@@ -51,7 +54,7 @@ module Streams
     private
 
     def stream_path(imdb_id, type, season:, episode:)
-      prefix = @rd_api_key.present? ? "/realdebrid=#{@rd_api_key}" : ""
+      prefix = @api_key.present? ? "/#{@debrid_service}=#{@api_key}" : ""
       content = if type.to_s.in?(%w[show series]) && season && episode
         "series/#{imdb_id}:#{season}:#{episode}"
       else
@@ -88,7 +91,7 @@ module Streams
     end
 
     def redacted(path)
-      @rd_api_key.present? ? path.to_s.gsub(@rd_api_key, "[REDACTED]") : path
+      @api_key.present? ? path.to_s.gsub(@api_key, "[REDACTED]") : path
     end
   end
 end

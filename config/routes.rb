@@ -54,6 +54,11 @@ Rails.application.routes.draw do
   get "settings", to: "settings#show", as: :settings
   patch "settings", to: "settings#update"
 
+  # Administration
+  namespace :admin do
+    resource :settings, only: [ :show, :update ]
+  end
+
   # Direct stream proxy (bypass ffmpeg for browser-compatible content)
   get "direct_stream", to: "direct_stream#show", as: :direct_stream
 

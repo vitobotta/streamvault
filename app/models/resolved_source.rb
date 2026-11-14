@@ -8,6 +8,7 @@ class ResolvedSource
   PURPOSE = "resolved-source"
   TOKEN_TTL = 12.hours
   REALDEBRID_HOSTS = %w[real-debrid.com download.real-debrid.com streaming.real-debrid.com].freeze
+  TORBOX_HOSTS = %w[torbox.app].freeze
   PRIVATE_NETWORKS = %w[
     0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16
     172.16.0.0/12 192.0.0.0/24 192.0.2.0/24 192.168.0.0/16
@@ -17,20 +18,21 @@ class ResolvedSource
 
   class Invalid < StandardError; end
 
-  attr_reader :url, :filename
+  attr_reader :url, :filename, :service
 
-  def initialize(url:, filename: nil)
+  def initialize(url:, filename: nil, service: nil)
     @url = url.to_s
     @filename = filename.to_s.presence || inferred_filename
+    @service = (service.presence || inferred_service).to_s.presence
     raise Invalid, "untrusted stream host" unless trusted_host?
 
     freeze
   end
 
-  def self.issue(user:, url:, filename: nil)
-    source = new(url: url, filename: filename)
+  def self.issue(user:, url:, filename: nil, service: nil)
+    source = new(url: url, filename: filename, service: service)
     ApplicationToken.issue(
-      { "user_id" => user.id, "url" => source.url, "filename" => source.filename },
+      { "user_id" => user.id, "url" => source.url, "filename" => source.filename, "service" => source.service },
       purpose: PURPOSE,
       expires_in: TOKEN_TTL
     )
@@ -40,7 +42,7 @@ class ResolvedSource
     payload = ApplicationToken.verify(token, purpose: PURPOSE)
     raise Invalid, "source belongs to another user" unless payload.fetch("user_id").to_i == user.id
 
-    source = new(url: payload.fetch("url"), filename: payload["filename"])
+    source = new(url: payload.fetch("url"), filename: payload["filename"], service: payload["service"])
     raise Invalid, "stream host did not resolve publicly" if verify_dns && !source.public_address?
 
     source
@@ -48,10 +50,15 @@ class ResolvedSource
     raise Invalid, "invalid or expired source"
   end
 
+  # Only RealDebrid download hosts need the account bearer token.  Sending a
+  # RealDebrid key to a TorBox or AIOStreams host would leak it.
   def request_headers(user)
-    return {} unless user.has_realdebrid_key?
+    return {} unless service == "realdebrid"
 
-    { "Authorization" => "Bearer #{user.realdebrid_api_key}" }
+    key = user.respond_to?(:effective_realdebrid_api_key) ? user.effective_realdebrid_api_key : user.realdebrid_api_key
+    return {} if key.blank?
+
+    { "Authorization" => "Bearer #{key}" }
   end
 
   def public_address?
@@ -62,7 +69,7 @@ class ResolvedSource
   end
 
   def to_h
-    { url: url, filename: filename }
+    { url: url, filename: filename, service: service }
   end
 
   private
@@ -77,7 +84,26 @@ class ResolvedSource
     return false unless uri.is_a?(URI::HTTPS) && uri.host.present?
 
     host = uri.host.downcase
-    REALDEBRID_HOSTS.any? { |allowed| host == allowed || host.end_with?(".#{allowed}") }
+    return true if REALDEBRID_HOSTS.any? { |allowed| host_matches?(host, allowed) }
+    return true if TORBOX_HOSTS.any? { |allowed| host_matches?(host, allowed) }
+
+    # A provider/addon host is optional configuration; a failure to read it
+    # must not reject RealDebrid or TorBox URLs.
+    StreamProvider.source_hosts.any? { |allowed| host_matches?(host, allowed.to_s.downcase) }
+  rescue StandardError
+    false
+  end
+
+  def host_matches?(host, allowed)
+    allowed.present? && (host == allowed || host.end_with?(".#{allowed}"))
+  end
+
+  def inferred_service
+    host = uri.host.to_s.downcase
+    return "realdebrid" if REALDEBRID_HOSTS.any? { |allowed| host_matches?(host, allowed) }
+    return "torbox" if TORBOX_HOSTS.any? { |allowed| host_matches?(host, allowed) }
+
+    nil
   end
 
   def inferred_filename

@@ -26,10 +26,13 @@ Generate each encryption value separately. If you rotate the Active Record Encry
 | `POSTGRES_USER` | Database user | `streamvault` |
 | `POSTGRES_DB` | Database name | `streamvault` |
 | `PORT` | Host port to expose the app on. The container always listens on 80 | `3000` |
-| `STREAM_PROVIDER` | `torrentio`, `comet`, or `auto`. See below | `torrentio` |
+| `STREAM_PROVIDER` | `torrentio`, `comet`, `aiostreams`, or `auto`. See below | `torrentio` |
 | `TORRENTIO_API_BASE_URL` | Torrentio API base URL | `https://torrentio.strem.fun` |
 | `COMET_URL` | URL of your self-hosted Comet instance | empty |
+| `AIOSTREAMS_URL` | AIOStreams install/manifest URL; the `/manifest.json` suffix is optional | empty |
+| `AIOSTREAMS_PROXY` | Forward proxy URL for AIOStreams requests | empty |
 | `REALDEBRID_API_BASE_URL` | RealDebrid API base URL | `https://api.real-debrid.com/rest/1.0` |
+| `TORBOX_API_BASE_URL` | TorBox API base URL | `https://api.torbox.app/v1/api` |
 | `TMDB_READ_ACCESS_TOKEN` | TMDB v4 bearer token for recommendations | empty |
 | `SUBDL_API_KEY` | SubDL API key for external subtitle fallback | empty |
 | `TORRENTIO_PROXY` | Forward proxy URL for Torrentio requests | empty |
@@ -44,9 +47,10 @@ Generate each encryption value separately. If you rotate the Active Record Encry
 |---|---|---|---|
 | `torrentio` | Torrentio | none | Default. Simplest setup, no Comet needed |
 | `comet` | Comet | Torrentio | Comet first, with Torrentio as backup |
-| `auto` | Comet, if `COMET_URL` is set | Torrentio | Recommended. Queries both in parallel and picks the best result |
+| `aiostreams` | AIOStreams | Torrentio | Uses your AIOStreams install link, which aggregates your own sources and debrid services |
+| `auto` | Comet and AIOStreams, whichever are configured | Torrentio | Recommended. Queries them in parallel and picks the best result |
 
-Torrentio and Comet are both stream providers. They search torrent networks and return a list with quality, size, and language information. StreamVault does not bundle an indexer and does not ship a catalogue.
+Torrentio, Comet, and AIOStreams are stream providers. They search torrent networks and return a list with quality, size, and language information. StreamVault does not bundle an indexer and does not ship a catalogue.
 
 ## Proxies: when you might need one
 

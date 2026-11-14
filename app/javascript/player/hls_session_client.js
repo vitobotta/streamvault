@@ -138,6 +138,7 @@ export class HlsSessionClient {
     const params = new URLSearchParams({ source })
     params.set("playback_id", this.player.playbackId)
     if (startSeconds && startSeconds > 0) params.set("start_seconds", startSeconds)
+    if (this.player.quality && this.player.quality !== "auto") params.set("quality", this.player.quality)
     this.player.appendSelectedHlsTracks(params)
 
     const response = await this.fetcher("/hls/start", {

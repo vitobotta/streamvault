@@ -6,10 +6,10 @@ class StreamingController < ApplicationController
   layout "player"
   before_action :authenticate_user!
   # stall_telemetry is a diagnostic endpoint — it should work even if
-  # the user hasn't configured an RD key yet (so we can see stalls from
+  # the user hasn't configured a debrid key yet (so we can see stalls from
   # the player regardless of auth state).  progress is excluded because
   # it's a fire-and-forget save that doesn't need the key.
-  before_action :verify_realdebrid_key!, except: [ :progress, :stall_telemetry ]
+  before_action :verify_debrid_key!, except: [ :progress, :stall_telemetry ]
 
   # POST /streaming — start stream, redirect to player page
   def create
@@ -184,9 +184,9 @@ class StreamingController < ApplicationController
     end
   end
 
-  def verify_realdebrid_key!
-    unless current_user.has_realdebrid_key?
-      redirect_to settings_path, alert: "RealDebrid API key not configured. Please add it in Settings."
-    end
+  def verify_debrid_key!
+    return if debrid_access_configured?
+
+    redirect_to settings_path, alert: "Debrid API key not configured. Add your own in Settings, or ask an administrator to set a team key."
   end
 end

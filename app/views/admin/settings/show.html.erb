@@ -1,0 +1,62 @@
+<div class="px-6 py-8 max-w-2xl">
+  <div class="mb-8 flex items-center justify-between gap-4">
+    <div>
+      <h1 class="text-3xl font-bold text-white">Team settings</h1>
+      <p class="mt-1 text-sm text-sv-text-muted">Installation-wide debrid keys. Accounts use their own key first, then these, then the environment.</p>
+    </div>
+    <%= link_to "Back to settings", settings_path, class: "text-sm text-sv-accent" %>
+  </div>
+
+  <%= form_with model: @settings, url: admin_settings_path, method: :patch, class: "space-y-6" do |f| %>
+    <% if @settings.errors.any? %>
+      <div class="bg-red-900/20 border border-red-800/40 rounded-lg p-4">
+        <ul class="list-disc list-inside text-sm text-red-300">
+          <% @settings.errors.full_messages.each do |msg| %>
+            <li><%= msg %></li>
+          <% end %>
+        </ul>
+      </div>
+    <% end %>
+
+    <div class="bg-sv-surface rounded-xl p-6 border border-sv-border">
+      <h2 class="text-lg font-semibold text-white mb-2">RealDebrid</h2>
+      <p class="text-xs text-sv-text-muted mb-4">Used by accounts that have not entered their own RealDebrid key.</p>
+
+      <%= f.label :realdebrid_api_key, "Team API key", class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
+      <%= f.password_field :realdebrid_api_key, class: "input-field", value: "", placeholder: "Enter the team RealDebrid API key" %>
+      <% if @settings.realdebrid_api_key.present? %>
+        <p class="mt-2 text-xs text-sv-success">A team RealDebrid key is set. Leave the field blank to keep it.</p>
+        <label class="mt-2 flex items-center gap-2 text-xs text-sv-text-muted">
+          <%= check_box_tag "app_setting[clear_realdebrid_api_key]", "1", false, class: "rounded" %>
+          Remove the team key and fall back to the environment
+        </label>
+      <% else %>
+        <p class="mt-2 text-xs text-sv-text-muted">No team RealDebrid key is set.</p>
+      <% end %>
+    </div>
+
+    <div class="bg-sv-surface rounded-xl p-6 border border-sv-border">
+      <h2 class="text-lg font-semibold text-white mb-2">TorBox</h2>
+      <p class="text-xs text-sv-text-muted mb-4">Used by accounts that select TorBox and have not entered their own TorBox key.</p>
+
+      <%= f.label :torbox_api_key, "Team API key", class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
+      <%= f.password_field :torbox_api_key, class: "input-field", value: "", placeholder: "Enter the team TorBox API key" %>
+      <% if @settings.torbox_api_key.present? %>
+        <p class="mt-2 text-xs text-sv-success">A team TorBox key is set. Leave the field blank to keep it.</p>
+        <label class="mt-2 flex items-center gap-2 text-xs text-sv-text-muted">
+          <%= check_box_tag "app_setting[clear_torbox_api_key]", "1", false, class: "rounded" %>
+          Remove the team key and fall back to the environment
+        </label>
+      <% else %>
+        <p class="mt-2 text-xs text-sv-text-muted">No team TorBox key is set.</p>
+      <% end %>
+    </div>
+
+    <div class="bg-sv-surface rounded-xl p-6 border border-sv-border">
+      <h2 class="text-lg font-semibold text-white mb-2">Environment fallback</h2>
+      <p class="text-xs text-sv-text-muted">If no team key is set, <code>REALDEBRID_API_KEY</code> and <code>TORBOX_API_KEY</code> from the environment are used. Environment values are never shown here.</p>
+    </div>
+
+    <%= f.submit "Save team keys", class: "btn-primary cursor-pointer" %>
+  <% end %>
+</div>

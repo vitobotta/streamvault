@@ -114,7 +114,7 @@ class PlaybackStartService
     source ||= ResolvedSource.new(url: stream.fetch(:streaming_url), filename: stream[:filename])
 
     PlaybackDescriptor.new(
-      source_token: ResolvedSource.issue(user: @user, url: source.url, filename: source.filename),
+      source_token: ResolvedSource.issue(user: @user, url: source.url, filename: source.filename, service: source.respond_to?(:service) ? source.service : nil),
       filename: source.filename,
       content_ref: content_ref,
       title: title,

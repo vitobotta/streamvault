@@ -42,6 +42,25 @@ RSpec.describe AvailableStreamsService do
     expect(result.data.pluck(:filename)).to eq([ "working.mp4" ])
   end
 
+  it "merges both debrid services and keeps the preferred copy of a shared torrent" do
+    rd_provider = double("rd provider")
+    tb_provider = double("tb provider")
+    allow(rd_provider).to receive(:streams).and_return(ServiceResult.success([
+      { filename: "shared.mp4", info_hash: "aaa", file_idx: 0, resolve_url: "https://rd.test/1", quality: "4K", languages: [ "ENG" ] },
+      { filename: "rd_only.mp4", info_hash: "bbb", file_idx: 0, resolve_url: "https://rd.test/2", quality: "720p", languages: [ "ENG" ] }
+    ]))
+    allow(tb_provider).to receive(:streams).and_return(ServiceResult.success([
+      { filename: "shared.mp4", info_hash: "aaa", file_idx: 0, resolve_url: "https://tb.test/1", quality: "4K", languages: [ "ENG" ] },
+      { filename: "tb_only.mp4", info_hash: "ccc", file_idx: 0, resolve_url: "https://tb.test/2", quality: "1080p", languages: [ "ENG" ] }
+    ]))
+    service = described_class.new(user, providers: [ rd_provider, tb_provider ], cache: cache)
+
+    result = service.call(imdb_id: "tt1375666", type: "movie")
+
+    expect(result.data.pluck(:filename)).to eq([ "shared.mp4", "rd_only.mp4", "tb_only.mp4" ])
+    expect(result.data.first.resolve_url).to eq("https://rd.test/1")
+  end
+
   it "uses a different cache entry after the language priority changes" do
     allow(provider).to receive(:streams).and_return(stream_result("english.mp4"), stream_result("french.mp4"))
 

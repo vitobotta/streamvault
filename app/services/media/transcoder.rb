@@ -97,6 +97,40 @@ class Media::Transcoder
     "-pix_fmt", "yuv420p",
     "-bf", "0"
   ].freeze
+  # Selectable transcode qualities.  "auto" keeps the CRF encode at the source
+  # resolution (capped at 1080p); a fixed rung caps resolution and bitrate so a
+  # slow connection gets predictable bandwidth instead of guessing.
+  QUALITY_LADDER = {
+    "1080p" => { max_height: 1080, max_rate: "6000k", buffer_size: "12000k" },
+    "720p" => { max_height: 720, max_rate: "3000k", buffer_size: "6000k" },
+    "480p" => { max_height: 480, max_rate: "1200k", buffer_size: "2400k" }
+  }.freeze
+  # Transfer functions that mark a stream as HDR.  Transcoding HDR to SDR
+  # without tone mapping produces washed-out grey output, so these streams get
+  # the linear-light tonemap chain.
+  HDR_TRANSFER_FUNCTIONS = %w[smpte2084 arib-std-b67].freeze
+  HDR_TONEMAP_FILTER = [
+    "zscale=t=linear:npl=100",
+    "format=gbrpf32le",
+    "zscale=p=bt709",
+    "tonemap=tonemap=hable:desat=0",
+    "zscale=t=bt709:m=bt709:r=tv",
+    "format=yuv420p"
+  ].join(",").freeze
+  # Hardware H.264 encoders tried in order when FFMPEG_ENCODER is not set.
+  # Each candidate is verified with a one-frame test encode, so a build that
+  # lists an encoder without a working driver falls through to software instead
+  # of failing playback.
+  HARDWARE_ENCODERS = [
+    { name: "h264_videotoolbox", hwaccel: [ "-hwaccel", "videotoolbox" ],
+      args: [ "-c:v", "h264_videotoolbox", "-b:v", "4000k", "-pix_fmt", "yuv420p", "-bf", "0" ] },
+    { name: "h264_nvenc", hwaccel: [ "-hwaccel", "cuda" ],
+      args: [ "-c:v", "h264_nvenc", "-preset", "p4", "-pix_fmt", "yuv420p", "-bf", "0" ] },
+    { name: "h264_qsv", hwaccel: [],
+      args: [ "-c:v", "h264_qsv", "-pix_fmt", "yuv420p", "-bf", "0" ] },
+    { name: "h264_amf", hwaccel: [],
+      args: [ "-c:v", "h264_amf", "-pix_fmt", "yuv420p", "-bf", "0" ] }
+  ].freeze
   SAFE_H264_PIXEL_FORMATS = %w[yuv420p].freeze
   TEXT_SUBTITLE_CODECS = %w[subrip ass ssa webvtt mov_text].freeze
   PARTIAL_SUBTITLE_TITLE_PATTERN = /\b(forced|signs?|signs?\s*(?:&|and)?\s*songs?|songs?\s*(?:&|and)?\s*signs?|lyrics?|karaoke|commentary|comment)\b/i
@@ -179,7 +213,7 @@ class Media::Transcoder
   # (bad URL, auth failure, expired link).  When the caller stops reading
   # (client disconnect → exception propagates through the yield), the
   # ensure block kills ffmpeg.
-  def self.transcode_to_fmp4(input_url, headers: {}, start_seconds: 0, audio_stream: nil, subtitle_stream: nil, default_language: nil, preferred_languages: [], remux: false, telemetry_id: nil, &block)
+  def self.transcode_to_fmp4(input_url, headers: {}, start_seconds: 0, audio_stream: nil, subtitle_stream: nil, default_language: nil, preferred_languages: [], remux: false, telemetry_id: nil, quality: nil, &block)
     cmd = build_ffmpeg_command(
       input_url,
       headers: headers,
@@ -189,7 +223,8 @@ class Media::Transcoder
       default_language: default_language,
       preferred_languages: preferred_languages,
       remux: remux,
-      telemetry_id: telemetry_id
+      telemetry_id: telemetry_id,
+      quality: quality
     )
 
     transcode_to_fmp4_internal(cmd, telemetry_id: telemetry_id, &block)
@@ -201,7 +236,7 @@ class Media::Transcoder
   # caller must retain it until ffmpeg exits or the session is stopped;
   # closing the reader while ffmpeg is alive would leave stderr attached
   # to a readerless pipe and can terminate ffmpeg on its next diagnostic.
-  def self.transcode_to_hls(input_url, segment_dir:, headers: {}, start_seconds: 0, audio_stream: nil, subtitle_stream: nil, default_language: nil, preferred_languages: [], wait_for_first_segment: true, telemetry_id: nil)
+  def self.transcode_to_hls(input_url, segment_dir:, headers: {}, start_seconds: 0, audio_stream: nil, subtitle_stream: nil, default_language: nil, preferred_languages: [], wait_for_first_segment: true, telemetry_id: nil, quality: nil)
     FileUtils.mkdir_p(segment_dir)
 
     cmd = build_ffmpeg_command(
@@ -214,7 +249,8 @@ class Media::Transcoder
       preferred_languages: preferred_languages,
       output_spec: :hls,
       segment_dir: segment_dir,
-      telemetry_id: telemetry_id
+      telemetry_id: telemetry_id,
+      quality: quality
     )
 
     err_rd, err_wr = IO.pipe
@@ -697,7 +733,7 @@ class Media::Transcoder
   end
   private_class_method :format_vtt_timestamp
 
-  def self.build_ffmpeg_command(input_url, headers: {}, start_seconds: 0, audio_stream: nil, subtitle_stream: nil, default_language: nil, preferred_languages: [], output_spec: :fmp4, segment_dir: nil, remux: false, telemetry_id: nil)
+  def self.build_ffmpeg_command(input_url, headers: {}, start_seconds: 0, audio_stream: nil, subtitle_stream: nil, default_language: nil, preferred_languages: [], output_spec: :fmp4, segment_dir: nil, remux: false, telemetry_id: nil, quality: nil)
     header_str = ffmpeg_headers(headers)
     # Probe video stream and media tracks in parallel — these are
     # independent ffprobe calls that each take 1-3s on a cold cache.
@@ -730,15 +766,18 @@ class Media::Transcoder
     # intended preceding cue. The seek plan separately gives the browser the
     # copied keyframe's presentation anchor and local pre-roll. Standard MSE
     # seeks still transcode for exactness.
-    effective_remux = remux && !selected_burn_subtitle_track
+    quality_rung = normalized_quality(quality)
+    # A fixed rung needs a re-encode, so remux (and the HLS copy shortcut)
+    # are only used for automatic quality.
+    effective_remux = remux && !selected_burn_subtitle_track && quality_rung.nil?
     video_args = if selected_burn_subtitle_track
-      transcode_args
+      [ *transcode_args, *bitrate_cap_args(quality_rung) ]
     elsif effective_remux
       [ "-c:v", "copy" ]
-    elsif output_spec == :hls && browser_safe_video?(video_stream) && seek_start_seconds.zero?
+    elsif output_spec == :hls && browser_safe_video?(video_stream) && seek_start_seconds.zero? && quality_rung.nil?
       [ "-c:v", "copy" ]
     else
-      [ "-vf", SAFE_VIDEO_FILTER, *transcode_args ]
+      [ "-vf", video_filter(video_stream, quality_rung), *transcode_args, *bitrate_cap_args(quality_rung) ]
     end
 
     if defined?(Rails)
@@ -747,6 +786,7 @@ class Media::Transcoder
       Rails.logger.info(
         "[Transcode] playback_id=#{id} codec=#{video_stream[:codec_name]} " \
         "resolution=#{video_stream[:width]}x#{video_stream[:height]} encoder=#{encoder} " \
+        "quality=#{quality_rung || 'auto'} hdr=#{hdr_video?(video_stream)} " \
         "start_seconds=#{seek_start_seconds.round(2)} remux=#{effective_remux}"
       )
     end
@@ -818,7 +858,9 @@ class Media::Transcoder
     cmd += [ "-ss", seek_start_seconds.to_s ] if seek_start_seconds.positive?
     cmd += [ "-i", input_url ]
     if selected_burn_subtitle_track
-      cmd += [ "-filter_complex", subtitle_burn_filter(selected_burn_subtitle_track[:position]) ]
+      cmd += [ "-filter_complex", subtitle_burn_filter(
+        selected_burn_subtitle_track[:position], video_stream: video_stream, quality: quality_rung
+      ) ]
       cmd += [ "-map", "[v]" ]
     else
       cmd += [ "-map", "0:v:0" ]
@@ -894,9 +936,101 @@ class Media::Transcoder
 
     return VIDEOTOOLBOX_TRANSCODE_ARGS if videotoolbox_available?
 
+    detected = detect_hardware_encoder
+    return detected[:args] if detected
+
     VIDEO_TRANSCODE_ARGS
   end
   private_class_method :transcode_args
+
+  # First hardware H.264 encoder that actually produces a frame on this host,
+  # cached for the life of the process.  Detection runs a one-frame encode
+  # because -encoders lists encoders that the build supports even when the
+  # driver or device is missing.
+  def self.detect_hardware_encoder
+    return @detected_hardware_encoder if defined?(@detected_hardware_encoder)
+
+    @detected_hardware_encoder = HARDWARE_ENCODERS.find { |encoder| hardware_encoder_works?(encoder) }
+  end
+
+  def self.hardware_encoder_works?(encoder)
+    result = capture_command(
+      [
+        FFMPEG_PATH, "-hide_banner", "-loglevel", "error",
+        "-f", "lavfi", "-i", "testsrc=size=320x240:rate=1", "-frames:v", "1",
+        *encoder[:args], "-f", "null", "-"
+      ],
+      timeout_seconds: 15
+    )
+    result.status&.success? && !result.timed_out
+  rescue StandardError
+    false
+  end
+  private_class_method :hardware_encoder_works?
+
+  # The quality rung requested by the client, or nil for "auto".
+  def self.normalized_quality(value)
+    key = value.to_s.strip.downcase
+    QUALITY_LADDER.key?(key) ? key : nil
+  end
+  public_class_method :normalized_quality
+
+  def self.bitrate_cap_args(quality)
+    rung = QUALITY_LADDER[quality]
+    return [] unless rung
+
+    [ "-maxrate", rung[:max_rate], "-bufsize", rung[:buffer_size] ]
+  end
+  private_class_method :bitrate_cap_args
+
+  # Scale filter for a rung.  "auto" keeps the historical 1080p cap.
+  def self.scale_filter(quality)
+    rung = QUALITY_LADDER[quality]
+    return SAFE_VIDEO_FILTER unless rung
+
+    max_height = rung[:max_height]
+    max_width = max_height * 16 / 9
+    "scale=w='min(#{max_width},iw)':h='min(#{max_height},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p"
+  end
+  private_class_method :scale_filter
+
+  # Tone mapping must run before the SDR scale/format step, otherwise the
+  # HDR-to-SDR conversion is applied to already-clipped values.
+  def self.video_filter(video_stream, quality)
+    filters = []
+    filters << HDR_TONEMAP_FILTER if hdr_video?(video_stream) && tonemap_available?
+    filters << scale_filter(quality)
+    filters.join(",")
+  end
+  private_class_method :video_filter
+
+  # Only the transfer function marks a source as HDR: SDR content also ships in
+  # the BT.2020 container, and tone mapping it would crush its brightness.
+  def self.hdr_video?(stream)
+    return false unless stream.is_a?(Hash)
+
+    HDR_TRANSFER_FUNCTIONS.include?(stream[:color_transfer].to_s.downcase)
+  end
+  public_class_method :hdr_video?
+
+  # Tonemapping needs zimg (zscale) plus the tonemap filter.  A build without
+  # them would fail the whole transcode, so the chain is skipped instead.
+  def self.tonemap_available?
+    return @tonemap_available if defined?(@tonemap_available)
+
+    result = capture_command([ FFMPEG_PATH, "-hide_banner", "-filters" ], timeout_seconds: 10)
+    filters = result.status&.success? ? result.stdout : ""
+    @tonemap_available = filters.include?("zscale") && filters.include?(" tonemap ")
+  end
+
+  def self.scale2ref_available?
+    return @scale2ref_available if defined?(@scale2ref_available)
+
+    result = capture_command([ FFMPEG_PATH, "-hide_banner", "-filters" ], timeout_seconds: 10)
+    filters = result.status&.success? ? result.stdout : ""
+    @scale2ref_available = filters.include?("scale2ref")
+  end
+  private_class_method :scale2ref_available?
 
   def self.videotoolbox_available?
     return @videotoolbox_available if defined?(@videotoolbox_available)
@@ -922,6 +1056,9 @@ class Media::Transcoder
 
     return [ "-hwaccel", "videotoolbox" ] if videotoolbox_available?
 
+    detected = detect_hardware_encoder
+    return detected[:hwaccel] if detected && detected[:hwaccel].present?
+
     []
   end
   private_class_method :hwaccel_args
@@ -939,8 +1076,16 @@ class Media::Transcoder
   end
   private_class_method :selected_burn_subtitle_track
 
-  def self.subtitle_burn_filter(subtitle_position)
-    "[0:v:0][0:s:#{subtitle_position}]overlay,#{SAFE_VIDEO_FILTER}[v]"
+  # Tone mapping and scaling happen before the overlay so subtitle colours are
+  # not pushed through the HDR transfer function.  Bitmap subtitles (PGS/VobSub)
+  # keep their own canvas and overlay does not rescale its input, so a scaled
+  # base would crop them; scale2ref sizes the subtitle to the base first.
+  def self.subtitle_burn_filter(subtitle_position, video_stream: nil, quality: nil)
+    base = "[0:v:0]#{video_filter(video_stream, quality)}[vbase]"
+    subtitle = "[0:s:#{subtitle_position}]"
+    return "#{base};#{subtitle}[vbase]scale2ref[sub][vbase2];[vbase2][sub]overlay,format=yuv420p[v]" if scale2ref_available?
+
+    "#{base};[vbase]#{subtitle}overlay,format=yuv420p[v]"
   end
   private_class_method :subtitle_burn_filter
 
@@ -1255,7 +1400,7 @@ class Media::Transcoder
     cmd += [ "-headers", header_str + "\r\n" ] if header_str.present?
     cmd += [
       "-select_streams", "v:0",
-      "-show_entries", "stream=codec_name,codec_tag_string,width,height,pix_fmt,has_b_frames",
+      "-show_entries", "stream=codec_name,codec_tag_string,width,height,pix_fmt,has_b_frames,color_transfer,color_primaries,color_space",
       "-of", "json",
       input_url
     ]
@@ -1318,7 +1463,10 @@ class Media::Transcoder
       width: positive_integer(stream["width"]),
       height: positive_integer(stream["height"]),
       pix_fmt: stream["pix_fmt"].to_s.downcase,
-      has_b_frames: positive_integer(stream["has_b_frames"]).to_i > 0
+      has_b_frames: positive_integer(stream["has_b_frames"]).to_i > 0,
+      color_transfer: stream["color_transfer"].to_s.downcase,
+      color_primaries: stream["color_primaries"].to_s.downcase,
+      color_space: stream["color_space"].to_s.downcase
     }
   rescue JSON::ParserError
     {}
