@@ -484,12 +484,22 @@ function continuationFixture(t, { ranges = [ [ 0, 104 ] ], currentTime = 60, dur
     clearSystemRebufferGate() {},
     clearSubtitleCues() {},
     reloadTextSubtitlesAt() {},
-    setupMseSource(url) {
-      swaps.push(url)
-      this.cancelMseContinuation()
-      if (this.fetchController) { this.fetchController.abort(); this.fetchController = null }
+    // The real setupMseSource runs (it is what cancels a continuation on a
+    // swap); only the engine behind it is stubbed, and its teardown aborts
+    // the old session's fetch the way the real one does.
+    playbackEngine: () => ({
+      // Mirrors PlaybackEngine#timelineOffset for the MSE path.
+      timelineOffset: () => player.startSecondsValue,
+      setupMseSource: (url) => {
+        swaps.push(url)
+        if (player.fetchController) { player.fetchController.abort(); player.fetchController = null }
+      }
+    }),
+    reconnectFromCurrentPosition() {
+      reconnects.push("reconnect")
+      this.streamRecoveryActive = false
+      this.streamRecoveryAttempts = 0
     },
-    reconnectFromCurrentPosition() { reconnects.push("reconnect") },
     continuationGapJump: null,
     startStreamingFetch(url, options = {}) {
       fetches.push([ url, options ])
@@ -658,6 +668,7 @@ test("a seek during a continuation leaves the continuation's only fetch aborted"
   await flushMicrotasks()
   assert.equal(f.fetches.length, 1)
   assert.equal(player.fetchController !== null, true)
+  assert.notEqual(player.continuationDeadlineTimer, null)
 
   player.restartPlaybackAt(500)
   await flushMicrotasks()
@@ -667,6 +678,9 @@ test("a seek during a continuation leaves the continuation's only fetch aborted"
   assert.equal(player.fetchController, null)
   assert.equal(f.swaps.length, 1)
   assert.equal(player.startSecondsValue, 500)
+  // The real setupMseSource cancelled it, not the fixture.
+  assert.equal(player.continuationDeadlineTimer, null)
+  assert.equal(player.continuationInFlight, false)
 })
 
 test("the continuation URL keeps the selected audio and burned subtitle streams", async (t) => {
@@ -745,4 +759,160 @@ test("a hole larger than one second at the join takes the swap fallback", async 
   assert.deepEqual(f.reconnects, [ "reconnect" ])
   assert.equal(f.player.continuationGapJump, null)
   assert.equal(f.player.continuationFailures, 1)
+})
+
+test("a network error on a joined continuation starts another continuation", async (t) => {
+  const f = continuationFixture(t, { ranges: [ [ 0, 100 ] ], currentTime: 60 })
+  const { player } = f
+  let rejectRead = null
+  f.harness.fetchHandler = async () => ({
+    ok: true,
+    body: {
+      getReader: () => ({
+        read: () => new Promise((_resolve, reject) => { rejectRead = reject })
+      })
+    }
+  })
+  f.useRealFetch()
+
+  player.handlePrematureStreamEnd("stream_error")
+  await flushMicrotasks()
+  assert.equal(f.fetches.length, 1)
+
+  // The first fragment extended the same range, as a real join does.
+  f.setRanges([ [ 0, 101 ] ])
+  f.setAppends(1)
+  player.finishMseContinuation()
+  assert.ok(f.reports.some((report) => report.event === "stream_continue_ok"))
+
+  // The same response dies minutes later, after its join.
+  rejectRead(new TypeError("network error"))
+  await flushMicrotasks()
+  await flushMicrotasks()
+
+  assert.equal(f.fetches.length, 2)
+  assert.equal(f.fetches[1][1].continuation, true)
+  assert.match(f.fetches[1][0], /start_seconds=400(&|$)/)
+  assert.deepEqual(f.reconnects, [])
+})
+
+test("a continuation response that sends nothing falls back to one swap", async (t) => {
+  const f = continuationFixture(t)
+  f.harness.fetchHandler = async () => ({
+    ok: true,
+    body: { getReader: () => ({ read: async () => ({ done: true, value: undefined }) }) }
+  })
+  f.useRealFetch()
+
+  f.player.handlePrematureStreamEnd("stream_error")
+  await flushMicrotasks()
+  await flushMicrotasks()
+
+  assert.deepEqual(f.reconnects, [ "reconnect" ])
+  assert.ok(
+    f.reports.some((report) => report.event === "continuation_failed" &&
+      report.continuation_reason === "empty_body")
+  )
+})
+
+test("a continuation body that ends before its first fragment swaps", async (t) => {
+  const f = continuationFixture(t)
+  const chunk = new Uint8Array([ 0, 0, 0, 8, 0x66, 0x74, 0x79, 0x70 ])
+  let reads = 0
+  f.harness.fetchHandler = async () => ({
+    ok: true,
+    body: {
+      getReader: () => ({
+        read: async () => (reads++ === 0 ? { done: false, value: chunk } : { done: true, value: undefined })
+      })
+    }
+  })
+  f.useRealFetch()
+
+  f.player.handlePrematureStreamEnd("stream_error")
+  await flushMicrotasks()
+  await flushMicrotasks()
+
+  assert.deepEqual(f.reconnects, [ "reconnect" ])
+  assert.ok(
+    f.reports.some((report) => report.event === "continuation_failed" &&
+      report.continuation_reason === "ended_before_join")
+  )
+})
+
+test("two hole failures make the third death swap without a continuation", async (t) => {
+  const f = continuationFixture(t, { ranges: [ [ 0, 100 ] ], currentTime: 60 })
+  const { player } = f
+
+  const holeDeath = async (appends) => {
+    player.handlePrematureStreamEnd("stream_end")
+    await flushMicrotasks()
+    f.setRanges([ [ 0, 100 ], [ 102, 160 ] ])
+    f.setAppends(appends)
+    player.finishMseContinuation()
+    await flushMicrotasks()
+    // The swap rebuilt the session: start from a fresh buffer again.
+    f.setRanges([ [ 0, 100 ] ])
+  }
+
+  await holeDeath(1)
+  assert.equal(player.continuationFailures, 1)
+
+  await holeDeath(2)
+  assert.equal(player.continuationFailures, 2)
+  assert.equal(player.mseContinuationBlockReason(), "failed")
+
+  player.handlePrematureStreamEnd("stream_end")
+  await flushMicrotasks()
+
+  assert.equal(f.fetches.length, 2)
+  assert.equal(f.reports.filter((report) => report.event === "stream_continue").length, 2)
+  assert.deepEqual(f.reconnects, [ "reconnect", "reconnect", "reconnect" ])
+})
+
+test("a death with six seconds of cushion swaps without continuing", async (t) => {
+  const f = continuationFixture(t, { ranges: [ [ 0, 66 ] ], currentTime: 60 })
+
+  f.player.handlePrematureStreamEnd("stream_end")
+  await flushMicrotasks()
+
+  assert.deepEqual(f.fetches, [])
+  assert.equal(f.reports.some((report) => report.event === "stream_continue"), false)
+  assert.deepEqual(f.reconnects, [ "reconnect" ])
+})
+
+test("a fractional buffered end keeps millisecond precision in start_seconds", async (t) => {
+  const f = continuationFixture(t, { ranges: [ [ 0, 104.5 ] ], currentTime: 60 })
+
+  f.player.handlePrematureStreamEnd("stream_end")
+  await flushMicrotasks()
+
+  assert.equal(f.fetches.length, 1)
+  assert.match(f.fetches[0][0], /start_seconds=403\.5(&|$)/)
+  assert.equal(f.reports[0].resume_offset_seconds, 103.5)
+})
+
+test("a clean join clears an earlier hole failure", async (t) => {
+  const f = continuationFixture(t, { ranges: [ [ 0, 100 ] ], currentTime: 60 })
+  const { player } = f
+
+  player.handlePrematureStreamEnd("stream_end")
+  await flushMicrotasks()
+  f.setRanges([ [ 0, 100 ], [ 102, 160 ] ])
+  f.setAppends(1)
+  player.finishMseContinuation()
+  await flushMicrotasks()
+  assert.equal(player.continuationFailures, 1)
+
+  // The swap rebuilt the session; this time the join is clean.
+  f.setRanges([ [ 0, 100 ] ])
+  player.handlePrematureStreamEnd("stream_end")
+  await flushMicrotasks()
+  f.setRanges([ [ 0, 104 ] ])
+  f.setAppends(2)
+  player.finishMseContinuation()
+  await flushMicrotasks()
+
+  assert.equal(player.continuationFailures, 0)
+  assert.equal(player.mseContinuationBlockReason(), null)
 })

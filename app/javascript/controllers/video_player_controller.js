@@ -1120,11 +1120,14 @@ export default class extends Controller {
             first_chunk: firstChunk,
             last_chunk_age_ms: Math.max(0, Date.now() - lastChunkAt)
           })
-          if (continuation && this.streamBytesRead === 0) {
-            // A continuation that produced nothing is a failed attempt, not
-            // a premature end: fall back to the session swap.
-            this.handleContinuationFailure("empty_body")
+          if (continuation && this.continuationInFlight) {
+            // A continuation that ends before its join is a failed attempt,
+            // whether it produced nothing or stopped short of a fragment.
+            this.handleContinuationFailure(this.streamBytesRead === 0 ? "empty_body" : "ended_before_join")
           } else {
+            // A continued response that outlived its join is just another
+            // dead body now: route it through the normal recovery path so
+            // it can continue again or swap.
             this.handlePrematureStreamEnd("stream_end")
           }
           break
@@ -1166,9 +1169,12 @@ export default class extends Controller {
         first_chunk: firstChunk,
         last_chunk_age_ms: Math.max(0, Date.now() - lastChunkAt)
       })
-      if (continuation) {
+      if (continuation && this.continuationInFlight) {
         this.handleContinuationFailure("stream_error")
       } else {
+        // Either an ordinary fetch, or a continued response that already
+        // joined and died later. The latter needs the normal recovery path,
+        // or nothing restarts the stream and the cushion runs dry.
         this.handlePrematureStreamEnd("stream_error")
       }
     } finally {
@@ -1779,7 +1785,6 @@ export default class extends Controller {
 
     this.continuationAwaitingFirstAppend = false
     this.continuationInFlight = false
-    this.continuationFailures = 0
     clearTimeout(this.continuationDeadlineTimer)
     this.continuationDeadlineTimer = null
 
@@ -1792,7 +1797,12 @@ export default class extends Controller {
     })
 
     const gap = this.continuationJoinGap()
-    if (!gap) return
+    if (!gap) {
+      // A clean join is the only thing that earns a reset: a join with a
+      // hole below must leave the count climbing toward the failure cap.
+      this.continuationFailures = 0
+      return
+    }
     this.reportStall("continuation_gap", {
       continuation_gap_seconds: Math.round(gap.size * 1000) / 1000
     })
@@ -1809,6 +1819,7 @@ export default class extends Controller {
       this.handleStreamStall("premature_end")
       return
     }
+    this.continuationFailures = 0
     this.continuationGapJump = { from: gap.start, to: gap.end }
   }
 
