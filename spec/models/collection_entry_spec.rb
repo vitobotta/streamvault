@@ -11,6 +11,7 @@ RSpec.describe CollectionEntry, type: :model do
     it { is_expected.to validate_presence_of(:imdb_id) }
     it { is_expected.to validate_presence_of(:title) }
     it { is_expected.to validate_uniqueness_of(:imdb_id).scoped_to(:user_id).with_message("already in your collection") }
+    it { is_expected.to validate_numericality_of(:series_total_episodes).is_greater_than_or_equal_to(0).allow_nil }
     it { is_expected.to validate_numericality_of(:year).is_greater_than(1800).is_less_than(2100).allow_nil }
     it { is_expected.to define_enum_for(:content_type).with_values(movie: 0, show: 1) }
     it { is_expected.to define_enum_for(:list_state).with_values(wishlist: 0, library: 1) }

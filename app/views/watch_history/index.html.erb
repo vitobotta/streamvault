@@ -65,6 +65,20 @@
 
         <div class="relative z-10 flex shrink-0 items-center gap-3">
           <span class="hidden text-xs text-ink-400 sm:inline"><%= time_ago_in_words(entry.watched_at) %> ago</span>
+          <% watched = entry.watched? %>
+          <% watch_params = { watched: !watched, title: entry.title, poster_url: entry.poster_url, duration_seconds: entry.duration_seconds } %>
+          <% if entry.episode? %>
+            <% watch_params[:season] = entry.season_number %>
+            <% watch_params[:episode] = entry.episode_number %>
+          <% end %>
+          <%= button_to content_watched_path(type: entry.episode? ? "show" : "movie", imdb_id: entry.imdb_id),
+                        method: :patch,
+                        params: watch_params,
+                        class: "card-action #{'card-action--active' if watched}",
+                        title: watched ? "Mark #{entry.title} unwatched" : "Mark #{entry.title} watched",
+                        aria: { label: watched ? "Mark #{entry.title} unwatched" : "Mark #{entry.title} watched", pressed: watched } do %>
+            <%= icon :check %>
+          <% end %>
           <%= button_to watch_history_path(entry), method: :delete,
                         class: "card-action card-action--danger",
                         title: "Remove from history",

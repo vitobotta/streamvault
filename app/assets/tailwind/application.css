@@ -601,6 +601,17 @@
   white-space: nowrap;
 }
 
+.poster-card__progress {
+  margin-top: 0.125rem;
+  font-size: 0.6875rem;
+  letter-spacing: 0.01em;
+  color: var(--color-ink-400);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (hover: hover) {
   .poster-card:hover .poster-card__art img {
     transform: scale(1.045);
@@ -662,6 +673,7 @@
 
 .card-action svg { width: 0.8125rem; height: 0.8125rem; }
 .card-action:hover { background-color: var(--color-iris-600); color: var(--color-on-accent); }
+.card-action--active { background-color: var(--color-iris-600); color: var(--color-on-accent); }
 .card-action--danger:hover { background-color: var(--color-rust-500); color: var(--color-ink-50); }
 
 .card-progress {
@@ -1442,6 +1454,7 @@ details[open] > .source-more svg { transform: rotate(180deg); }
 .season-tab {
   display: inline-flex;
   align-items: center;
+  gap: 0.3125rem;
   height: 2rem;
   padding: 0 0.8125rem;
   border-radius: 999px;
@@ -1460,6 +1473,23 @@ details[open] > .source-more svg { transform: rotate(180deg); }
   border-color: var(--color-ink-100);
   color: var(--color-ink-950);
 }
+
+.season-tab__status {
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-sage-400);
+}
+
+.season-tab--active .season-tab__status { color: var(--color-sage-950); }
+
+.season-tab__progress {
+  color: var(--color-ink-400);
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.season-tab--active .season-tab__progress { color: var(--color-ink-800); }
 
 .episode {
   border-bottom: 1px solid oklch(1 0 0 / 0.06);

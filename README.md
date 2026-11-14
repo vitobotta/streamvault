@@ -196,6 +196,12 @@ docker compose up -d --build
 
 The database lives in `./data` and survives rebuilds. Containers restart on crash and on boot (`restart: unless-stopped`); make sure Docker itself starts at boot with `sudo systemctl enable docker`.
 
+If you are upgrading from a build before persisted series totals, backfill the episode totals used by library cards once:
+
+```bash
+docker compose exec web bin/rails series:backfill_totals
+```
+
 ## Configuration
 
 | Variable | Purpose | Default |

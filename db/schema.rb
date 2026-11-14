@@ -10,13 +10,15 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_14_080000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_30_160000) do
   create_table "collection_entries", force: :cascade do |t|
     t.integer "content_type", default: 0, null: false
     t.datetime "created_at", null: false
     t.string "imdb_id", null: false
     t.integer "list_state", default: 1, null: false
     t.string "poster_url"
+    t.integer "series_total_episodes"
+    t.datetime "series_total_episodes_synced_at"
     t.string "title", null: false
     t.datetime "updated_at", null: false
     t.integer "user_id", null: false
@@ -39,6 +41,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_14_080000) do
   end
 
   create_table "playback_progresses", force: :cascade do |t|
+    t.boolean "completed", default: false, null: false
     t.integer "content_type", default: 0, null: false
     t.datetime "created_at", null: false
     t.integer "duration_seconds", default: 0, null: false

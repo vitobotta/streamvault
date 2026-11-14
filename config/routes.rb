@@ -11,6 +11,7 @@ Rails.application.routes.draw do
   get "content/:type/:imdb_id", to: "content#show", as: :content
   get "content/:type/:imdb_id/status", to: "content#status", as: :content_status
   get "content/:type/:imdb_id/episode_streams", to: "content#episode_streams", as: :episode_streams
+  patch "content/:type/:imdb_id/watched", to: "watched_items#update", as: :content_watched
 
   # Collection
   resources :library, only: [ :index ]
