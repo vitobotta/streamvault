@@ -11,7 +11,7 @@ Every setting is read from `.env` at boot. Copy `.env.example` to `.env`, fill i
 | `ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY` | Deterministic encryption key | `openssl rand -hex 32` |
 | `ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT` | Key derivation salt | `openssl rand -hex 32` |
 | `POSTGRES_PASSWORD` | Password for the bundled Postgres container | `openssl rand -hex 16` |
-| `OMDB_API_KEY` | Ratings metadata (IMDb, Rotten Tomatoes, Metacritic) | Free key at [omdbapi.com/apikey.aspx](https://www.omdbapi.com/apikey.aspx) |
+| `OMDB_API_KEY` | Ratings metadata (IMDb, Rotten Tomatoes, Metacritic); with `TMDB_READ_ACCESS_TOKEN`, one of the two is required for child accounts capped below 18 | Free key at [omdbapi.com/apikey.aspx](https://www.omdbapi.com/apikey.aspx) |
 
 Generate each encryption value separately. If you rotate the Active Record Encryption keys after users have saved RealDebrid keys, previously stored keys cannot be decrypted.
 
