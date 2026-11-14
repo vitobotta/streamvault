@@ -14,7 +14,7 @@ RSpec.describe "Home", type: :request do
       end
     end
 
-    # TMDB not configured in tests — RecommendationService returns []
+    # TMDB not configured in tests - RecommendationService returns []
     ENV["TMDB_READ_ACCESS_TOKEN"] = ""
   end
 

@@ -1,0 +1,43 @@
+<%
+  # One playable release row. `play_params` carries the title/episode identity;
+  # the stream itself contributes only per-release fields.
+  stream = local_assigns.fetch(:stream)
+  play_params = local_assigns.fetch(:play_params)
+  button_class = local_assigns.fetch(:button_class, "btn-secondary btn-sm")
+%>
+<div class="source-row">
+  <div class="min-w-0 flex-1">
+    <div class="flex items-center gap-2">
+      <% if stream[:rd_plus] %>
+        <span class="badge badge-success shrink-0">RD+</span>
+      <% end %>
+      <span class="source-row__title"><%= stream[:title] || stream[:name] %></span>
+    </div>
+    <div class="source-row__meta">
+      <% quality = stream[:quality].to_s.strip %>
+      <% if quality.present? && quality.casecmp("unknown").nonzero? %>
+        <span class="badge badge-accent"><%= quality %></span>
+      <% else %>
+        <span class="chip chip--quiet">Quality unknown</span>
+      <% end %>
+      <% stream[:languages]&.each do |lang| %>
+        <span class="chip chip--quiet"><%= lang %></span>
+      <% end %>
+      <% if stream[:size].present? %>
+        <span class="text-xs text-ink-400 t-num"><%= stream[:size] %></span>
+      <% end %>
+    </div>
+  </div>
+  <div class="shrink-0">
+    <%= button_to "Watch", streaming_index_path,
+                  params: play_params.merge(
+                    resolve_url: stream[:resolve_url],
+                    filename: stream[:filename],
+                    raw_size: stream[:raw_size],
+                    video_codec: stream[:video_codec],
+                    compatibility_score: stream[:compatibility_score]
+                  ),
+                  class: button_class,
+                  data: { page_loader: "stream", page_loader_message: "Finding a working stream..." } %>
+  </div>
+</div>

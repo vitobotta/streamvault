@@ -1,132 +1,168 @@
-<div class="px-6 py-8 max-w-2xl">
-  <h1 class="text-3xl font-bold text-white mb-8">Settings</h1>
+<div class="mb-8 md:mb-10">
+  <p class="kicker mb-2.5">Preferences</p>
+  <h1 class="t-page">Settings</h1>
+  <p class="mt-2 text-sm text-ink-400">Signed in as <span class="text-ink-200"><%= @user.email %></span></p>
+</div>
 
-  <%= form_with model: @user, url: settings_path, method: :patch, class: "space-y-6" do |f| %>
-    <% if @user.errors.any? %>
-      <div class="bg-red-900/20 border border-red-800/40 rounded-lg p-4">
-        <ul class="list-disc list-inside text-sm text-red-300">
-          <% @user.errors.full_messages.each do |msg| %>
-            <li><%= msg %></li>
-          <% end %>
-        </ul>
-      </div>
-    <% end %>
-
-    <div class="bg-sv-surface rounded-xl p-6 border border-sv-border">
-      <h2 class="text-lg font-semibold text-white mb-4">Account</h2>
-
-      <div class="mb-4">
-        <label class="block text-sm font-medium text-sv-text-muted mb-1.5">Email</label>
-        <input type="email" value="<%= @user.email %>" class="input-field" disabled>
-      </div>
-
-      <div class="border-t border-sv-border pt-4">
-        <h3 class="text-sm font-medium text-white mb-3">Change Password</h3>
-        <div class="space-y-3">
-          <div>
-            <%= f.label :current_password, "Current Password", class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
-            <%= f.password_field :current_password, class: "input-field", autocomplete: "current-password" %>
-          </div>
-          <div>
-            <%= f.label :password, "New Password", class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
-            <%= f.password_field :password, class: "input-field", autocomplete: "new-password", placeholder: "Leave blank to keep current" %>
-          </div>
-          <div>
-            <%= f.label :password_confirmation, "Confirm New Password", class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
-            <%= f.password_field :password_confirmation, class: "input-field", autocomplete: "new-password" %>
-          </div>
-        </div>
-      </div>
+<div class="grid gap-10 lg:grid-cols-[13rem_minmax(0,1fr)] lg:gap-14">
+  <nav class="hidden lg:block" aria-label="Settings sections" data-controller="settings-nav">
+    <div class="sticky top-8 space-y-0.5">
+      <a href="#account" class="settings-nav" data-settings-nav-target="link" data-section="account">Account</a>
+      <a href="#streaming" class="settings-nav" data-settings-nav-target="link" data-section="streaming">RealDebrid</a>
+      <a href="#child" class="settings-nav" data-settings-nav-target="link" data-section="child">Child account</a>
+      <a href="#languages" class="settings-nav" data-settings-nav-target="link" data-section="languages">Languages</a>
     </div>
+  </nav>
 
-    <div class="bg-sv-surface rounded-xl p-6 border border-sv-border">
-      <h2 class="text-lg font-semibold text-white mb-4">RealDebrid</h2>
-
-      <div class="mb-4">
-        <%= f.label :realdebrid_api_key, "API Key", class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
-        <%= f.password_field :realdebrid_api_key, class: "input-field", placeholder: "Enter your RealDebrid API key", value: "" %>
-        <p class="text-xs text-sv-text-muted mt-1">Get your API key from <a href="https://real-debrid.com/apitoken" target="_blank" class="text-sv-accent">real-debrid.com/apitoken</a></p>
-      </div>
-
-      <% if @user.has_realdebrid_key? %>
-        <div class="flex items-center gap-2 text-sv-success text-sm">
-          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-          API key configured
+  <div class="max-w-3xl min-w-0">
+    <%= form_with model: @user, url: settings_path, method: :patch, class: "space-y-5" do |f| %>
+      <% if @user.errors.any? %>
+        <div class="flash-alert">
+          <ul class="list-disc list-inside space-y-0.5">
+            <% @user.errors.full_messages.each do |msg| %>
+              <li><%= msg %></li>
+            <% end %>
+          </ul>
         </div>
       <% end %>
-    </div>
 
-    <div class="bg-sv-surface rounded-xl p-6 border border-sv-border">
-      <h2 class="text-lg font-semibold text-white mb-2">Child Account</h2>
-      <p class="text-xs text-sv-text-muted mb-4">Restrict this account to age-rated content. Search and browsing only return titles rated for the selected age, and anything above the limit cannot be opened or played even by direct URL. A child lock password is required to turn child status off or change the age limit later.</p>
+      <section id="account" class="panel panel-pad anchor-offset">
+        <div class="mb-6">
+          <h2 class="t-section mb-1.5">Account</h2>
+          <p class="text-xs text-ink-400">Your sign-in details for this StreamVault profile.</p>
+        </div>
 
-      <div class="flex items-center gap-2 mb-4">
-        <%= f.check_box :child_account, class: "rounded" %>
-        <%= f.label :child_account, "This is a child account", class: "text-sm font-medium text-white" %>
-      </div>
+        <div>
+          <span class="field-label">Email</span>
+          <p class="text-sm text-ink-100"><%= @user.email %></p>
+          <p class="field-hint">Email addresses cannot be changed in the app.</p>
+        </div>
 
-      <div class="mb-4">
-        <%= f.label :max_rating_age, "Maximum rating age", class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
-        <%= f.select :max_rating_age,
-          options_for_select(User::MAX_RATING_AGE_OPTIONS, @user.max_rating_age),
-          { include_blank: "Select an age limit" },
-          class: "input-field w-auto" %>
-        <p class="text-xs text-sv-text-muted mt-1">Titles whose rating is meant for viewers older than this are hidden and blocked. Unrated titles require the 18+ limit.</p>
-      </div>
-
-      <div class="border-t border-sv-border pt-4 space-y-3">
-        <h3 class="text-sm font-medium text-white">Child Lock Password</h3>
-        <% if @user.child_lock_set? %>
-          <div>
-            <%= f.label :child_lock_current_password, "Current Child Lock Password", class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
-            <%= f.password_field :child_lock_current_password, class: "input-field", autocomplete: "off", placeholder: "Required to turn child status off or change the age limit" %>
+        <div class="mt-7 border-t border-white/8 pt-6">
+          <h3 class="text-sm font-medium text-ink-100 mb-4">Change password</h3>
+          <div class="grid gap-4 sm:grid-cols-2">
+            <div class="sm:col-span-2">
+              <%= f.label :current_password, "Current password", class: "field-label" %>
+              <%= f.password_field :current_password, class: "input-field", autocomplete: "current-password" %>
+            </div>
+            <div>
+              <%= f.label :password, "New password", class: "field-label" %>
+              <%= f.password_field :password, class: "input-field", autocomplete: "new-password", placeholder: "Leave blank to keep" %>
+            </div>
+            <div>
+              <%= f.label :password_confirmation, "Confirm new password", class: "field-label" %>
+              <%= f.password_field :password_confirmation, class: "input-field", autocomplete: "new-password" %>
+            </div>
           </div>
-        <% end %>
-        <div>
-          <%= f.label :child_lock_password, (@user.child_lock_set? ? "New Child Lock Password" : "Child Lock Password"), class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
-          <%= f.password_field :child_lock_password, class: "input-field", autocomplete: "new-password", placeholder: (@user.child_lock_set? ? "Leave blank to keep current" : "Required to enable child status") %>
         </div>
-        <div>
-          <%= f.label :child_lock_password_confirmation, "Confirm Child Lock Password", class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
-          <%= f.password_field :child_lock_password_confirmation, class: "input-field", autocomplete: "new-password" %>
+      </section>
+
+      <section id="streaming" class="panel panel-pad anchor-offset">
+        <div class="flex flex-wrap items-start justify-between gap-3 mb-6">
+          <div>
+            <h2 class="t-section mb-1.5">RealDebrid</h2>
+            <p class="text-xs text-ink-400">Streams are resolved through your own RealDebrid account.</p>
+          </div>
+          <% if @user.has_realdebrid_key? %>
+            <span class="chip chip--sage"><%= icon :check, css: "w-3 h-3" %> Key saved</span>
+          <% else %>
+            <span class="chip chip--accent">Not configured</span>
+          <% end %>
         </div>
+
+        <div>
+          <%= f.label :realdebrid_api_key, "API key", class: "field-label" %>
+          <%= f.password_field :realdebrid_api_key, class: "input-field", placeholder: @user.has_realdebrid_key? ? "Enter a new key to replace the saved one" : "Paste your RealDebrid API key", value: "" %>
+          <p class="field-hint">
+            Create a key at
+            <a href="https://real-debrid.com/apitoken" target="_blank" rel="noopener" class="text-iris-300 underline underline-offset-2">real-debrid.com/apitoken</a>.
+          </p>
+        </div>
+      </section>
+
+      <section id="child" class="panel panel-pad anchor-offset">
+        <div class="mb-6">
+          <h2 class="t-section mb-1.5">Child account</h2>
+          <p class="text-xs text-ink-400 leading-relaxed max-w-xl">
+            Restrict this profile to age-rated titles. Search, browsing and playback all honour the limit, including direct links.
+            Turning child status off, or changing the age, requires the child lock password.
+          </p>
+        </div>
+
+        <label class="switch mb-6" for="user_child_account">
+          <%= f.check_box :child_account, class: "switch__input" %>
+          <span class="switch__track" aria-hidden="true"><span class="switch__thumb"></span></span>
+          <span class="text-sm font-medium text-ink-100">This is a child account</span>
+        </label>
+
+        <div class="mb-6 max-w-xs">
+          <%= f.label :max_rating_age, "Maximum rating age", class: "field-label" %>
+          <%= f.select :max_rating_age,
+            options_for_select(User::MAX_RATING_AGE_OPTIONS, @user.max_rating_age),
+            { include_blank: "Select an age limit" },
+            class: "input-field" %>
+          <p class="field-hint">Titles rated above this age are hidden and blocked. Unrated titles need the 18+ limit.</p>
+        </div>
+
+        <div class="border-t border-white/8 pt-6">
+          <h3 class="text-sm font-medium text-ink-100 mb-1">Child lock password</h3>
+          <p class="text-xs text-ink-400 mb-4">Set once, then required to change the settings above.</p>
+          <div class="grid gap-4 sm:grid-cols-2">
+            <% if @user.child_lock_set? %>
+              <div class="sm:col-span-2">
+                <%= f.label :child_lock_current_password, "Current child lock password", class: "field-label" %>
+                <%= f.password_field :child_lock_current_password, class: "input-field", autocomplete: "off", placeholder: "Required to turn child status off or change the age limit" %>
+              </div>
+            <% end %>
+            <div>
+              <%= f.label :child_lock_password, (@user.child_lock_set? ? "New child lock password" : "Child lock password"), class: "field-label" %>
+              <%= f.password_field :child_lock_password, class: "input-field", autocomplete: "new-password", placeholder: (@user.child_lock_set? ? "Leave blank to keep current" : "At least 4 characters") %>
+            </div>
+            <div>
+              <%= f.label :child_lock_password_confirmation, "Confirm password", class: "field-label" %>
+              <%= f.password_field :child_lock_password_confirmation, class: "input-field", autocomplete: "new-password" %>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="languages" class="panel panel-pad anchor-offset">
+        <div class="mb-6">
+          <h2 class="t-section mb-1.5">Languages</h2>
+          <p class="text-xs text-ink-400">Pick the languages you accept in stream releases, then set the audio language streams should start in.</p>
+        </div>
+
+        <div class="flex flex-wrap gap-2 mb-6" data-controller="language-picker">
+          <% User::STREAM_LANGUAGE_OPTIONS.each do |code, name| %>
+            <% selected = Array(@user.preferred_languages).include?(code) %>
+            <label class="lang-pill"
+                   data-language-picker-target="pill"
+                   data-code="<%= code %>"
+                   data-selected="<%= selected %>"
+                   style="<%= selected ? 'background-color: var(--color-iris-600); color: var(--color-on-accent);' : 'background-color: oklch(1 0 0 / 0.05); color: var(--color-ink-300);' %>">
+              <input type="checkbox" name="user[preferred_languages][]" value="<%= code %>" <%= 'checked' if selected %> class="sr-only">
+              <span><%= name %></span>
+            </label>
+          <% end %>
+        </div>
+        <input type="hidden" name="user[preferred_languages][]" value="">
+
+        <div class="max-w-xs">
+          <%= f.label :default_language, "Default audio language", class: "field-label" %>
+          <%= f.select :default_language,
+            options_for_select(
+              Array(@user.preferred_languages).map { |c| [User::STREAM_LANGUAGE_OPTIONS[c], c] },
+              @user.default_language
+            ),
+            {},
+            class: "input-field" %>
+        </div>
+      </section>
+
+      <div class="flex flex-wrap items-center gap-4 pt-2">
+        <%= f.submit "Save changes", class: "btn-primary cursor-pointer" %>
+        <p class="text-xs text-ink-400">Changes apply to this account immediately.</p>
       </div>
-    </div>
-
-    <div class="bg-sv-surface rounded-xl p-6 border border-sv-border">
-      <h2 class="text-lg font-semibold text-white mb-2">Preferred Languages</h2>
-      <p class="text-xs text-sv-text-muted mb-4">Select at least one language. Streams without at least one of your selected languages will be filtered out.</p>
-
-      <div class="flex flex-wrap gap-2 mb-4" data-controller="language-picker">
-        <% User::STREAM_LANGUAGE_OPTIONS.each do |code, name| %>
-          <% selected = Array(@user.preferred_languages).include?(code) %>
-          <label class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm cursor-pointer transition-colors"
-                 data-language-picker-target="pill"
-                 data-code="<%= code %>"
-                 data-selected="<%= selected %>"
-                 style="<%= selected ? 'background-color: var(--color-sv-accent); color: white;' : 'background-color: var(--color-sv-surface-hover); color: var(--color-sv-text-muted);' %>">
-            <input type="checkbox" name="user[preferred_languages][]" value="<%= code %>" <%= 'checked' if selected %> class="hidden">
-            <span><%= name %></span>
-          </label>
-        <% end %>
-      </div>
-      <input type="hidden" name="user[preferred_languages][]" value="">
-    </div>
-
-    <div class="bg-sv-surface rounded-xl p-6 border border-sv-border">
-      <h2 class="text-lg font-semibold text-white mb-2">Default Language</h2>
-      <p class="text-xs text-sv-text-muted mb-4">Default audio language when starting a stream.</p>
-
-      <%= f.select :default_language,
-        options_for_select(
-          Array(@user.preferred_languages).map { |c| [User::STREAM_LANGUAGE_OPTIONS[c], c] },
-          @user.default_language
-        ),
-        {},
-        class: "input-field w-auto"
-      %>
-    </div>
-
-    <%= f.submit "Save Settings", class: "btn-primary cursor-pointer" %>
-  <% end %>
+    <% end %>
+  </div>
 </div>

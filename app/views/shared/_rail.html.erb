@@ -1,0 +1,33 @@
+<%
+  title = local_assigns.fetch(:title)
+  count = local_assigns[:count]
+  view_all_path = local_assigns[:view_all_path]
+  view_all_label = local_assigns.fetch(:view_all_label, "View all")
+  emphasized = local_assigns.fetch(:emphasized, false)
+  rail_id = "rail-#{title.parameterize}"
+%>
+<section class="rail <%= "rail--lead" if emphasized %> mb-9 md:mb-11" data-controller="carousel" aria-labelledby="<%= rail_id %>">
+  <div class="rail-head">
+    <div class="flex items-baseline gap-3 min-w-0">
+      <h2 class="t-section truncate" id="<%= rail_id %>"><%= title %></h2>
+      <% if count.present? %>
+        <span class="text-xs text-ink-400 tabular-nums shrink-0"><%= count %></span>
+      <% end %>
+    </div>
+    <div class="rail-head__side">
+      <% if view_all_path.present? %>
+        <%= link_to view_all_label, view_all_path, class: "rail-link hidden sm:inline" %>
+      <% end %>
+      <button type="button" class="rail-arrow invisible" data-action="click->carousel#prev" data-carousel-target="prevBtn" aria-label="Scroll <%= title %> left">
+        <%= icon :chevron_left %>
+      </button>
+      <button type="button" class="rail-arrow" data-action="click->carousel#next" data-carousel-target="nextBtn" aria-label="Scroll <%= title %> right">
+        <%= icon :chevron_right %>
+      </button>
+    </div>
+  </div>
+
+  <div class="rail-track scrollbar-hide" data-carousel-target="track">
+    <%= yield %>
+  </div>
+</section>

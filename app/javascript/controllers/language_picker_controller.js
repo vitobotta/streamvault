@@ -10,8 +10,8 @@ export default class extends Controller {
         const input = pill.querySelector("input")
         input.checked = !input.checked
         pill.dataset.selected = input.checked
-        pill.style.backgroundColor = input.checked ? "var(--color-sv-accent)" : "var(--color-sv-surface-hover)"
-        pill.style.color = input.checked ? "white" : "var(--color-sv-text-muted)"
+        pill.style.backgroundColor = input.checked ? "var(--color-iris-600)" : "oklch(1 0 0 / 0.05)"
+        pill.style.color = input.checked ? "var(--color-on-accent)" : "var(--color-ink-300)"
       })
     })
   }

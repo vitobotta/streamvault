@@ -1,54 +1,62 @@
-<div class="px-6 py-8">
-  <div class="flex items-center justify-between mb-6">
-    <h1 class="text-3xl font-bold text-white">Library</h1>
-    <%= link_to search_index_path, class: "btn-secondary text-sm" do %>
-      <svg class="w-4 h-4 inline-block mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-      Search
+<% type = params[:type].presence %>
+<div class="mb-8 flex flex-col gap-5 md:mb-10 md:flex-row md:items-end md:justify-between">
+  <div>
+    <p class="kicker mb-2.5">Your collection</p>
+    <h1 class="t-page">Library</h1>
+    <p class="mt-2 text-sm text-ink-400">
+      <% if @entries.any? %>
+        <span class="t-num"><%= @pagination.total %></span> <%= @pagination.total == 1 ? "title" : "titles" %> saved
+      <% else %>
+        Everything you keep for later lives here
+      <% end %>
+    </p>
+  </div>
+  <div class="flex flex-wrap items-center gap-2">
+    <div class="segmented" role="group" aria-label="Filter library by type">
+      <%= link_to "All", library_index_path, class: "segmented__item #{type.blank? ? 'segmented__item--active' : ''}", "aria-current": (type.blank? ? "true" : nil) %>
+      <%= link_to "Movies", library_index_path(type: :movie), class: "segmented__item #{type == 'movie' ? 'segmented__item--active' : ''}", "aria-current": (type == "movie" ? "true" : nil) %>
+      <%= link_to "Series", library_index_path(type: :show), class: "segmented__item #{type == 'show' ? 'segmented__item--active' : ''}", "aria-current": (type == "show" ? "true" : nil) %>
+    </div>
+    <%= link_to search_index_path, class: "btn-ghost" do %>
+      <%= icon :plus %> Add titles
+    <% end %>
+  </div>
+</div>
+
+<% if @entries.any? %>
+  <div class="flex flex-wrap items-center justify-between gap-3 border-t border-white/8 pt-4 mb-6">
+    <p class="text-xs text-ink-400 t-num">
+      Showing <%= @pagination.first_item_number %>&ndash;<%= @pagination.last_item_number %> of <%= @pagination.total %>
+    </p>
+    <div class="page-size">
+      <span class="kicker">Per page</span>
+      <% [25, 50, 100].each do |size| %>
+        <% if size == @pagination.per_page %>
+          <span class="current t-num"><%= size %></span>
+        <% else %>
+          <%= link_to size, library_index_path(params.permit(:type).merge(per_page: size, page: 1)), class: "t-num" %>
+        <% end %>
+      <% end %>
+    </div>
+  </div>
+
+  <div class="poster-grid">
+    <% @entries.each do |entry| %>
+      <%= render "shared/poster_card",
+                 item: entry,
+                 link_path: content_path(type: entry.content_type, imdb_id: entry.imdb_id),
+                 subtitle: [entry.year, entry.content_type == "show" ? "Series" : "Film"].compact.join(" · "),
+                 progress: @progress_map&.dig(entry.imdb_id),
+                 controls: :library %>
     <% end %>
   </div>
 
-  <%# Filter tabs %>
-  <div class="flex flex-wrap gap-2 mb-4">
-    <%= link_to "All", library_index_path, class: "px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap #{params[:type].blank? ? 'bg-sv-accent text-white' : 'bg-sv-surface text-sv-text-muted hover:text-white'}" %>
-    <%= link_to "Movies", library_index_path(type: :movie), class: "px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap #{params[:type] == 'movie' ? 'bg-sv-accent text-white' : 'bg-sv-surface text-sv-text-muted hover:text-white'}" %>
-    <%= link_to "Shows", library_index_path(type: :show), class: "px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap #{params[:type] == 'show' ? 'bg-sv-accent text-white' : 'bg-sv-surface text-sv-text-muted hover:text-white'}" %>
+  <%= render "shared/pagination", pagination: @pagination, label: "Library" %>
+<% else %>
+  <div class="empty">
+    <p class="kicker">Empty shelf</p>
+    <p class="empty__title">Your library is waiting.</p>
+    <p class="empty__text">Add a film or series and it will show up here, ready to stream whenever you are.</p>
+    <%= link_to "Browse the catalogue", search_index_path, class: "btn-primary mt-2" %>
   </div>
-
-  <%# Result count and page size %>
-  <% if @entries.any? %>
-    <div class="flex items-center justify-between mb-4">
-      <p class="text-sm text-sv-text-muted">
-        Showing <%= @pagination.first_item_number %>&ndash;<%= @pagination.last_item_number %> of <%= @pagination.total %>
-      </p>
-      <div class="flex items-center gap-1">
-        <% [25, 50, 100].each do |size| %>
-          <% if size == @pagination.per_page %>
-            <span class="px-2 py-1 rounded bg-sv-accent text-white text-xs font-medium"><%= size %></span>
-          <% else %>
-            <%= link_to size, library_index_path(params.permit(:type).merge(per_page: size, page: 1)), class: "px-2 py-1 rounded bg-sv-surface text-sv-text-muted hover:text-white text-xs transition-colors" %>
-          <% end %>
-        <% end %>
-      </div>
-    </div>
-  <% end %>
-
-  <% if @entries.any? %>
-    <div class="grid gap-4" style="grid-template-columns: repeat(auto-fill, 160px)">
-      <% @entries.each do |entry| %>
-        <%= render "shared/poster_card",
-                   item: entry,
-                   link_path: content_path(type: entry.content_type, imdb_id: entry.imdb_id),
-                   progress: @progress_map&.dig(entry.imdb_id),
-                   controls: :library %>
-      <% end %>
-    </div>
-
-    <%= render "shared/pagination", pagination: @pagination, label: "Library" %>
-  <% else %>
-    <div class="text-center py-16">
-      <svg class="w-16 h-16 text-sv-text-muted mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
-      <p class="text-sv-text-muted mb-4">Your library is empty.</p>
-      <%= link_to "Search for content", search_index_path, class: "btn-primary" %>
-    </div>
-  <% end %>
-</div>
+<% end %>

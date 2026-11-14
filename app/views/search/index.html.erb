@@ -1,47 +1,55 @@
-<div class="px-6 py-8">
-  <h1 class="text-3xl font-bold text-white mb-6">Search</h1>
+<div class="mb-8 md:mb-10">
+  <p class="kicker mb-2.5">Find a title</p>
+  <h1 class="t-page mb-6">Search</h1>
 
-  <%= form_tag search_index_path, method: :get, class: "mb-8", data: { page_loader: "search" } do %>
-    <div class="flex gap-3">
-      <%= text_field_tag :q, @query, class: "input-field flex-1", placeholder: "Search for movies, TV shows...", autofocus: true %>
-      <%= submit_tag "Search", class: "btn-primary cursor-pointer" %>
-    </div>
-  <% end %>
-
-  <% if @error.present? %>
-    <div class="flash-alert"><%= @error %></div>
-  <% end %>
-
-  <% if @results.present? %>
-    <%# Results header with per_page control %>
-    <div class="flex items-center justify-between mb-4">
-      <p class="text-sm text-sv-text-muted">
-        Showing <%= @pagination.first_item_number %>&ndash;<%= @pagination.last_item_number %> of <%= @pagination.total %> results
-      </p>
-      <div class="flex items-center gap-1 text-sm">
-        <% [25, 50, 100, 200].each do |size| %>
-          <% if size == @pagination.per_page %>
-            <span class="px-2 py-1 rounded bg-sv-accent text-white text-xs font-medium"><%= size %></span>
-          <% else %>
-            <%= link_to size, search_index_path(q: @query, per_page: size), class: "px-2 py-1 rounded bg-sv-surface text-sv-text-muted hover:text-white text-xs transition-colors" %>
-          <% end %>
-        <% end %>
-      </div>
-    </div>
-
-    <%# Results grid %>
-    <div class="grid gap-4" style="grid-template-columns: repeat(auto-fill, 160px)">
-      <% @results.each do |result| %>
-        <%= render "shared/poster_card",
-                   item: result,
-                   link_path: content_path(type: result[:type], imdb_id: result[:imdb_id]),
-                   subtitle: [result[:year], result[:type]&.capitalize].compact.join(" · ") %>
-      <% end %>
-    </div>
-
-    <%= render "shared/pagination", pagination: @pagination, label: "Search" %>
-
-  <% elsif @query.present? %>
-    <p class="text-sv-text-muted">No results found for "<%= @query %>".</p>
+  <%= form_tag search_index_path, method: :get, class: "search-field max-w-2xl", data: { page_loader: "search" } do %>
+    <%= icon :search, css: "search-field__icon" %>
+    <%= text_field_tag :q, @query, placeholder: "Films, series, documentaries", autofocus: true, aria: { label: "Search movies and shows" } %>
+    <%= submit_tag "Search", class: "btn-primary cursor-pointer" %>
   <% end %>
 </div>
+
+<% if @error.present? %>
+  <div class="flash-alert mb-6"><%= @error %></div>
+<% end %>
+
+<% if @results.present? %>
+  <div class="flex flex-wrap items-center justify-between gap-3 border-t border-white/8 pt-4 mb-6">
+    <p class="text-xs text-ink-400 t-num">
+      Showing <%= @pagination.first_item_number %>&ndash;<%= @pagination.last_item_number %> of <%= @pagination.total %> results
+    </p>
+    <div class="page-size">
+      <span class="kicker">Per page</span>
+      <% [25, 50, 100, 200].each do |size| %>
+        <% if size == @pagination.per_page %>
+          <span class="current t-num"><%= size %></span>
+        <% else %>
+          <%= link_to size, search_index_path(q: @query, per_page: size), class: "t-num" %>
+        <% end %>
+      <% end %>
+    </div>
+  </div>
+
+  <div class="poster-grid">
+    <% @results.each do |result| %>
+      <%= render "shared/poster_card",
+                 item: result,
+                 link_path: content_path(type: result[:type], imdb_id: result[:imdb_id]),
+                 subtitle: [result[:year], result[:type] == "show" ? "Series" : "Film"].compact.join(" · ") %>
+    <% end %>
+  </div>
+
+  <%= render "shared/pagination", pagination: @pagination, label: "Search" %>
+<% elsif @query.present? %>
+  <div class="empty">
+    <p class="kicker">No match</p>
+    <p class="empty__title">Nothing found for &ldquo;<%= @query %>&rdquo;.</p>
+    <p class="empty__text">Try a shorter title, a different spelling, or the year it came out.</p>
+  </div>
+<% else %>
+  <div class="empty">
+    <p class="kicker">Start typing</p>
+    <p class="empty__title">What do you feel like watching?</p>
+    <p class="empty__text">Search the catalogue by title. Results respect your rating limits and language preferences.</p>
+  </div>
+<% end %>

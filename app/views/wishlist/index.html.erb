@@ -1,47 +1,61 @@
-<div class="px-6 py-8">
-  <h1 class="text-3xl font-bold text-white mb-6">Wishlist</h1>
-
-  <%# Type filter pills %>
-  <div class="flex flex-wrap gap-2 mb-4">
-    <%= link_to "All", wishlist_index_path, class: "px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap #{params[:type].blank? ? 'bg-sv-accent text-white' : 'bg-sv-surface text-sv-text-muted hover:text-white'}" %>
-    <%= link_to "Movies", wishlist_index_path(type: :movie), class: "px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap #{params[:type] == 'movie' ? 'bg-sv-accent text-white' : 'bg-sv-surface text-sv-text-muted hover:text-white'}" %>
-    <%= link_to "Shows", wishlist_index_path(type: :show), class: "px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap #{params[:type] == 'show' ? 'bg-sv-accent text-white' : 'bg-sv-surface text-sv-text-muted hover:text-white'}" %>
+<% type = params[:type].presence %>
+<div class="mb-8 flex flex-col gap-5 md:mb-10 md:flex-row md:items-end md:justify-between">
+  <div>
+    <p class="kicker mb-2.5">Saved for later</p>
+    <h1 class="t-page">Wishlist</h1>
+    <p class="mt-2 text-sm text-ink-400">
+      <% if @entries.any? %>
+        <span class="t-num"><%= @pagination.total %></span> <%= @pagination.total == 1 ? "title" : "titles" %> on your list
+      <% else %>
+        Titles you are curious about, kept in one place
+      <% end %>
+    </p>
   </div>
-
-  <%# Result count and page size %>
-  <% if @entries.any? %>
-    <div class="flex items-center justify-between mb-4">
-      <p class="text-sm text-sv-text-muted">
-        Showing <%= @pagination.first_item_number %>&ndash;<%= @pagination.last_item_number %> of <%= @pagination.total %>
-      </p>
-      <div class="flex items-center gap-1">
-        <% [25, 50, 100].each do |size| %>
-          <% if size == @pagination.per_page %>
-            <span class="px-2 py-1 rounded bg-sv-accent text-white text-xs font-medium"><%= size %></span>
-          <% else %>
-            <%= link_to size, wishlist_index_path(params.permit(:type).merge(per_page: size, page: 1)), class: "px-2 py-1 rounded bg-sv-surface text-sv-text-muted hover:text-white text-xs transition-colors" %>
-          <% end %>
-        <% end %>
-      </div>
+  <div class="flex flex-wrap items-center gap-2">
+    <div class="segmented" role="group" aria-label="Filter wishlist by type">
+      <%= link_to "All", wishlist_index_path, class: "segmented__item #{type.blank? ? 'segmented__item--active' : ''}", "aria-current": (type.blank? ? "true" : nil) %>
+      <%= link_to "Movies", wishlist_index_path(type: :movie), class: "segmented__item #{type == 'movie' ? 'segmented__item--active' : ''}", "aria-current": (type == "movie" ? "true" : nil) %>
+      <%= link_to "Series", wishlist_index_path(type: :show), class: "segmented__item #{type == 'show' ? 'segmented__item--active' : ''}", "aria-current": (type == "show" ? "true" : nil) %>
     </div>
-  <% end %>
+    <%= link_to search_index_path, class: "btn-ghost" do %>
+      <%= icon :search %> Find titles
+    <% end %>
+  </div>
+</div>
 
-  <% if @entries.any? %>
-    <div class="grid gap-4" style="grid-template-columns: repeat(auto-fill, 160px)">
-      <% @entries.each do |entry| %>
-        <%= render "shared/poster_card",
-                   item: entry,
-                   link_path: content_path(type: entry.content_type, imdb_id: entry.imdb_id),
-                   controls: :wishlist %>
+<% if @entries.any? %>
+  <div class="flex flex-wrap items-center justify-between gap-3 border-t border-white/8 pt-4 mb-6">
+    <p class="text-xs text-ink-400 t-num">
+      Showing <%= @pagination.first_item_number %>&ndash;<%= @pagination.last_item_number %> of <%= @pagination.total %>
+    </p>
+    <div class="page-size">
+      <span class="kicker">Per page</span>
+      <% [25, 50, 100].each do |size| %>
+        <% if size == @pagination.per_page %>
+          <span class="current t-num"><%= size %></span>
+        <% else %>
+          <%= link_to size, wishlist_index_path(params.permit(:type).merge(per_page: size, page: 1)), class: "t-num" %>
+        <% end %>
       <% end %>
     </div>
+  </div>
 
-    <%= render "shared/pagination", pagination: @pagination, label: "Wishlist" %>
-  <% else %>
-    <div class="text-center py-16">
-      <svg class="w-16 h-16 text-sv-text-muted mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>
-      <p class="text-sv-text-muted mb-4">Your wishlist is empty.</p>
-      <%= link_to "Search for content", search_index_path, class: "btn-primary" %>
-    </div>
-  <% end %>
-</div>
+  <div class="poster-grid">
+    <% @entries.each do |entry| %>
+      <%= render "shared/poster_card",
+                 item: entry,
+                 link_path: content_path(type: entry.content_type, imdb_id: entry.imdb_id),
+                 subtitle: [entry.year, entry.content_type == "show" ? "Series" : "Film"].compact.join(" · "),
+                 controls: :wishlist %>
+    <% end %>
+  </div>
+
+  <%= render "shared/pagination", pagination: @pagination, label: "Wishlist" %>
+<% else %>
+  <div class="empty">
+    <p class="kicker">Nothing saved</p>
+    <p class="empty__title">Your wishlist is empty.</p>
+    <p class="empty__text">Keep a shortlist of films and series you want to watch next.</p>
+    <%= link_to "Browse the catalogue", search_index_path, class: "btn-primary mt-2" %>
+  </div>
+<% end %>

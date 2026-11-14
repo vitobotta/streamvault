@@ -1,42 +1,29 @@
-<div class="flex items-center justify-center px-4 min-h-screen">
-  <div class="w-full max-w-md">
-    <div class="flex items-center justify-center gap-2 mb-8">
-      <svg class="w-10 h-10 text-sv-accent" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M8 5v14l11-7z"/>
-      </svg>
-      <span class="text-2xl font-bold text-white tracking-tight">StreamVault</span>
+<%= render layout: "devise/shared/auth_shell", locals: { title: "Create account", subtitle: "One profile, your own library, nothing shared." } do %>
+  <%= form_for(resource, as: resource_name, url: registration_path(resource_name), html: { class: "space-y-4" }) do |f| %>
+    <%= render "devise/shared/error_messages", resource: resource %>
+
+    <div>
+      <%= f.label :email, "Email", class: "field-label" %>
+      <%= f.email_field :email, autofocus: true, autocomplete: "email", class: "input-field", placeholder: "you@example.com" %>
     </div>
 
-    <div class="bg-sv-surface/90 backdrop-blur-sm rounded-xl p-8 border border-sv-border">
-      <h2 class="text-2xl font-bold text-white mb-6 text-center">Create account</h2>
-
-      <%= form_for(resource, as: resource_name, url: registration_path(resource_name)) do |f| %>
-        <%= render "devise/shared/error_messages", resource: resource %>
-
-        <div class="mb-4">
-          <%= f.label :email, class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
-          <%= f.email_field :email, autofocus: true, autocomplete: "email", class: "input-field", placeholder: "you@example.com" %>
-        </div>
-
-        <div class="mb-4">
-          <%= f.label :password, class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
-          <% if @minimum_password_length %>
-            <p class="text-xs text-sv-text-muted mb-1.5"><%= @minimum_password_length %> characters minimum</p>
-          <% end %>
-          <%= f.password_field :password, autocomplete: "new-password", class: "input-field", placeholder: "••••••••" %>
-        </div>
-
-        <div class="mb-6">
-          <%= f.label :password_confirmation, class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
-          <%= f.password_field :password_confirmation, autocomplete: "new-password", class: "input-field", placeholder: "••••••••" %>
-        </div>
-
-        <%= f.submit "Create account", class: "btn-primary w-full text-center cursor-pointer" %>
+    <div>
+      <%= f.label :password, "Password", class: "field-label" %>
+      <%= f.password_field :password, autocomplete: "new-password", class: "input-field", placeholder: "Choose a password" %>
+      <% if @minimum_password_length %>
+        <p class="field-hint"><%= @minimum_password_length %> characters minimum</p>
       <% end %>
     </div>
 
-    <div class="mt-4 text-center">
-      <%= render "devise/shared/links" %>
+    <div>
+      <%= f.label :password_confirmation, "Confirm password", class: "field-label" %>
+      <%= f.password_field :password_confirmation, autocomplete: "new-password", class: "input-field", placeholder: "Repeat the password" %>
     </div>
-  </div>
-</div>
+
+    <%= f.submit "Create account", class: "btn-primary btn-lg w-full cursor-pointer mt-2" %>
+  <% end %>
+
+  <p class="mt-8 text-center text-sm text-ink-400">
+    Already have an account? <%= link_to "Sign in", new_session_path(resource_name), class: "text-iris-300 hover:text-iris-200" %>
+  </p>
+<% end %>

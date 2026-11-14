@@ -50,6 +50,52 @@ RSpec.describe "Content", type: :request do
     end
   end
 
+  describe "GET /content/show/:imdb_id continue button" do
+    before { sign_in user }
+
+    let(:show_id) { "tt0903747" }
+
+    before do
+      stub_request(:get, "https://v3-cinemeta.strem.io/meta/series/#{show_id}.json")
+        .to_return(
+          status: 200,
+          body: {
+            "meta" => {
+              "id" => show_id,
+              "name" => "Breaking Bad",
+              "videos" => [
+                { "season" => 1, "episode" => 1, "name" => "Pilot", "released" => "2008-01-20" },
+                { "season" => 1, "episode" => 2, "name" => "Cat's in the Bag...", "released" => "2008-01-27" }
+              ]
+            }
+          }.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+    end
+
+    it "starts playback at the episode the player would resume" do
+      create(:playback_progress, :episode, user: user, imdb_id: show_id, season_number: 1, episode_number: 1,
+        title: "Breaking Bad S01E01", progress_seconds: 2_000, duration_seconds: 2_900, watched_at: 3.days.ago)
+      create(:playback_progress, :episode, user: user, imdb_id: show_id, season_number: 1, episode_number: 2,
+        title: "Breaking Bad S01E02", progress_seconds: 600, duration_seconds: 2_900, watched_at: 1.hour.ago)
+
+      get content_path(type: "show", imdb_id: show_id)
+
+      expect(response).to have_http_status(:ok)
+      href = ERB::Util.html_escape(resume_streaming_index_path(type: "show", imdb_id: show_id))
+      expect(response.body).to include(%(href="#{href}"))
+      expect(response.body).to include("Continue S01E02")
+      expect(response.body).not_to include("Continue S01E01")
+    end
+
+    it "has no continue button before any episode has been watched" do
+      get content_path(type: "show", imdb_id: show_id)
+
+      expect(response).to have_http_status(:ok)
+      expect(response.body).not_to include("Continue S")
+    end
+  end
+
   describe "GET /content/:type/:imdb_id/status" do
     let(:other_user) { create(:user) }
 

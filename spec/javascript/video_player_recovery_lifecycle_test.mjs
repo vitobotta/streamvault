@@ -308,3 +308,55 @@ test("explicit progress-baseline reset still protects a seek", (t) => {
   advance(3_000)
   assert.deepEqual(recoveryEvents, [])
 })
+
+test("a reconnected MSE session rebaselines the silent-freeze clock", (t) => {
+  const { player, video, advance } = fixture(t, "mse")
+  const recoveryEvents = []
+  player.handleStreamStall = (event) => recoveryEvents.push(event)
+  video.currentTime = 40
+  player.startProgressWatchdog()
+  advance(5_000)
+
+  // A seek or recovery installs a new MSE session: the element timeline
+  // restarts near zero, well below the previous session's baseline.
+  video.currentTime = 0
+  player.startProgressWatchdog()
+  for (let second = 1; second <= 7; second++) {
+    video.currentTime = second
+    advance(3_000)
+  }
+
+  assert.deepEqual(recoveryEvents, [])
+  assert.equal(player.progressWatchdogArmed, true)
+})
+
+test("a backwards timeline jump is not mistaken for a silent freeze", (t) => {
+  const { player, video, advance } = fixture(t, "mse")
+  const recoveryEvents = []
+  player.handleStreamStall = (event) => recoveryEvents.push(event)
+  video.currentTime = 40
+  player.startProgressWatchdog()
+  advance(5_000)
+
+  // Recovery can install the new timeline without an explicit re-arm.
+  video.currentTime = 0
+  for (let second = 1; second <= 7; second++) {
+    video.currentTime = second
+    advance(3_000)
+  }
+
+  assert.deepEqual(recoveryEvents, [])
+  assert.equal(player.lastProgressPosition, video.currentTime)
+})
+
+test("MSE source setup disarms the previous session's freeze clock", (t) => {
+  const { player } = fixture(t, "mse")
+  const calls = []
+  player.startProgressWatchdog()
+  player.playbackEngine = () => ({ setupMseSource: () => calls.push("engine") })
+
+  player.setupMseSource("/transcode?start_seconds=10")
+
+  assert.deepEqual(calls, [ "engine" ])
+  assert.equal(player.progressWatchdogArmed, false)
+})

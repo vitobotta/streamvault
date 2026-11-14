@@ -1,29 +1,16 @@
-<div class="flex items-center justify-center px-4 min-h-screen">
-  <div class="w-full max-w-md">
-    <div class="flex items-center justify-center gap-2 mb-8">
-      <svg class="w-10 h-10 text-sv-accent" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M8 5v14l11-7z"/>
-      </svg>
-      <span class="text-2xl font-bold text-white tracking-tight">StreamVault</span>
+<%= render layout: "devise/shared/auth_shell", locals: { title: "Resend confirmation", subtitle: "Enter your email and we will send the confirmation link again." } do %>
+  <%= form_for(resource, as: resource_name, url: confirmation_path(resource_name), html: { method: :post, class: "space-y-4" }) do |f| %>
+    <%= render "devise/shared/error_messages", resource: resource %>
+
+    <div>
+      <%= f.label :email, "Email", class: "field-label" %>
+      <%= f.email_field :email, autofocus: true, autocomplete: "email", class: "input-field", placeholder: "you@example.com", value: (resource.pending_reconfirmation? ? resource.unconfirmed_email : resource.email) %>
     </div>
 
-    <div class="bg-sv-surface/90 backdrop-blur-sm rounded-xl p-8 border border-sv-border">
-      <h2 class="text-2xl font-bold text-white mb-6 text-center">Resend confirmation</h2>
+    <%= f.submit "Send confirmation link", class: "btn-primary btn-lg w-full cursor-pointer mt-2" %>
+  <% end %>
 
-      <%= form_for(resource, as: resource_name, url: confirmation_path(resource_name), html: { method: :post }) do |f| %>
-        <%= render "devise/shared/error_messages", resource: resource %>
-
-        <div class="mb-6">
-          <%= f.label :email, class: "block text-sm font-medium text-sv-text-muted mb-1.5" %>
-          <%= f.email_field :email, autofocus: true, autocomplete: "email", class: "input-field", placeholder: "you@example.com", value: (resource.pending_reconfirmation? ? resource.unconfirmed_email : resource.email) %>
-        </div>
-
-        <%= f.submit "Resend confirmation instructions", class: "btn-primary w-full text-center cursor-pointer" %>
-      <% end %>
-    </div>
-
-    <div class="mt-4 text-center">
-      <%= render "devise/shared/links" %>
-    </div>
-  </div>
-</div>
+  <p class="mt-8 text-center text-sm text-ink-400">
+    <%= link_to "Back to sign in", new_session_path(resource_name), class: "text-iris-300 hover:text-iris-200" %>
+  </p>
+<% end %>

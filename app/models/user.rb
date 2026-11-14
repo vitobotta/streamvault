@@ -35,13 +35,13 @@ class User < ApplicationRecord
   CHILD_LOCK_MIN_LENGTH = 4
   MAX_RATING_AGE_RANGE = 0..18
   MAX_RATING_AGE_OPTIONS = [
-    [ "0+ — little kids (TV-Y, G)", 0 ],
-    [ "7+ — older kids (TV-Y7)", 7 ],
-    [ "8+ — (PG, TV-PG)", 8 ],
-    [ "13+ — teens (PG-13)", 13 ],
-    [ "14+ — (TV-14)", 14 ],
-    [ "17+ — older teens (R, TV-MA)", 17 ],
-    [ "18+ — everything, including unrated", 18 ]
+    [ "0+ - little kids (TV-Y, G)", 0 ],
+    [ "7+ - older kids (TV-Y7)", 7 ],
+    [ "8+ - (PG, TV-PG)", 8 ],
+    [ "13+ - teens (PG-13)", 13 ],
+    [ "14+ - (TV-14)", 14 ],
+    [ "17+ - older teens (R, TV-MA)", 17 ],
+    [ "18+ - everything, including unrated", 18 ]
   ].freeze
 
   attr_accessor :child_lock_password, :child_lock_password_confirmation, :child_lock_current_password
