@@ -115,6 +115,10 @@ function deferred() {
   return { promise, resolve }
 }
 
+function flushMicrotasks() {
+  return new Promise((resolve) => setImmediate(resolve))
+}
+
 test("HLS initial startup requests playback through the common policy", async (t) => {
   const { player, video, client, events } = fixture(t)
   await client.start()
@@ -359,4 +363,386 @@ test("MSE source setup disarms the previous session's freeze clock", (t) => {
 
   assert.deepEqual(calls, [ "engine" ])
   assert.equal(player.progressWatchdogArmed, false)
+})
+
+// ── Seamless continuation ────────────────────────────────────────────
+//
+// A continuation appends the replacement response into the live
+// SourceBuffer instead of rebuilding the MediaSource (the black frame).
+// These fixtures drive the real controller methods with the real
+// MseBufferManager, so the join offset, the fallback paths and the gap
+// guard are exercised rather than described.
+
+function continuationFixture(t, { ranges = [ [ 0, 104 ] ], currentTime = 60, duration = 1000 } = {}) {
+  const { context, VideoPlayerController, harness } = createVideoPlayerHarness()
+  const timers = new Map()
+  let now = 100_000
+  let timerId = 0
+  context.Date = class extends Date { static now() { return now } }
+  context.setTimeout = (callback, delay) => {
+    const id = ++timerId
+    timers.set(id, { callback, due: now + delay })
+    return id
+  }
+  context.clearTimeout = (id) => timers.delete(id)
+  context.console = { warn() {}, info() {} }
+
+  const loadService = (filename, name) => {
+    const source = readFileSync(new URL(`../../app/javascript/player/${filename}`, import.meta.url), "utf8")
+      .replace(`export class ${name}`, `class ${name}`)
+    return vm.runInContext(`(() => { ${source}\nreturn ${name} })()`, context)
+  }
+  const MseBufferManager = loadService("mse_buffer_manager.js", "MseBufferManager")
+  const PlaybackRecoveryMonitor = loadService("playback_recovery_monitor.js", "PlaybackRecoveryMonitor")
+
+  let bufferedRanges = ranges.map(([ start, end ]) => [ start, end ])
+  const buffered = {
+    get length() { return bufferedRanges.length },
+    start: (index) => bufferedRanges[index][0],
+    end: (index) => bufferedRanges[index][1]
+  }
+
+  const player = new VideoPlayerController()
+  const video = {
+    src: "/blob:session",
+    get currentSrc() { return this.src },
+    currentTime,
+    paused: false,
+    ended: false,
+    seeking: false,
+    readyState: 4,
+    autoplay: false,
+    buffered,
+    pause() { this.paused = true },
+    play() { this.paused = false; return Promise.resolve() },
+    addEventListener() {},
+    removeEventListener() {}
+  }
+  const order = []
+  const sourceBuffer = {
+    updating: false,
+    _offset: 0,
+    buffered,
+    get timestampOffset() { return this._offset },
+    set timestampOffset(value) { this._offset = value; order.push(`offset:${value}`) },
+    abort() { order.push("abort"); this.updating = false },
+    appendBuffer() { this.updating = true },
+    remove() {}
+  }
+  const reports = []
+  const fetches = []
+  const swaps = []
+  const reconnects = []
+
+  const manager = new MseBufferManager(player)
+  const monitor = new PlaybackRecoveryMonitor(player, {
+    fetcher: (_url, init) => { reports.push(JSON.parse(init.body)); return Promise.resolve({}) },
+    documentRoot: null
+  })
+
+  Object.assign(player, {
+    videoTarget: video,
+    hasVideoTarget: true,
+    sourceBuffer,
+    mediaSource: { readyState: "open", endOfStream() { this.readyState = "ended" } },
+    element: { dataset: {} },
+    playbackId: "continuation",
+    startSecondsValue: 300,
+    streamingUrlValue: "/transcode?source=test-owned-source",
+    playbackStarted: true,
+    userPaused: false,
+    navigatingAway: false,
+    playbackDisconnected: false,
+    subtitlePlaybackHoldToken: null,
+    isSeeking: false,
+    streamRecoveryAttempts: 0,
+    streamRecoveryActive: false,
+    bufferAppending: false,
+    pendingAppendBuffer: null,
+    fmp4Buffer: null,
+    fmp4BufferSize: 0,
+    mseReadPaused: false,
+    knownDuration: duration,
+    selectedAudioStream: null,
+    selectedSubtitleStream: null,
+    isHls: () => false,
+    isDirectPlay: () => false,
+    isRemuxDirectPlay: () => false,
+    isNativeDirectPlay: () => false,
+    burnedSubtitleSelected() { return false },
+    mseBufferManager: () => manager,
+    recoveryMonitor: () => monitor,
+    startStallWatchdog() {},
+    clearStallWatchdog() {},
+    stopProgressWatchdog() {},
+    showSeekingOverlay() {},
+    hideSeekingOverlay() {},
+    showBufferingOverlay() {},
+    maybeHideBufferingOverlay() {},
+    clearPlayPrompt() {},
+    hideStartupOverlay() {},
+    clearSystemRebufferGate() {},
+    clearSubtitleCues() {},
+    reloadTextSubtitlesAt() {},
+    setupMseSource(url) {
+      swaps.push(url)
+      this.cancelMseContinuation()
+      if (this.fetchController) { this.fetchController.abort(); this.fetchController = null }
+    },
+    reconnectFromCurrentPosition() { reconnects.push("reconnect") },
+    continuationGapJump: null,
+    startStreamingFetch(url, options = {}) {
+      fetches.push([ url, options ])
+      return Promise.resolve()
+    }
+  })
+
+  t.after(() => {
+    player.clearStallWatchdog()
+    player.stopProgressWatchdog()
+    timers.clear()
+  })
+
+  return {
+    player,
+    video,
+    sourceBuffer,
+    manager,
+    monitor,
+    harness,
+    reports,
+    fetches,
+    swaps,
+    reconnects,
+    order,
+    VideoPlayerController,
+    useRealFetch() {
+      player.startStreamingFetch = (url, options = {}) => {
+        fetches.push([ url, options ])
+        return VideoPlayerController.prototype.startStreamingFetch.call(player, url, options)
+      }
+    },
+    setRanges(next) { bufferedRanges = next.map(([ start, end ]) => [ start, end ]) },
+    setAppends(count) { manager.appendCount = count },
+    advance(ms) {
+      const end = now + ms
+      while (true) {
+        const next = [ ...timers ].filter(([, timer]) => timer.due <= end)
+          .sort((a, b) => a[1].due - b[1].due || a[0] - b[0])[0]
+        if (!next) break
+        const [ id, timer ] = next
+        now = timer.due
+        timers.delete(id)
+        timer.callback()
+      }
+      now = end
+    }
+  }
+}
+
+test("a dead body with a healthy cushion continues in the same source buffer", async (t) => {
+  const f = continuationFixture(t)
+  f.player.fmp4Buffer = new Uint8Array(32)
+  f.player.fmp4BufferSize = 32
+  f.player.pendingAppendBuffer = new ArrayBuffer(16)
+  const sourceBefore = f.video.src
+
+  await f.player.continueMseStream("stream_error")
+  await flushMicrotasks()
+
+  assert.deepEqual(f.swaps, [])
+  assert.deepEqual(f.reconnects, [])
+  assert.equal(f.video.src, sourceBefore)
+  assert.equal(f.player.startSecondsValue, 300)
+  assert.deepEqual(f.order, [ "abort", "offset:103" ])
+  assert.equal(f.player.fmp4Buffer, null)
+  assert.equal(f.player.fmp4BufferSize, 0)
+  assert.equal(f.player.pendingAppendBuffer, null)
+  assert.equal(f.fetches.length, 1)
+  assert.match(f.fetches[0][0], /start_seconds=403(&|$)/)
+  assert.equal(f.fetches[0][1].continuation, true)
+  assert.equal(f.fetches[0][1].loadId, 1)
+  assert.equal(f.reports[0].event, "stream_continue")
+  assert.equal(f.reports[0].resume_offset_seconds, 103)
+  assert.equal(f.reports[0].cushion_seconds, 44)
+})
+
+test("a continuation rejected with 502 falls back to exactly one session swap", async (t) => {
+  const f = continuationFixture(t)
+  const { player } = f
+  f.harness.fetchHandler = async () => ({ ok: false, status: 502 })
+  f.useRealFetch()
+
+  player.handlePrematureStreamEnd("stream_error")
+  await flushMicrotasks()
+  await flushMicrotasks()
+
+  assert.deepEqual(f.reconnects, [ "reconnect" ])
+  assert.equal(player.continuationFailures, 1)
+  assert.equal(player.continuationInFlight, false)
+  assert.equal(f.sourceBuffer.timestampOffset, 0)
+  assert.ok(f.reports.some((report) => report.event === "continuation_failed"))
+})
+
+test("a continuation that never delivers a first chunk falls back before the cushion runs dry", async (t) => {
+  const f = continuationFixture(t, { ranges: [ [ 0, 69 ] ], currentTime: 60 })
+  const { player } = f
+  f.harness.fetchHandler = async () => ({
+    ok: true,
+    body: { getReader: () => ({ read: () => new Promise(() => {}) }) }
+  })
+  f.useRealFetch()
+
+  player.handlePrematureStreamEnd("stream_error")
+  await flushMicrotasks()
+  assert.equal(player.continuationFirstChunkAt, null)
+  assert.deepEqual(f.reconnects, [])
+
+  f.advance(4000)
+  await flushMicrotasks()
+
+  assert.deepEqual(f.reconnects, [ "reconnect" ])
+  assert.ok(f.reports.some((report) => report.event === "continuation_failed"))
+})
+
+test("a body that ends near the duration still finalizes instead of continuing", async (t) => {
+  const f = continuationFixture(t, { ranges: [ [ 0, 1000 ] ], currentTime: 990 })
+  f.player.startSecondsValue = 0
+
+  f.player.handlePrematureStreamEnd("stream_end")
+  await flushMicrotasks()
+
+  assert.equal(f.player.mediaSource.readyState, "ended")
+  assert.equal(f.player.mseFetchEnded, false)
+  assert.deepEqual(f.fetches, [])
+})
+
+test("a dead body while the user is paused waits for playback before continuing", async (t) => {
+  const f = continuationFixture(t)
+  f.player.userPaused = true
+
+  f.player.handlePrematureStreamEnd("stream_error")
+  await flushMicrotasks()
+  f.advance(250)
+  await flushMicrotasks()
+  assert.deepEqual(f.fetches, [])
+
+  f.player.userPaused = false
+  f.advance(1000)
+  await flushMicrotasks()
+
+  assert.equal(f.fetches.length, 1)
+  assert.equal(f.fetches[0][1].continuation, true)
+})
+
+test("a seek during a continuation leaves the continuation's only fetch aborted", async (t) => {
+  const f = continuationFixture(t)
+  const { player } = f
+  f.harness.fetchHandler = async (_url, init) => ({
+    ok: true,
+    body: {
+      getReader: () => ({
+        read: () => new Promise((_resolve, reject) => {
+          init.signal.addEventListener("abort", () => {
+            const error = new Error("aborted")
+            error.name = "AbortError"
+            reject(error)
+          })
+        })
+      })
+    }
+  })
+  f.useRealFetch()
+
+  player.handlePrematureStreamEnd("stream_error")
+  await flushMicrotasks()
+  assert.equal(f.fetches.length, 1)
+  assert.equal(player.fetchController !== null, true)
+
+  player.restartPlaybackAt(500)
+  await flushMicrotasks()
+  await flushMicrotasks()
+
+  assert.equal(f.fetches.length, 1)
+  assert.equal(player.fetchController, null)
+  assert.equal(f.swaps.length, 1)
+  assert.equal(player.startSecondsValue, 500)
+})
+
+test("the continuation URL keeps the selected audio and burned subtitle streams", async (t) => {
+  const f = continuationFixture(t)
+  f.player.selectedAudioStream = "3"
+  f.player.selectedSubtitleStream = "7"
+  f.player.burnedSubtitleSelected = () => true
+
+  f.player.handlePrematureStreamEnd("stream_end")
+  await flushMicrotasks()
+
+  assert.equal(f.fetches.length, 1)
+  assert.match(f.fetches[0][0], /audio_stream=3/)
+  assert.match(f.fetches[0][0], /subtitle_stream=7/)
+})
+
+test("a sub-second hole at the join is jumped once when the playhead reaches it", async (t) => {
+  const f = continuationFixture(t, { ranges: [ [ 0, 100 ] ], currentTime: 60 })
+  f.player.currentTimeTarget = { textContent: "" }
+  f.player.updateSubtitleOverlay = () => {}
+  f.player.updateSeekVisuals = () => {}
+  f.player.updateBufferBar = () => {}
+  f.player.observePlaybackProgress = () => {}
+  f.player.updateNextEpisodePrompt = () => {}
+  f.player.effectiveDuration = () => 1000
+
+  f.player.handlePrematureStreamEnd("stream_end")
+  await flushMicrotasks()
+
+  f.setRanges([ [ 0, 100 ], [ 100.4, 160 ] ])
+  f.setAppends(1)
+  f.player.finishMseContinuation()
+
+  assert.ok(f.reports.some((report) => report.event === "stream_continue_ok"))
+  assert.ok(f.reports.some((report) => report.event === "continuation_gap" && report.continuation_gap_seconds === 0.4))
+  assert.deepEqual(f.reconnects, [])
+
+  f.video.currentTime = 99.9
+  f.player.onTimeUpdate()
+  assert.equal(f.video.currentTime, 100.45)
+
+  const afterJump = f.video.currentTime
+  f.player.onTimeUpdate()
+  assert.equal(f.video.currentTime, afterJump)
+})
+
+test("an init-segment append alone does not count as the continuation's first fragment", async (t) => {
+  const f = continuationFixture(t, { ranges: [ [ 0, 100 ] ], currentTime: 60 })
+
+  f.player.handlePrematureStreamEnd("stream_end")
+  await flushMicrotasks()
+
+  // The init segment appends, but the timeline does not move yet.
+  f.setAppends(1)
+  f.player.finishMseContinuation()
+
+  assert.equal(f.reports.some((report) => report.event === "stream_continue_ok"), false)
+  assert.equal(f.player.continuationAwaitingFirstAppend, true)
+
+  // The first media fragment extends the buffer and completes the join.
+  f.setRanges([ [ 0, 100 ], [ 99, 101 ] ])
+  f.player.finishMseContinuation()
+  assert.ok(f.reports.some((report) => report.event === "stream_continue_ok"))
+})
+
+test("a hole larger than one second at the join takes the swap fallback", async (t) => {
+  const f = continuationFixture(t, { ranges: [ [ 0, 100 ] ], currentTime: 60 })
+
+  f.player.handlePrematureStreamEnd("stream_end")
+  await flushMicrotasks()
+
+  f.setRanges([ [ 0, 100 ], [ 102, 160 ] ])
+  f.setAppends(1)
+  f.player.finishMseContinuation()
+
+  assert.deepEqual(f.reconnects, [ "reconnect" ])
+  assert.equal(f.player.continuationGapJump, null)
+  assert.equal(f.player.continuationFailures, 1)
 })

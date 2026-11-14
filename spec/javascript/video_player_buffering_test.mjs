@@ -100,24 +100,27 @@ test("a dry MSE wait can resolve after reaching the full rebuffer high-water mar
   assert.equal(rebufferCount, 0)
 })
 
-test("premature MSE end retains a substantial cushion before recovery", () => {
+test("premature MSE end with a healthy cushion continues instead of waiting", () => {
   const player = new VideoPlayerController()
   let immediateRecoveries = 0
-  let scheduledRecoveries = 0
+  const continuations = []
   const buffered = timeRanges([[0, 129.9]])
   player.knownDuration = 1000
   player.startSecondsValue = 0
   player.videoTarget = { currentTime: 100, duration: 1000, buffered }
   player.sourceBuffer = { updating: false, buffered }
+  player.mediaSource = { readyState: "open" }
   player.playbackStarted = true
+  player.isHls = () => false
+  player.isDirectPlay = () => false
   player.bufferedAheadOfCurrent = () => 29.9
   player.handleStreamStall = () => { immediateRecoveries += 1 }
-  player.schedulePrematureEndRecovery = () => { scheduledRecoveries += 1 }
+  player.continueMseStream = (reason) => { continuations.push(reason) }
 
-  player.handlePrematureStreamEnd()
+  player.handlePrematureStreamEnd("stream_end")
 
   assert.equal(immediateRecoveries, 0)
-  assert.equal(scheduledRecoveries, 1)
+  assert.deepEqual(continuations, [ "stream_end" ])
 })
 
 test("premature MSE end reconnects immediately only when its cushion is nearly dry", () => {
@@ -674,4 +677,273 @@ test("a recovery restarts the session on the small resume cushion", async () => 
   assert.equal(player.seekResumePending, true)
   assert.equal(player.startSecondsValue, 500)
   assert.match(player.swappedSrc, /start_seconds=500/)
+})
+
+// ── Read-loop pacing (the burst that made the 45/42 band lie) ────────
+//
+// The 11-05 gate test stubbed bufferedAheadOfCurrent and never drove the
+// real loop, so a read burst that outran the appends could not fail it.
+// These fixtures run startStreamingFetch against a synthetic fragmented
+// MP4 body and a SourceBuffer whose updateend arrives on the next task:
+// the shape that produced the measured 17-20 MB cycles.
+
+function writeBox(buffer, offset, size, type) {
+  buffer[offset] = (size >>> 24) & 0xff
+  buffer[offset + 1] = (size >>> 16) & 0xff
+  buffer[offset + 2] = (size >>> 8) & 0xff
+  buffer[offset + 3] = size & 0xff
+  for (let index = 0; index < 4; index++) buffer[offset + 4 + index] = type.charCodeAt(index)
+}
+
+function fmp4Chunks({ fragmentBytes, fragments, chunkBytes }) {
+  const boxes = []
+  const init = new Uint8Array(48)
+  writeBox(init, 0, 16, "ftyp")
+  writeBox(init, 16, 32, "moov")
+  boxes.push(init)
+  for (let index = 0; index < fragments; index++) {
+    const fragment = new Uint8Array(fragmentBytes)
+    writeBox(fragment, 0, 64, "moof")
+    writeBox(fragment, 64, fragmentBytes - 64, "mdat")
+    boxes.push(fragment)
+  }
+
+  const chunks = []
+  let carry = new Uint8Array(0)
+  for (const box of boxes) {
+    const merged = new Uint8Array(carry.length + box.length)
+    merged.set(carry)
+    merged.set(box, carry.length)
+    let offset = 0
+    while (merged.length - offset >= chunkBytes) {
+      chunks.push(merged.slice(offset, offset + chunkBytes))
+      offset += chunkBytes
+    }
+    carry = merged.slice(offset)
+  }
+  if (carry.length) chunks.push(carry)
+  return chunks
+}
+
+function countFragments(payload) {
+  const view = new Uint8Array(payload)
+  let offset = 0
+  let fragments = 0
+  while (offset + 8 <= view.length) {
+    const size = (view[offset] << 24) | (view[offset + 1] << 16) | (view[offset + 2] << 8) | view[offset + 3]
+    const type = String.fromCharCode(view[offset + 4], view[offset + 5], view[offset + 6], view[offset + 7])
+    if (size < 8 || offset + size > view.length) break
+    if (type === "moof") fragments += 1
+    offset += size
+  }
+  return fragments
+}
+
+function readLoopFixture({
+  fragmentBytes = 65_536,
+  fragmentSeconds = 1,
+  chunkBytes = 32_768,
+  fragments = 60
+} = {}) {
+  const { harness, context, VideoPlayerController } = createVideoPlayerHarness()
+  const timers = new Map()
+  let now = 1_000_000
+  let timerId = 0
+  let playing = false
+  context.Date = class extends Date { static now() { return now } }
+  context.setTimeout = (callback, delay) => {
+    const id = ++timerId
+    timers.set(id, { callback, due: now + delay })
+    return id
+  }
+  context.clearTimeout = (id) => timers.delete(id)
+  context.console = { warn() {}, info() {} }
+
+  const queue = fmp4Chunks({ fragmentBytes, fragments, chunkBytes })
+  harness.fetchHandler = async () => ({
+    ok: true,
+    body: {
+      getReader: () => ({
+        read: async () => (queue.length ? { done: false, value: queue.shift() } : { done: true })
+      })
+    }
+  })
+
+  let appendedFragments = 0
+  const buffered = {
+    get length() { return appendedFragments > 0 ? 1 : 0 },
+    start: () => 0,
+    end: () => appendedFragments * fragmentSeconds
+  }
+
+  const player = new VideoPlayerController()
+  const video = {
+    src: "/transcode?source=test-owned-source",
+    currentTime: 0,
+    paused: false,
+    ended: false,
+    seeking: false,
+    readyState: 4,
+    autoplay: false,
+    buffered,
+    pause() { this.paused = true },
+    play() { this.paused = false; return Promise.resolve() },
+    addEventListener() {},
+    removeEventListener() {}
+  }
+  const sourceBuffer = {
+    updating: false,
+    timestampOffset: 0,
+    buffered,
+    appendBuffer(data) {
+      appendedFragments += countFragments(data)
+      this.updating = true
+      context.setTimeout(() => {
+        this.updating = false
+        player.onBufferUpdateEnd()
+      }, 0)
+    },
+    remove() {},
+    abort() { this.updating = false }
+  }
+
+  Object.assign(player, {
+    videoTarget: video,
+    hasVideoTarget: true,
+    sourceBuffer,
+    mediaSource: { readyState: "open" },
+    playbackId: "read-loop",
+    playbackStarted: true,
+    startSecondsValue: 0,
+    userPaused: false,
+    navigatingAway: false,
+    playbackDisconnected: false,
+    subtitlePlaybackHoldToken: null,
+    streamRecoveryAttempts: 0,
+    streamRecoveryActive: false,
+    element: { dataset: {} },
+    streamingUrlValue: "/transcode?source=test-owned-source",
+    hasStartupOverlayTarget: false,
+    seekingOverlayTarget: { classList: { add() {}, remove() {} } },
+    startStallWatchdog() {},
+    clearStallWatchdog() {},
+    stopProgressWatchdog() {},
+    clearPlayPrompt() {},
+    hideStartupOverlay() {},
+    hideSeekingOverlay() {},
+    showSeekingOverlay() {},
+    showBufferingOverlay() {},
+    maybeHideBufferingOverlay() {},
+    setupMseSource() {},
+    continueMseStream() { return true },
+    clearSubtitleCues() {},
+    reloadTextSubtitlesAt() {},
+    bufferAppending: false,
+    pendingAppendBuffer: null,
+    fmp4Buffer: null,
+    fmp4BufferSize: 0,
+    mseReadPaused: false,
+    isHls: () => false,
+    isDirectPlay: () => false,
+    bufferedAheadOfCurrent() {
+      return Math.max(0, appendedFragments * fragmentSeconds - video.currentTime)
+    }
+  })
+
+  let maxUnappended = 0
+  const queueChunk = player.queueBufferChunk.bind(player)
+  player.queueBufferChunk = (chunk) => {
+    queueChunk(chunk)
+    maxUnappended = Math.max(maxUnappended, (player.fmp4BufferSize || 0) + (player.pendingAppendBuffer?.byteLength || 0))
+  }
+
+  const advance = (ms) => {
+    const end = now + ms
+    while (true) {
+      let next = null
+      for (const [id, timer] of timers) {
+        if (timer.due > end) continue
+        if (next === null || timer.due < next[1].due || (timer.due === next[1].due && id < next[0])) next = [id, timer]
+      }
+      if (!next) break
+      const [id, timer] = next
+      if (playing) video.currentTime += (timer.due - now) / 1000
+      now = timer.due
+      timers.delete(id)
+      timer.callback()
+    }
+    if (playing) video.currentTime += (end - now) / 1000
+    now = end
+  }
+
+  return {
+    player,
+    video,
+    sourceBuffer,
+    advance,
+    play() { playing = true },
+    maxUnappended: () => maxUnappended,
+    appendedSeconds: () => appendedFragments * fragmentSeconds,
+    appendedCount: () => appendedFragments
+  }
+}
+
+async function pump(fixture, steps, msPerStep = 0) {
+  for (let step = 0; step < steps; step++) {
+    fixture.advance(msPerStep)
+    await flushMicrotasks()
+  }
+}
+
+async function stopStream(fixture, stream) {
+  fixture.player.fetchController?.abort()
+  fixture.advance(400)
+  await flushMicrotasks()
+  await stream
+  fixture.player.stopProgressWatchdog()
+  fixture.player.clearStallWatchdog()
+}
+
+async function pumpUntil(fixture, predicate, steps = 600) {
+  for (let step = 0; step < steps; step++) {
+    if (predicate()) return true
+    fixture.advance(0)
+    await flushMicrotasks()
+  }
+  return predicate()
+}
+
+test("the real read loop cannot outrun its own appends", async () => {
+  // One-second fragments keep the 45/42 band exact, so the measured park
+  // is the band and not the fragment granularity of the fixture.
+  const fixture = readLoopFixture({ fragments: 60, fragmentBytes: 65_536, fragmentSeconds: 1, chunkBytes: 32_768 })
+  const stream = fixture.player.startStreamingFetch("/transcode?source=test-owned-source")
+
+  assert.equal(await pumpUntil(fixture, () => fixture.appendedSeconds() >= 45), true)
+  assert.ok(
+    fixture.maxUnappended() <= 65_536 + 32_768,
+    `read ${fixture.maxUnappended()} bytes ahead of the appends`
+  )
+
+  fixture.play()
+  await pump(fixture, 20, 250)
+
+  assert.ok(fixture.player.readPauseCount >= 1)
+  assert.ok(fixture.player.maxParkMs >= 2400, `parked for only ${fixture.player.maxParkMs}ms`)
+  assert.ok(fixture.player.maxParkMs <= 3600, `parked for ${fixture.player.maxParkMs}ms, past the 45→42 band`)
+
+  await stopStream(fixture, stream)
+})
+
+test("a fragment larger than the pending-byte guard still completes and appends", async () => {
+  // 17 MB is above MSE_PENDING_BUFFER_HIGH_BYTES (16 MB). The absolute
+  // guard must not park the reader mid-fragment: those bytes are not
+  // appendable until the fragment ends, so parking there is a deadlock.
+  const fixture = readLoopFixture({ fragments: 1, fragmentBytes: 17 * 1024 * 1024, fragmentSeconds: 20, chunkBytes: 262_144 })
+  const stream = fixture.player.startStreamingFetch("/transcode?source=test-owned-source")
+
+  assert.equal(await pumpUntil(fixture, () => fixture.appendedCount() >= 1), true)
+  assert.equal(fixture.player.maxParkMs, 0)
+
+  await stopStream(fixture, stream)
 })

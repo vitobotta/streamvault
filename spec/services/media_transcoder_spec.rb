@@ -391,7 +391,7 @@ RSpec.describe Media::Transcoder do
         remux: true
       )
       expect(argument_pairs(standard)).to include(
-        [ "-readrate", "1.25" ],
+        [ "-readrate", "1.0" ],
         [ "-readrate_initial_burst", "30" ]
       )
       expect(argument_pairs(remux)).to include(
