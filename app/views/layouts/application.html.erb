@@ -127,6 +127,20 @@
               </div>
             <% end %>
 
+            <% if parental_rating_sources_missing? %>
+              <div class="flash-alert mb-6" role="status">
+                <p>
+                  This account is limited to age <%= current_user.max_rating_age %>, but no film rating source is
+                  configured, so titles without a certification stay hidden. Ask the administrator to configure
+                  <code>OMDB_API_KEY</code> or <code>TMDB_READ_ACCESS_TOKEN</code>.
+                </p>
+                <p class="mt-1 text-xs">
+                  Titles checked before the source was configured can stay hidden for up to 24 hours while the
+                  cached result expires.
+                </p>
+              </div>
+            <% end %>
+
             <%= yield %>
           </main>
         </div>

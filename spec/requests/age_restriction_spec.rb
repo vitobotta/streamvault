@@ -9,10 +9,26 @@ RSpec.describe "Age restrictions", type: :request do
   let(:user) { create(:user, realdebrid_api_key: "test_key") }
   let(:restricted_user) { create(:user, :age_restricted, realdebrid_api_key: "test_key") }
 
+  # RatingResolver skips OMDB entirely unless a key is configured, so without
+  # this every title resolves to UNKNOWN_AGE and the whole catalogue is hidden -
+  # masking what these specs are actually testing.
   around do |ex|
+    previous = {
+      "STREAM_PROVIDER" => ENV["STREAM_PROVIDER"],
+      "OMDB_API_KEY" => ENV["OMDB_API_KEY"],
+      "TMDB_READ_ACCESS_TOKEN" => ENV["TMDB_READ_ACCESS_TOKEN"]
+    }
     ENV["STREAM_PROVIDER"] = "torrentio"
-    ex.run
-    ENV.delete("STREAM_PROVIDER")
+    ENV["OMDB_API_KEY"] = "test_key"
+    # A TMDB token counts as a rating source too, so a developer's own .env
+    # would otherwise make the "no source configured" example pass or fail
+    # depending on their machine.
+    ENV.delete("TMDB_READ_ACCESS_TOKEN")
+    begin
+      ex.run
+    ensure
+      previous.each { |key, value| value.nil? ? ENV.delete(key) : ENV[key] = value }
+    end
   end
 
   before do
@@ -57,6 +73,69 @@ RSpec.describe "Age restrictions", type: :request do
       expect(response).to have_http_status(:ok)
       expect(response.body).to include("Family Adventure")
       expect(response.body).not_to include("Late Night Thriller")
+    end
+
+    it "explains the empty catalogue when no rating source is configured" do
+      sign_in restricted_user
+      stub_search(search_metas)
+      stub_ratings({})
+      original = { "OMDB_API_KEY" => ENV["OMDB_API_KEY"], "TMDB_READ_ACCESS_TOKEN" => ENV["TMDB_READ_ACCESS_TOKEN"] }
+      ENV.delete("OMDB_API_KEY")
+      ENV.delete("TMDB_READ_ACCESS_TOKEN")
+
+      get search_index_path(q: "test")
+
+      expect(response).to have_http_status(:ok)
+      expect(response.body).to include("no film rating source is")
+      expect(response.body).to include("titles without a certification stay hidden")
+      expect(response.body).to include("OMDB_API_KEY")
+    ensure
+      original.each { |key, value| value.nil? ? ENV.delete(key) : ENV[key] = value }
+    end
+
+    it "does not show the notice when a rating source is configured" do
+      sign_in restricted_user
+      stub_search(search_metas)
+      stub_ratings("tt1375666" => "PG-13", "tt0994312" => "R")
+
+      get search_index_path(q: "test")
+
+      expect(response).to have_http_status(:ok)
+      expect(response.body).not_to include("no film rating source is")
+    end
+
+    it "does not show the notice at an 18+ cap where unrated titles are allowed" do
+      unrestricted_child = create(:user, :age_restricted, max_rating_age: 18, realdebrid_api_key: "test_key")
+      sign_in unrestricted_child
+      stub_search(search_metas)
+      original = { "OMDB_API_KEY" => ENV["OMDB_API_KEY"], "TMDB_READ_ACCESS_TOKEN" => ENV["TMDB_READ_ACCESS_TOKEN"] }
+      ENV.delete("OMDB_API_KEY")
+      ENV.delete("TMDB_READ_ACCESS_TOKEN")
+
+      get search_index_path(q: "test")
+
+      expect(response).to have_http_status(:ok)
+      expect(response.body).not_to include("no film rating source is")
+      # Unrated content is allowed at 18, so the catalogue is not empty.
+      expect(response.body).to include("Family Adventure")
+    ensure
+      original.each { |key, value| value.nil? ? ENV.delete(key) : ENV[key] = value }
+    end
+
+    it "does not show the notice on a regular account" do
+      sign_in user
+      stub_search(search_metas)
+      stub_ratings("tt1375666" => "PG-13", "tt0994312" => "R")
+      original = { "OMDB_API_KEY" => ENV["OMDB_API_KEY"], "TMDB_READ_ACCESS_TOKEN" => ENV["TMDB_READ_ACCESS_TOKEN"] }
+      ENV.delete("OMDB_API_KEY")
+      ENV.delete("TMDB_READ_ACCESS_TOKEN")
+
+      get search_index_path(q: "test")
+
+      expect(response).to have_http_status(:ok)
+      expect(response.body).not_to include("no film rating source is")
+    ensure
+      original.each { |key, value| value.nil? ? ENV.delete(key) : ENV[key] = value }
     end
 
     it "hides titles whose rating cannot be verified" do

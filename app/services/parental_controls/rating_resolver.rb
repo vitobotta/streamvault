@@ -22,6 +22,32 @@ module ParentalControls
     # resolved ages (cached for up to a week) cannot outlive a fix.
     CACHE_VERSION = 2
 
+    # True when at least one certification source can actually be queried.
+    # Without one, unrated titles resolve to UNKNOWN_AGE and a child account
+    # below 18 sees an empty catalogue, which looks like a bug rather than a
+    # configuration gap.  This asks the same two services the instance uses,
+    # so a present-but-unusable TMDB token is reported as missing.
+    def self.sources_configured?
+      cache_key = [ ENV["OMDB_API_KEY"], ENV["TMDB_READ_ACCESS_TOKEN"] ]
+      @configuration_cache ||= {}
+      return @configuration_cache[cache_key] if @configuration_cache.key?(cache_key)
+
+      @configuration_cache[cache_key] = omdb_configured? || tmdb_configured?
+    end
+
+    def self.omdb_configured?
+      Catalog::OmdbClient.new.configured?
+    end
+
+    def self.tmdb_configured?
+      return false if ENV["TMDB_READ_ACCESS_TOKEN"].blank?
+
+      TmdbService.new
+      true
+    rescue StandardError
+      false
+    end
+
     def initialize(omdb: Catalog::OmdbClient.new, tmdb: :auto, cache: Rails.cache, logger: Rails.logger)
       @omdb = omdb
       @tmdb = tmdb == :auto ? build_tmdb_service : tmdb
@@ -67,6 +93,9 @@ module ParentalControls
       nil
     end
 
+    # The env check is deliberate: sources_configured? already instantiates the
+    # service to report whether it is usable, and resolving a title should not
+    # build it twice.
     def build_tmdb_service
       return nil if ENV["TMDB_READ_ACCESS_TOKEN"].blank?
 
