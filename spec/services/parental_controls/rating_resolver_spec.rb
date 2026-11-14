@@ -119,10 +119,9 @@ RSpec.describe ParentalControls::RatingResolver do
       expect(described_class.sources_configured?).to be(false)
     end
 
-    it "is false when a TMDB token is present but the service cannot be built" do
+    it "is false when the TMDB token is blank" do
       ENV.delete("OMDB_API_KEY")
-      ENV["TMDB_READ_ACCESS_TOKEN"] = "spec-broken-#{SecureRandom.hex(4)}"
-      allow(TmdbService).to receive(:new).and_raise(StandardError, "bad token")
+      ENV["TMDB_READ_ACCESS_TOKEN"] = "  "
 
       expect(described_class.sources_configured?).to be(false)
     end

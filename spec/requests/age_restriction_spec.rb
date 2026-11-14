@@ -88,6 +88,9 @@ RSpec.describe "Age restrictions", type: :request do
       expect(response).to have_http_status(:ok)
       expect(response.body).to include("no film rating source is")
       expect(response.body).to include("titles without a certification stay hidden")
+      # The flash container is a flex row, so the two paragraphs must share one child
+      # or they render side by side.
+      expect(response.body).to match(/flash-alert mb-6" role="status">\s*<div>/)
       expect(response.body).to include("OMDB_API_KEY")
     ensure
       original.each { |key, value| value.nil? ? ENV.delete(key) : ENV[key] = value }

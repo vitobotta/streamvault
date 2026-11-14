@@ -129,6 +129,7 @@
 
             <% if parental_rating_sources_missing? %>
               <div class="flash-alert mb-6" role="status">
+                <div>
                 <p>
                   This account is limited to age <%= current_user.max_rating_age %>, but no film rating source is
                   configured, so titles without a certification stay hidden. Ask the administrator to configure
@@ -138,6 +139,7 @@
                   Titles checked before the source was configured can stay hidden for up to 24 hours while the
                   cached result expires.
                 </p>
+                </div>
               </div>
             <% end %>
 
