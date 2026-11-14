@@ -39,9 +39,17 @@ class SettingsController < ApplicationController
   end
 
   def update_with_password
+    realdebrid_key = params.dig(:user, :realdebrid_api_key)
+    torbox_key = params.dig(:user, :torbox_api_key)
+
     if @user.update_with_password(settings_params_with_password)
       bypass_sign_in @user
-      redirect_to settings_path, notice: "Password updated successfully."
+      failures = key_verification_failures(realdebrid_key, torbox_key)
+      if failures.any?
+        redirect_to settings_path, alert: "Password updated, but #{failures.to_sentence} could not be verified."
+      else
+        redirect_to settings_path, notice: "Password updated successfully."
+      end
     else
       # Strip password values so they don't render in the form on error
       @user.password = nil
