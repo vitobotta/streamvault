@@ -22,19 +22,26 @@ Rails.application.configure do
   # config.asset_host = "http://assets.example.com"
 
 
+  # Accepts true/false, 1/0, yes/no in any case.  An unset or blank value
+  # keeps SSL on, so a typo fails closed instead of downgrading cookies.
+  ssl_flag = lambda do |name|
+    value = ENV[name].to_s.strip
+    value.empty? ? true : ActiveModel::Type::Boolean.new.cast(value)
+  end
+
   # Assume all access to the app is happening through a SSL-terminating
   # reverse proxy (Caddy / kamal-proxy), so request.ssl? reflects the
   # upstream scheme even though Rails sees plain HTTP on the socket.
   # Set ASSUME_SSL=false when Rails is reached directly rather than through a
   # proxy that speaks X-Forwarded-Proto.
-  config.assume_ssl = ENV.fetch("ASSUME_SSL", "true") != "false"
+  config.assume_ssl = ssl_flag.call("ASSUME_SSL")
 
   # Force all access over SSL, set HSTS, and mark cookies secure. The
   # app carries session cookies and RealDebrid API keys in requests, so
   # transport encryption is required end-to-end.
   # Set FORCE_SSL=false to run on a trusted network without a TLS terminator
   # (a LAN address, a home server, or the container's published HTTP port).
-  config.force_ssl = ENV.fetch("FORCE_SSL", "true") != "false"
+  config.force_ssl = ssl_flag.call("FORCE_SSL")
 
   # Skip http-to-https redirect for the default health check endpoint.
   config.ssl_options = { redirect: { exclude: ->(request) { request.path == "/up" } } }

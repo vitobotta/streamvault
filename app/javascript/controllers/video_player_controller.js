@@ -3075,7 +3075,10 @@ export default class extends Controller {
 
   showOverlayUi() {
     this.backButtonTarget.style.opacity = "1"
-    this.backButtonTarget.style.pointerEvents = "auto"
+    // The bar spans the full width above the player, so it must not swallow
+    // clicks meant for the Stream info control; only its link is interactive.
+    this.backButtonTarget.style.pointerEvents = "none"
+    this.backButtonTarget.style.visibility = "visible"
     this.sourceInfoTarget.style.opacity = "1"
     this.sourceInfoTarget.style.pointerEvents = "auto"
     this.controlsTarget.style.opacity = "1"
@@ -3087,6 +3090,9 @@ export default class extends Controller {
     if (!this.videoTarget.paused && !this.trackMenuOpen()) {
       this.backButtonTarget.style.opacity = "0"
       this.backButtonTarget.style.pointerEvents = "none"
+      // Its link keeps pointer events so the bar can pass clicks through, so
+      // the faded bar must also leave the click path entirely.
+      this.backButtonTarget.style.visibility = "hidden"
       this.sourceInfoTarget.style.opacity = "0"
       this.sourceInfoTarget.style.pointerEvents = "none"
       this.controlsTarget.style.opacity = "0"
@@ -3115,6 +3121,7 @@ export default class extends Controller {
     this.clearUiHideTimer()
     if (!this.sourceDetailsTarget.classList.contains("hidden")) {
       this.backButtonTarget.style.opacity = "1"
+      this.backButtonTarget.style.visibility = "visible"
       this.sourceInfoTarget.style.opacity = "1"
       this.controlsTarget.style.opacity = "1"
     } else {

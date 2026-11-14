@@ -105,15 +105,11 @@ module Playback
       }
     end
 
-    # Splits a canonical "Show · S01E02 · Name" label back into its parts, so
-    # cards can render a compact "S01E02 · Name" subtitle without another
-    # catalogue lookup.
+    # The canonical formatter owns the parse as well, so a card can never
+    # disagree with the player about which segment is the position.
     def label_parts(label)
-      parts = label.to_s.split(Playback::EpisodeLabel::SEPARATOR)
-      {
-        show_title: parts.first.presence,
-        episode_title: parts.length >= 3 ? parts.last.presence : nil
-      }
+      parts = Playback::EpisodeLabel.split(label)
+      { show_title: parts[:show_title], episode_title: parts[:episode_title] }
     end
 
     def percentage(progress, duration)

@@ -15,6 +15,9 @@ module Playback
     # "Episode 7", "Ep 7", "EPISODE 07", "Episode TBA", or a bare "7".
     PLACEHOLDER = /\A(?:episode|ep)\.?\s*\d*\s*(?:\(?tba\)?)?\z/i
 
+    # The "S01E07" token that marks the position inside a label.
+    POSITION = /\AS\d+E\d+\z/
+
     module_function
 
     def build(show_title: nil, season: nil, episode: nil, episode_title: nil)
@@ -25,22 +28,24 @@ module Playback
       [ clean(show_title), position, name ].compact.join(SEPARATOR).presence
     end
 
-    # Splits a canonical label back into its parts.  Episode names may contain
+    # Splits a canonical label back into its parts.  The position is found by
+    # shape rather than by segment order, so "S01E02 · Pilot" (no show title)
+    # is not mistaken for a show named "S01E02".  Episode names may contain
     # the separator themselves, so everything after the position is rejoined.
     def split(label)
-      parts = label.to_s.split(SEPARATOR)
-      case parts.length
-      when 0, 1
-        { show_title: parts.first.presence, position: nil, episode_title: nil }
-      when 2
-        { show_title: parts[0].presence, position: parts[1].presence, episode_title: nil }
-      else
-        {
-          show_title: parts[0].presence,
-          position: parts[1].presence,
-          episode_title: parts[2..].join(SEPARATOR).presence
-        }
+      parts = label.to_s.split(SEPARATOR).map { |part| part.to_s.strip }
+      return { show_title: nil, position: nil, episode_title: nil } if parts.empty?
+
+      index = parts.index { |part| part.match?(POSITION) }
+      if index.nil?
+        return { show_title: parts.join(SEPARATOR).presence, position: nil, episode_title: nil }
       end
+
+      {
+        show_title: index.zero? ? nil : parts[0...index].join(SEPARATOR).presence,
+        position: parts[index],
+        episode_title: parts[(index + 1)..].join(SEPARATOR).presence
+      }
     end
 
     # The two lines the player chrome renders, so the episode name is the
@@ -54,7 +59,7 @@ module Playback
           position: parts[:position]
         }
       elsif parts[:position].present?
-        { title: parts[:show_title] || parts[:position], subtitle: parts[:position], position: parts[:position] }
+        { title: parts[:show_title] || label.to_s.presence, subtitle: parts[:position], position: parts[:position] }
       else
         { title: parts[:show_title] || label.to_s.presence, subtitle: nil, position: nil }
       end

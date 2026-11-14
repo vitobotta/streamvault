@@ -85,33 +85,44 @@ class PlaybackStartService
 
   private
 
-  # Child accounts may never start playback of titles above their rating
-  # limit, whatever entry point (start/resume) requested it.  Returns a
-  # failure result when restricted, nil when playback may proceed.
   # The player label is server-owned.  Any entry point that forgets to send a
   # title, or that still carries the previous episode's title (auto-advance),
-  # gets the catalogue label for the episode actually being played.  Catalogue
-  # responses are cached for an hour, so this is normally a cache hit.
+  # gets the catalogue label for the episode actually being played.
   def canonical_title(content_ref, requested_title)
     requested = requested_title.to_s.presence
     return requested unless content_ref.show?
 
     # A label that already carries this episode's position is the one a
-    # previous lookup produced — trust it so resume and auto-advance stay off
-    # the metadata path entirely.  Only blank or bare show titles are resolved.
+    # previous lookup produced — trust it so auto-advance stays off the
+    # metadata path entirely.  Only blank or bare show titles are resolved,
+    # which is how episode rows written before this change reach the player.
     position = Playback::EpisodeLabel.position(content_ref.season, content_ref.episode)
     return requested if position && requested&.include?(position)
 
-    context = Playback::EpisodeContext.new(catalog: @catalog).call(
-      imdb_id: content_ref.imdb_id,
-      season: content_ref.season,
-      episode: content_ref.episode
-    )
+    context = episode_context(content_ref)
     return requested unless context.success?
 
     context.data[:label].presence || requested
   end
 
+  # One catalogue lookup per episode, shared by the label and the fallback
+  # duration.  A start used to resolve metadata twice, so a cold cache or a
+  # metadata outage could block for two full timeouts instead of one.
+  def episode_context(content_ref)
+    @episode_contexts ||= {}
+    key = [ content_ref.imdb_id, content_ref.season, content_ref.episode ]
+    return @episode_contexts[key] if @episode_contexts.key?(key)
+
+    @episode_contexts[key] = Playback::EpisodeContext.new(catalog: @catalog).call(
+      imdb_id: content_ref.imdb_id,
+      season: content_ref.season,
+      episode: content_ref.episode
+    )
+  end
+
+  # Child accounts may never start playback of titles above their rating
+  # limit, whatever entry point (start/resume) requested it.  Returns a
+  # failure result when restricted, nil when playback may proceed.
   def reject_restricted_content(content_ref)
     return nil if @parental.allowed?(content_ref.imdb_id)
 
@@ -164,6 +175,13 @@ class PlaybackStartService
 
     requested = normalized_duration_seconds(requested_duration)
     return requested if requested.positive?
+
+    if type == "show" && season.present? && episode.present?
+      content_ref = ContentRef.new(imdb_id: imdb_id, type: type, season: season, episode: episode)
+      context = episode_context(content_ref)
+      from_context = normalized_duration_seconds(context.success? ? context.data[:duration_seconds] : nil)
+      return from_context if from_context.positive?
+    end
 
     metadata_duration_seconds(imdb_id, type, season, episode)
   end

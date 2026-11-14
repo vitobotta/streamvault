@@ -45,4 +45,45 @@ RSpec.describe Playback::EpisodeLabel do
       expect(described_class.position("12", "34")).to eq("S12E34")
     end
   end
+
+  describe ".split" do
+    it "finds the position by shape, not by segment order" do
+      expect(described_class.split("S01E02 · Pilot")).to eq(
+        show_title: nil, position: "S01E02", episode_title: "Pilot"
+      )
+    end
+
+    it "rejoins an episode name that contains the separator" do
+      expect(described_class.split("Show · S01E02 · Part 1 · Part 2")).to eq(
+        show_title: "Show", position: "S01E02", episode_title: "Part 1 · Part 2"
+      )
+    end
+
+    it "treats a label without a position as the show title" do
+      expect(described_class.split("Some Movie")).to eq(
+        show_title: "Some Movie", position: nil, episode_title: nil
+      )
+      expect(described_class.split(nil)).to eq(show_title: nil, position: nil, episode_title: nil)
+    end
+  end
+
+  describe ".present" do
+    it "makes the episode name the headline and the position the context" do
+      expect(described_class.present("Breaking Bad · S01E02 · Cat's in the Bag...")).to eq(
+        title: "Cat's in the Bag...", subtitle: "Breaking Bad · S01E02", position: "S01E02"
+      )
+    end
+
+    it "keeps the episode name when the show title is unknown" do
+      expect(described_class.present("S01E02 · Pilot")).to eq(
+        title: "Pilot", subtitle: "S01E02", position: "S01E02"
+      )
+    end
+
+    it "falls back to the show title when the episode has no name" do
+      expect(described_class.present("Breaking Bad · S02E11")).to eq(
+        title: "Breaking Bad", subtitle: "S02E11", position: "S02E11"
+      )
+    end
+  end
 end
