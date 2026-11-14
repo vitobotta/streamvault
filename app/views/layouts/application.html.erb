@@ -66,6 +66,9 @@
             <%= link_to wishlist_index_path, class: "nav-link #{'active' if controller_name == 'wishlist'}", "aria-current": (controller_name == "wishlist" ? "page" : nil) do %>
               <%= icon :wishlist %><span>Wishlist</span>
             <% end %>
+            <%= link_to playlists_path, class: "nav-link #{'active' if controller_name == 'playlists'}", "aria-current": (controller_name == "playlists" ? "page" : nil) do %>
+              <%= icon :playlist %><span>Playlists</span>
+            <% end %>
             <%= link_to watch_history_index_path, class: "nav-link #{'active' if controller_name == 'watch_history'}", "aria-current": (controller_name == "watch_history" ? "page" : nil) do %>
               <%= icon :history %><span>History</span>
             <% end %>
@@ -145,6 +148,9 @@
         <% end %>
         <%= link_to wishlist_index_path, class: "mobile-nav__link #{'active' if controller_name == 'wishlist'}" do %>
           <%= icon :wishlist %><span>Wishlist</span>
+        <% end %>
+        <%= link_to playlists_path, class: "mobile-nav__link #{'active' if controller_name == 'playlists'}" do %>
+          <%= icon :playlist %><span>Playlists</span>
         <% end %>
         <%= link_to watch_history_index_path, class: "mobile-nav__link #{'active' if controller_name == 'watch_history'}" do %>
           <%= icon :history %><span>History</span>

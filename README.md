@@ -86,6 +86,7 @@ Different tools for different jobs. If you want a permanent offline library, a d
 - **Popular and trending** rows for films and TV, refreshed from live metadata.
 - **Recommendations** based on what you have watched, using TMDB's collaborative filtering.
 - **Rich title pages** with backdrop, overview, cast, ratings, seasons, and every available source.
+- **Playlists** queue films and shows in your own order: add a title from its detail page, then reorder or remove it later.
 
 ### Play it properly
 
@@ -254,6 +255,8 @@ More at [vitobotta.com](https://vitobotta.com).
 ## Contributing
 
 Contributions are welcome. Development setup, the test suites, architecture notes, CI, and the release process are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+The Jellyfin parity backlog, one feature per pull request, is tracked in [docs/jellyfin-parity.md](docs/jellyfin-parity.md).
 
 For a bug report, include your deployment type, the relevant log lines, and what you were playing. For a playback problem, the server log and the browser console together are worth more than either alone.
 

@@ -11,6 +11,7 @@ class User < ApplicationRecord
   has_many :collection_entries, dependent: :destroy
   has_many :playback_progresses, dependent: :destroy
   has_many :hls_sessions, dependent: :destroy
+  has_many :playlists, dependent: :destroy
 
   # Language preferences
   serialize :preferred_languages, coder: JSON
