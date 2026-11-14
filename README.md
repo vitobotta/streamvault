@@ -243,6 +243,10 @@ docker compose up -d --build
 | `COMET_PROXY` | Forward proxy URL for Comet requests (if needed) | Optional |
 | `HTTP_WRITE_TIMEOUT` | Thruster response write deadline in seconds; keep `0` for movie-length streams | `0` |
 | `HTTP_IDLE_TIMEOUT` | Thruster keep-alive idle timeout in seconds; keep `0` to avoid interrupting reconnects | `0` |
+| `FORCE_SSL` | Redirect to HTTPS and mark cookies Secure; `false` for plain HTTP on a trusted network | `true` |
+| `ASSUME_SSL` | Trust `X-Forwarded-Proto` from a TLS-terminating proxy; `false` when Rails is reached directly | `true` |
+| `SOLID_QUEUE_IN_PUMA` | Run background jobs inside the web process instead of the `worker` service | unset |
+| `JOB_PROCESSES` | Worker processes started by the `worker` service; each runs three threads | `1` |
 
 ## Troubleshooting
 
@@ -250,7 +254,7 @@ Start with the container status, application logs, and health endpoint:
 
 ```bash
 docker compose ps
-docker compose logs --tail=200 -f web
+docker compose logs --tail=200 -f web worker
 curl -I http://localhost:${PORT:-3000}/up
 ```
 
@@ -261,6 +265,7 @@ curl -I http://localhost:${PORT:-3000}/up
 | Direct play works but a resumed stream is CPU-heavy | Expected: non-zero seeks may re-encode video to keep audio and video timestamps aligned. |
 | Subtitles appear slowly on a remote file | The first extraction may need to seek through a large container. StreamVault retries transient extraction timeouts automatically. |
 | The site is reachable but sign-in does not persist behind a proxy | Confirm the public URL uses HTTPS and that the proxy forwards the original scheme and host. Production cookies are Secure. |
+| Recommendations never refresh or jobs stay queued | Check the `worker` service is running (`docker compose ps`, `docker compose logs -f worker`); the web container does not execute jobs unless `SOLID_QUEUE_IN_PUMA` is set. |
 
 ## Proxies: when and why you might need them
 

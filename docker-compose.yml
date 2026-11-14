@@ -47,8 +47,8 @@ services:
     environment:
       RAILS_ENV: production
       DATABASE_URL: postgres://${POSTGRES_USER:-streamvault}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-streamvault}
-      # Threads per worker process; see config/queue.yml.
-      JOB_CONCURRENCY: "${JOB_CONCURRENCY:-1}"
+      # Worker processes; each one runs three threads (config/queue.yml).
+      JOB_PROCESSES: "${JOB_PROCESSES:-1}"
     command: [ "bundle", "exec", "bin/jobs" ]
     depends_on:
       db:

@@ -13,9 +13,7 @@ production:
   clear_solid_queue_finished_jobs:
     command: "SolidQueue::Job.clear_finished_in_batches(sleep_between_batches: 0.3)"
     schedule: every hour at minute 12
-  # Stop inactive/over-age HLS sessions and remove stale untracked
-  # segment directories. Active playlist and segment requests refresh
-  # session activity, while an absolute lifetime still bounds storage.
-  cleanup_hls_sessions:
-    command: "HlsSessionManager.cleanup_expired"
-    schedule: every 5 minutes
+  # HLS cleanup deliberately does not live here: it stops processes by PID
+  # and deletes tmp/hls directories that only exist in the web container, so
+  # it runs from the web process instead. See
+  # config/initializers/hls_session_cleanup.rb.
