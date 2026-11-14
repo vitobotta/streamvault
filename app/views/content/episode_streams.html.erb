@@ -7,7 +7,7 @@
       type: "show",
       season: @season,
       episode: @episode,
-      title: "#{@show_title} S#{@season.to_s.rjust(2, '0')}E#{@episode.to_s.rjust(2, '0')}",
+      title: @episode_label,
       poster_url: @poster_url,
       duration: @episode_duration_seconds
     }
