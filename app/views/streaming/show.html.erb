@@ -172,12 +172,28 @@
         </div>
       </div>
 
+      <%# Picture in picture (the controller unhides it when the browser supports it) %>
+      <button type="button"
+              data-action="click->video-player#togglePictureInPicture"
+              data-video-player-target="pipButton"
+              class="hidden hover:text-iris-400 transition-colors"
+              aria-label="Picture in picture"
+              aria-pressed="false"
+              title="Picture in picture">
+        <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 11h-8v6h8v-6zm4 10V3H1v18h22zm-2-1.98H3V4.97h18v14.05z"/></svg>
+      </button>
+
       <%# Fullscreen %>
       <button data-action="click->video-player#toggleFullscreen" class="hover:text-iris-400 transition-colors">
         <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
       </button>
     </div>
   </div>
+
+  <%# Transient notice for a picture-in-picture failure the user cannot see any other way %>
+  <div data-video-player-target="pipNotice" role="status" aria-live="polite"
+       class="hidden absolute left-1/2 z-30 -translate-x-1/2 rounded-lg bg-black/80 px-4 py-2 text-center text-sm text-white"
+       style="bottom: calc(env(safe-area-inset-bottom, 0px) + 6rem); max-width: 20rem;"></div>
 
   <%# Loading overlay (shown while ffmpeg restarts after a seek, subtitles catch up, or the stream buffers). bg-black/80 so the spinner is visible — with MSE, when the buffer runs dry Chrome shows black, not a frozen frame, so a transparent overlay would be invisible. %>
   <div data-video-player-target="seekingOverlay" class="hidden absolute inset-0 flex items-center justify-center bg-black/80 z-20">
