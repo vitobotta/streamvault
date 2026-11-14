@@ -20,7 +20,6 @@
 
   # Highest-confidence source: RealDebrid-cached first, then compatibility.
   best_stream = @streams.present? ? @streams.max_by { |s| [s[:rd_plus] ? 1 : 0, s[:compatibility_score].to_i] } : nil
-  resume_episode = @type == "show" ? @episode_progress&.keys&.first : nil
 %>
 
 <% if @metadata %>
@@ -111,12 +110,12 @@
                   All sources
                 <% end %>
               <% end %>
-            <% elsif @type == "show" && resume_episode %>
-              <%= link_to content_path(type: @type, imdb_id: @imdb_id, season: resume_episode[0], anchor: "episode-#{resume_episode[0]}-#{resume_episode[1]}"),
+            <% elsif @type == "show" && @resume_target %>
+              <%= link_to resume_streaming_index_path(type: @type, imdb_id: @imdb_id),
                           class: "btn-primary btn-lg",
-                          data: { page_loader: "link" } do %>
+                          data: { page_loader: "link", page_loader_message: "Resuming..." } do %>
                 <%= icon :play, css: "w-4 h-4" %>
-                Continue S<%= format("%02d", resume_episode[0].to_i) %>E<%= format("%02d", resume_episode[1].to_i) %>
+                Continue S<%= format("%02d", @resume_target[:season].to_i) %>E<%= format("%02d", @resume_target[:episode].to_i) %>
               <% end %>
             <% end %>
           </div>
