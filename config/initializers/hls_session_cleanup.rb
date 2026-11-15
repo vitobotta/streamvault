@@ -1,28 +1,51 @@
 # frozen_string_literal: true
 
-# HLS sessions are created, transcoded and served by the web container: their
-# rows carry PIDs and tmp/hls paths that exist nowhere else.  Running the
-# cleanup from the worker would delete the rows while leaving every segment
-# on the web disk, and could signal an unrelated process that reused the PID.
-#
-# With SOLID_QUEUE_IN_PUMA the scheduler already lives in Puma, so the thread
-# below only starts when a separate worker owns job execution.
-if Rails.env.production? &&
-   ActiveModel::Type::Boolean.new.cast(ENV["SOLID_QUEUE_IN_PUMA"].presence || "false") != true &&
-   ENV["HLS_CLEANUP_IN_WEB"] != "false"
-  Rails.application.config.after_initialize do
-    next unless defined?(Rails::Server)
+# HLS sessions are created, transcoded and served by the web process: their
+# rows carry PIDs and tmp/hls paths that exist nowhere else.  Solid Queue's
+# scheduler lives in the worker when a separate worker container is deployed,
+# and the single-container Procfile deployment has no worker at all, so the
+# cleanup runs in the web process in both layouts.
+module HlsCleanup
+  INTERVAL = 5.minutes
+  LOCK_PATH = "tmp/hls-cleanup.lock"
 
-    Rails.logger.info("[HlsSessionCleanup] starting web-side HLS cleanup loop")
-    Thread.new do
-      loop do
-        begin
-          Rails.application.executor.wrap { HlsSessionManager.cleanup_expired }
-        rescue StandardError => e
-          Rails.logger.warn("[HlsSessionCleanup] #{e.class}: #{e.message}")
+  class << self
+    def start
+      return unless Rails.env.production?
+      return if ENV["HLS_CLEANUP_IN_WEB"].to_s.strip.downcase == "false"
+      # Puma is loaded only by the web server, so bin/jobs, the console and the
+      # release task never start a second loop.
+      return unless defined?(Puma)
+
+      lock = File.open(Rails.root.join(LOCK_PATH), File::RDWR | File::CREAT, 0o644)
+      @lock = lock
+      Rails.logger.info("[HlsSessionCleanup] starting web-side HLS cleanup loop")
+
+      Thread.new do
+        loop do
+          run_once(lock)
+          sleep INTERVAL
         end
-        sleep 300
       end
+    end
+
+    private
+
+    # The lock is taken per run and released afterwards, so a replacement
+    # process takes over on the next cycle and clustered Puma workers never
+    # run the cleanup at the same time.
+    def run_once(lock)
+      return unless lock.flock(File::LOCK_EX | File::LOCK_NB)
+
+      begin
+        Rails.application.executor.wrap { HlsSessionManager.cleanup_expired }
+      ensure
+        lock.flock(File::LOCK_UN)
+      end
+    rescue StandardError => e
+      Rails.logger.warn("[HlsSessionCleanup] #{e.class}: #{e.message}")
     end
   end
 end
+
+Rails.application.config.after_initialize { HlsCleanup.start }

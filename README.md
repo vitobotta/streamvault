@@ -213,6 +213,7 @@ The database lives in `./data` and survives rebuilds. Containers restart on cras
 | `ASSUME_SSL` | Trust `X-Forwarded-Proto` from a TLS-terminating proxy; `false` when Rails is reached directly | `true` |
 | `SOLID_QUEUE_IN_PUMA` | Run jobs inside the web process instead of the `worker` service | unset |
 | `JOB_PROCESSES` | Worker processes started by the `worker` service; each runs three threads | `1` |
+| `HLS_CLEANUP_IN_WEB` | Web process cleans up expired HLS sessions; `false` disables it | `true` |
 
 The full list, provider modes, Cloudflare proxy setups, and reverse proxy notes are in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
