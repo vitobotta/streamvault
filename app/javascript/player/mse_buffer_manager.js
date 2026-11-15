@@ -8,6 +8,8 @@ const STREAM_STALL_TIMEOUT_MS = 60000
 export class MseBufferManager {
   constructor(player) {
     this.player = player
+    this.appendCount = 0
+    this.updateEndWaiters = new Set()
   }
 
   queueChunk(chunk) {
@@ -24,11 +26,13 @@ export class MseBufferManager {
     this.player.flushBufferQueue()
   }
 
-  extractCompleteBoxes() {
-    if (!this.player.fmp4Buffer || this.player.fmp4BufferSize < 8) return null
+  // The one scan both the extractor and the reader's append gate use, so
+  // "complete box" means the same thing in both places: the contiguous
+  // prefix of the queue that can be handed to appendBuffer right now.
+  #completeBoxes() {
+    if (!this.player.fmp4Buffer || (this.player.fmp4BufferSize || 0) < 8) return []
     const boxes = []
     let offset = 0
-    let lastComplete = 0
 
     while (offset + 8 <= this.player.fmp4BufferSize) {
       const size = (this.player.fmp4Buffer[offset] << 24) |
@@ -60,7 +64,6 @@ export class MseBufferManager {
           if (mdatType === "mdat" && nextOffset + mdatSize <= this.player.fmp4BufferSize) {
             boxes.push({ offset, size: size + mdatSize })
             offset = nextOffset + mdatSize
-            lastComplete = offset
             continue
           }
         }
@@ -69,9 +72,45 @@ export class MseBufferManager {
 
       boxes.push({ offset, size })
       offset += size
-      lastComplete = offset
     }
 
+    return boxes
+  }
+
+  // True when the queued bytes already hold at least one complete box.
+  // The reader must not pull the next chunk while such a box waits behind
+  // an append in flight; with nothing complete pending it must keep
+  // reading, because a fragment only becomes appendable once it is whole.
+  hasCompleteBoxPending() {
+    return this.#completeBoxes().length > 0
+  }
+
+  // Resolves on the next updateend, or after `timeoutMs`.  The reader uses
+  // this to pace itself by appends instead of a timer poll, so a fragment
+  // that finished arriving is appended before more bytes are pulled in.
+  awaitUpdateEnd(timeoutMs = 1000) {
+    if (!this.player.bufferAppending && !this.player.sourceBuffer?.updating) return Promise.resolve()
+
+    return new Promise((resolve) => {
+      let timer = null
+      const waiter = {
+        resolve: () => {
+          if (timer) clearTimeout(timer)
+          this.updateEndWaiters.delete(waiter)
+          resolve()
+        }
+      }
+      timer = setTimeout(waiter.resolve, timeoutMs)
+      this.updateEndWaiters.add(waiter)
+    })
+  }
+
+  resolveUpdateEndWaiters() {
+    for (const waiter of [...this.updateEndWaiters]) waiter.resolve()
+  }
+
+  extractCompleteBoxes() {
+    const boxes = this.#completeBoxes()
     if (boxes.length === 0) return null
 
     const totalSize = boxes.reduce((sum, box) => sum + box.size, 0)
@@ -82,6 +121,8 @@ export class MseBufferManager {
       writeOffset += box.size
     }
 
+    const lastBox = boxes[boxes.length - 1]
+    const lastComplete = lastBox.offset + lastBox.size
     if (lastComplete < this.player.fmp4BufferSize) {
       this.player.fmp4Buffer.copyWithin(0, lastComplete, this.player.fmp4BufferSize)
       this.player.fmp4BufferSize -= lastComplete
@@ -103,6 +144,7 @@ export class MseBufferManager {
     this.player.bufferAppending = true
     try {
       this.player.sourceBuffer.appendBuffer(data)
+      this.appendCount += 1
       this.player.pendingAppendBuffer = null
       this.player.quotaBlockedAtTime = null
     } catch (error) {
@@ -181,6 +223,9 @@ export class MseBufferManager {
     this.player.maybeHideBufferingOverlay()
     this.player.flushBufferQueue()
     this.player.finishOrRecoverMseEnd()
+    // Resolve readers last: by now a queued fragment has been appended, so
+    // the read loop re-checks the true pending state instead of a stale one.
+    this.resolveUpdateEndWaiters()
   }
 
   evictOldBuffer() {
