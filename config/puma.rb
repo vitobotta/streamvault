@@ -52,4 +52,5 @@ pidfile ENV["PIDFILE"] if ENV["PIDFILE"]
 # HLS sessions belong to this process: their rows carry PIDs and tmp/hls
 # paths that exist only here, so the cleanup loop starts with the web
 # server and never in a worker, console or rake task.
-on_booted { HlsCleanup.start }
+# Puma 8 renamed on_booted to after_booted.
+after_booted { HlsCleanup.start }
