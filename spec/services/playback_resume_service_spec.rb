@@ -61,20 +61,28 @@ RSpec.describe PlaybackResumeService do
         episode_number: 1,
         progress_seconds: 3_411,
         duration_seconds: 3_480)
-      next_ref = ContentRef.new(imdb_id: "tt0903747", type: "show", season: 1, episode: 2)
-      allow_any_instance_of(Playback::EpisodeSequence).to receive(:next_after)
-        .and_return(ServiceResult.success(next_ref))
+      next_episode = Playback::EpisodeSequence::Next.new(
+        content_ref: ContentRef.new(imdb_id: "tt0903747", type: "show", season: 1, episode: 2),
+        show_title: "Breaking Bad",
+        title: "Cat's in the Bag...",
+        label: "Breaking Bad · S01E02 · Cat's in the Bag...",
+        duration_seconds: 2_400
+      )
+      allow_any_instance_of(Playback::EpisodeSequence).to receive(:next_episode_after)
+        .and_return(ServiceResult.success(next_episode))
 
       result = service.call(imdb_id: "tt0903747", type: "show")
 
+      # The successor's own catalogue label, never the finished episode's.
       expect(result.data).to include(
         season: 1,
         episode: 2,
         resume_at: 0,
-        title: progress.title,
-        duration_seconds: 0,
+        title: "Breaking Bad · S01E02 · Cat's in the Bag...",
+        duration_seconds: 2_400,
         series_complete: false
       )
+      expect(result.data[:title]).not_to eq(progress.title)
     end
 
     it "marks a completed finale without inventing another episode" do
@@ -84,7 +92,7 @@ RSpec.describe PlaybackResumeService do
         episode_number: 16,
         progress_seconds: 3_000,
         duration_seconds: 3_000)
-      allow_any_instance_of(Playback::EpisodeSequence).to receive(:next_after)
+      allow_any_instance_of(Playback::EpisodeSequence).to receive(:next_episode_after)
         .and_return(ServiceResult.failure("No more episodes", :series_complete))
 
       result = service.call(imdb_id: "tt0903747", type: "show")

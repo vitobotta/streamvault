@@ -90,6 +90,43 @@ RSpec.describe ParentalControls::RatingResolver do
     end
   end
 
+  describe ".sources_configured?" do
+    around do |example|
+      previous = { "OMDB_API_KEY" => ENV["OMDB_API_KEY"], "TMDB_READ_ACCESS_TOKEN" => ENV["TMDB_READ_ACCESS_TOKEN"] }
+      example.run
+    ensure
+      previous.each { |key, value| value.nil? ? ENV.delete(key) : ENV[key] = value }
+    end
+
+    it "is true when OMDB is configured" do
+      ENV["OMDB_API_KEY"] = "spec-omdb-#{SecureRandom.hex(4)}"
+      ENV.delete("TMDB_READ_ACCESS_TOKEN")
+
+      expect(described_class.sources_configured?).to be(true)
+    end
+
+    it "is true when only TMDB is configured" do
+      ENV.delete("OMDB_API_KEY")
+      ENV["TMDB_READ_ACCESS_TOKEN"] = "spec-tmdb-#{SecureRandom.hex(4)}"
+
+      expect(described_class.sources_configured?).to be(true)
+    end
+
+    it "is false when neither source is configured" do
+      ENV.delete("OMDB_API_KEY")
+      ENV.delete("TMDB_READ_ACCESS_TOKEN")
+
+      expect(described_class.sources_configured?).to be(false)
+    end
+
+    it "is false when the TMDB token is blank" do
+      ENV.delete("OMDB_API_KEY")
+      ENV["TMDB_READ_ACCESS_TOKEN"] = "  "
+
+      expect(described_class.sources_configured?).to be(false)
+    end
+  end
+
   describe "default construction" do
     around do |example|
       old_token = ENV["TMDB_READ_ACCESS_TOKEN"]
