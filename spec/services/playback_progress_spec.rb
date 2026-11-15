@@ -156,7 +156,11 @@ RSpec.describe Playback::ContinueWatchingQuery do
     create(:playback_progress, :episode, user: user, imdb_id: "tt0903747",
       progress_seconds: 0, duration_seconds: 0, completed: true)
     next_ref = ContentRef.new(imdb_id: "tt0903747", type: "show", season: 1, episode: 2)
-    allow(episode_sequence).to receive(:next_after).and_return(ServiceResult.success(next_ref))
+    following = Playback::EpisodeSequence::Next.new(
+      content_ref: next_ref, show_title: "Breaking Bad", title: "Cat's in the Bag...",
+      label: "Breaking Bad S01E02"
+    )
+    allow(episode_sequence).to receive(:next_episode_after).and_return(ServiceResult.success(following))
 
     item = query.call.data.first
 
@@ -166,7 +170,7 @@ RSpec.describe Playback::ContinueWatchingQuery do
   it "drops a completed episode whose next episode has not aired" do
     create(:playback_progress, :episode, user: user, imdb_id: "tt0903747",
       progress_seconds: 2_400, duration_seconds: 2_400, completed: true)
-    allow(episode_sequence).to receive(:next_after)
+    allow(episode_sequence).to receive(:next_episode_after)
       .and_return(ServiceResult.failure("Next episode has not aired yet", :not_released))
 
     expect(query.call.data).to be_empty
