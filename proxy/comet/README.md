@@ -13,7 +13,7 @@ Torrentio (the public instance at `torrentio.strem.fun`) is frequently down, Clo
 | Peak-hour congestion | Evening slowdowns (8 PM CET) | No shared load |
 | Torrentio API dependency | Single point of failure | Independent — doesn't use Torrentio at all |
 
-StreamVault uses Comet as the primary stream source with Torrentio as fallback. When both are configured, streams from both providers are queried in parallel and the best one wins — if Comet is down, Torrentio fills in, and vice versa.
+With `STREAM_PROVIDER=comet`, StreamVault uses Comet as the primary stream source with Torrentio as fallback. With `auto`, AIOStreams and Comet are queried in parallel first, then Torrentio. Streams from every configured provider are merged and ranked.
 
 ## How it works
 
@@ -24,7 +24,7 @@ StreamVault → Comet (self-hosted, VPS)              ← primary
             ↘ Torrentio (public, via Tinyproxy)      ← fallback only
 ```
 
-Comet speaks the standard Stremio addon protocol (`/stream/{type}/{id}.json` → `{ "streams": [...] }`), but encodes the RealDebrid API key in a base64 config path segment (`/{b64config}/stream/...`) instead of Torrentio's `/realdebrid={key}/` prefix. StreamVault's `CometService` handles this transparently — `ContentStreamingService` queries all configured providers in parallel and merges results.
+Comet speaks the standard Stremio addon protocol (`/stream/{type}/{id}.json` → `{ "streams": [...] }`), but encodes the debrid API key in a base64 config path segment (`/{b64config}/stream/...`) instead of Torrentio's `/realdebrid={key}/` prefix. StreamVault's `CometService` handles this transparently — `AvailableStreamsService` queries all configured providers in parallel and merges results.
 
 ### Scrapers
 
@@ -86,7 +86,7 @@ docker compose up -d
 
 Open `http://<vps-ip>:9117` in a browser. Jackett ships with several public indexers pre-configured. Add or remove indexers as desired — more indexers mean broader search coverage but slower scrapes.
 
-You don't need to configure RealDebrid in Jackett — Comet handles RD resolution itself. Jackett only searches for torrents; Comet takes the results and checks RD cache.
+You don't need to configure a debrid service in Jackett — Comet handles debrid resolution itself. Jackett only searches for torrents; Comet takes the results and checks the debrid cache.
 
 ### 4. Verify
 
@@ -128,17 +128,17 @@ Increases RAM/CPU usage slightly but eliminates first-request delays.
 
 ## Privacy
 
-When you access StreamVault through Tailscale (which you already use for the Tinyproxy), your home ISP sees **only encrypted WireGuard traffic** — they cannot see Comet, Jackett, torrent indexers, RealDebrid, or the content. All scraping and downloading happens on the VPS, not in your browser.
+When you access StreamVault through Tailscale (which you already use for the Tinyproxy), your home ISP sees **only encrypted WireGuard traffic** — they cannot see Comet, Jackett, torrent indexers, debrid traffic, or the content. All scraping and downloading happens on the VPS, not in your browser.
 
 | What | Without Tailscale | With Tailscale |
 |------|-------------------|----------------|
 | Home ISP sees torrent scraping | ✅ (DNS/SNI) | ❌ (encrypted) |
-| Home ISP sees RealDebrid | ✅ (SNI) | ❌ (encrypted) |
+| Home ISP sees debrid traffic | ✅ (SNI) | ❌ (encrypted) |
 | Home ISP sees data volume | ✅ | ✅ (indistinguishable from VPN) |
 | VPS provider sees scraping | N/A | ✅ (SNI to indexers) |
-| VPS provider sees RealDebrid | N/A | ✅ (SNI + bandwidth) |
+| VPS provider sees debrid traffic | N/A | ✅ (SNI + bandwidth) |
 
-The VPS provider can see Comet's outbound scraping and RealDebrid traffic (SNI reveals domains, bandwidth is visible), but cannot see the content (HTTPS encrypted). Data centre providers rarely act on traffic patterns — DMCA enforcement targets residential ISPs, not VPS traffic.
+The VPS provider can see Comet's outbound scraping and debrid traffic (SNI reveals domains, bandwidth is visible), but cannot see the content (HTTPS encrypted). Data centre providers rarely act on traffic patterns — DMCA enforcement targets residential ISPs, not VPS traffic.
 
 ## STREAM_PROVIDER modes
 
@@ -146,7 +146,8 @@ The VPS provider can see Comet's outbound scraping and RealDebrid traffic (SNI r
 |-------|---------|----------|-------------|
 | `torrentio` | Torrentio | — | Default, backward-compatible (no Comet needed) |
 | `comet` | Comet | Torrentio | Explicit Comet-first with fallback |
-| `auto` | Comet (if `COMET_URL` set) | Torrentio | Recommended — best of both |
+| `aiostreams` | AIOStreams | Torrentio | Use an AIOStreams install, with Torrentio as backup |
+| `auto` | AIOStreams (if configured), then Comet (if configured) | Torrentio | Recommended — queries the configured providers in parallel |
 
 ## HTTPS (for Stremio direct installation)
 
@@ -179,7 +180,7 @@ Replace `comet.example.com` with your domain (DNS A record → VPS IP). Caddy ha
 
 - A VPS with Docker + Docker Compose (same VPS as Tinyproxy works fine)
 - ~512MB RAM (Comet + Postgres + Jackett)
-- RealDebrid subscription (same one StreamVault already uses)
+- A RealDebrid or TorBox subscription (the same one StreamVault already uses)
 - Tailscale (recommended for private access — hides all traffic from your home ISP)
 
 ## Resource usage

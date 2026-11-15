@@ -1,10 +1,10 @@
 # Tailscale Proxy — VPS to Home
 
-Proxy all traffic from a tiny VPS to your home computer via Tailscale. The VPS terminates TLS and handles incoming traffic from the internet; your home machine runs the Rails app + ffmpeg with an unrestricted residential IP for RealDebrid downloads.
+Proxy all traffic from a tiny VPS to your home computer via Tailscale. The VPS terminates TLS and handles incoming traffic from the internet; your home machine runs the Rails app + ffmpeg with an unrestricted residential IP for debrid downloads.
 
 ## Why
 
-- RealDebrid CDN blocks/rate-limits datacentre IPs (`X-Error: bytes_limit_reached`)
+- Debrid CDNs such as RealDebrid can block or rate-limit datacentre IPs (`X-Error: bytes_limit_reached`)
 - Your home IP is residential — no bandwidth limit
 - The VPS provides a stable public IP and TLS without Cloudflare's 100s timeout
 - Tailscale connects them securely (WireGuard, no port forwarding needed)
@@ -77,7 +77,7 @@ Open `https://media.example.com` — traffic flows through the VPS to your home 
 
 ## Streaming
 
-The Caddyfile sets `flush_interval -1` so ffmpeg's fMP4 output is flushed to the browser immediately — no buffering. Time-to-first-byte depends only on your home machine's connection to RealDebrid (fast, residential IP).
+The Caddyfile sets `flush_interval -1` so ffmpeg's fMP4 output is flushed to the browser immediately — no buffering. Time-to-first-byte depends only on your home machine's connection to your debrid service (fast, residential IP).
 
 ## Resource usage
 

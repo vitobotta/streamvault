@@ -38,6 +38,18 @@ RSpec.describe CometService do
     }
   end
 
+  it "never logs the encoded debrid config" do
+    allow(Rails.logger).to receive(:error)
+    stub_request(:get, %r{comet\.example\.com/.+/stream/movie/tt1375666\.json})
+      .to_return(status: 500)
+
+    service.streams("tt1375666", "movie")
+
+    expect(Rails.logger).to have_received(:error).with(a_string_including("/[config]/stream/"))
+    expect(Rails.logger).not_to have_received(:error)
+      .with(a_string_including(Base64.urlsafe_encode64("test_rd_key_123")))
+  end
+
   around do |ex|
     original_comet = ENV["COMET_URL"]
     ENV["COMET_URL"] = "http://comet.example.com"
@@ -218,6 +230,22 @@ RSpec.describe CometService do
       expect(config["cachedOnly"]).to be true
       expect(config["enableTorrent"]).to be false
       expect(config["scrapeDebridAccountTorrents"]).to be true
+    end
+
+    it "encodes a TorBox credential when TorBox is selected" do
+      captured_config = nil
+      stub_request(:get, %r{comet\.example\.com/([^/]+)/stream/movie/tt1375666\.json})
+        .to_return do |request|
+          path = request.uri.respond_to?(:path) ? request.uri.path : URI.parse(request.uri).path
+          captured_config = path.split("/")[1]
+          { status: 200, body: { "streams" => [] }.to_json, headers: { "Content-Type" => "application/json" } }
+        end
+
+      described_class.new(api_key: "tb_key", debrid_service: "torbox").streams("tt1375666", "movie")
+
+      config = JSON.parse(Base64.urlsafe_decode64(captured_config))
+      expect(config["debridService"]).to eq("torbox")
+      expect(config["debridApiKey"]).to eq("tb_key")
     end
 
     it "omits the config segment when no RD key is provided" do

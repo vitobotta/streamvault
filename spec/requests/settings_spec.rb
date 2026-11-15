@@ -44,10 +44,87 @@ RSpec.describe "Settings", type: :request do
       expect(user.reload.realdebrid_api_key).to eq("existing_key")
     end
 
+    it "removes the saved key when the remove checkbox is submitted" do
+      user.update!(realdebrid_api_key: "expired_key")
+
+      patch settings_path, params: { user: { realdebrid_api_key: "", clear_realdebrid_api_key: "1" } }
+
+      expect(response).to redirect_to(settings_path)
+      expect(user.reload.realdebrid_api_key).to be_nil
+    end
+
     it "updates preferred languages" do
       patch settings_path, params: { user: { preferred_languages: [ "ENG", "FRENCH" ] } }
       expect(response).to redirect_to(settings_path)
       expect(user.reload.preferred_languages).to include("ENG", "FRENCH")
+    end
+
+    it "updates the TorBox key and service" do
+      stub_request(:get, "https://api.torbox.app/v1/api/user/me")
+        .to_return(status: 200, body: { "success" => true }.to_json, headers: { "Content-Type" => "application/json" })
+
+      patch settings_path, params: { user: { torbox_api_key: "new_torbox_key", debrid_service: "torbox" } }
+
+      expect(response).to redirect_to(settings_path)
+      expect(user.reload.torbox_api_key).to eq("new_torbox_key")
+      expect(user.debrid_service).to eq("torbox")
+      expect(flash[:notice]).to include("TorBox")
+    end
+
+    it "reports a failed TorBox key verification submitted with a password change" do
+      stub_request(:get, "https://api.torbox.app/v1/api/user/me")
+        .to_return(status: 401, body: { "success" => false, "error" => "BAD_TOKEN" }.to_json, headers: { "Content-Type" => "application/json" })
+
+      patch settings_path, params: {
+        user: {
+          torbox_api_key: "typo_key",
+          password: "newpassword123",
+          password_confirmation: "newpassword123",
+          current_password: "password123"
+        }
+      }
+
+      expect(response).to redirect_to(settings_path)
+      expect(flash[:alert]).to include("the TorBox key")
+      expect(flash[:alert]).to include("could not be verified")
+      expect(user.reload.torbox_api_key).to eq("typo_key")
+      expect(user.valid_password?("newpassword123")).to be(true)
+    end
+
+    it "confirms the password change when the submitted TorBox key verifies" do
+      stub_request(:get, "https://api.torbox.app/v1/api/user/me")
+        .to_return(status: 200, body: { "success" => true }.to_json, headers: { "Content-Type" => "application/json" })
+
+      patch settings_path, params: {
+        user: {
+          torbox_api_key: "good_torbox_key",
+          password: "newpassword123",
+          password_confirmation: "newpassword123",
+          current_password: "password123"
+        }
+      }
+
+      expect(response).to redirect_to(settings_path)
+      expect(flash[:notice]).to eq("Password updated successfully.")
+      expect(user.reload.torbox_api_key).to eq("good_torbox_key")
+      expect(user.valid_password?("newpassword123")).to be(true)
+    end
+
+    it "preserves an existing TorBox key when the field is blank" do
+      user.update!(torbox_api_key: "existing_torbox_key")
+
+      patch settings_path, params: { user: { torbox_api_key: "" } }
+
+      expect(user.reload.torbox_api_key).to eq("existing_torbox_key")
+    end
+
+    it "shows when a team key will be used" do
+      AppSetting.current.update!(realdebrid_api_key: "team_rd_key")
+
+      get settings_path
+
+      expect(response.body).to include("Using the team RealDebrid key.")
+      expect(response.body).not_to include("team_rd_key")
     end
   end
 

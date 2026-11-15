@@ -16,7 +16,7 @@ module Streams
     end
 
     def start(content_ref)
-      return ServiceResult.failure("RealDebrid API key not configured") unless @user.has_realdebrid_key?
+      return ServiceResult.failure(missing_key_message) unless debrid_access?
 
       streams_result = available(content_ref)
       return streams_result if streams_result.failure?
@@ -26,7 +26,7 @@ module Streams
     end
 
     def resolve(candidate, content_ref:, duration: nil)
-      return ServiceResult.failure("RealDebrid API key not configured") unless @user.has_realdebrid_key?
+      return ServiceResult.failure(missing_key_message) unless debrid_access?
 
       selected = StreamCandidate.from(candidate)
       resolved = playback_safe_alternative(selected, content_ref, duration) if oversized_transcode_source?(selected, duration)
@@ -157,14 +157,42 @@ module Streams
     end
 
     def resolve_candidate(candidate)
-      source = resolve_url(candidate.resolve_url)
+      source = resolve_url(candidate.resolve_url, provider: candidate.provider)
       source && { source: source, stream: candidate }
     end
 
-    def resolve_url(resolve_url)
+    # A shared AIOStreams instance already holds its own debrid credentials;
+    # Torrentio and Comet need a key for the account's selected service.
+    def debrid_access?
+      @user.debrid_configured? || StreamProvider.keyless_provider_available?
+    end
+
+    def missing_key_message
+      label = @user.respond_to?(:debrid_service_label) ? @user.debrid_service_label : "Debrid"
+      "#{label} API key not configured"
+    end
+
+    # AIOStreams and some addons return the final debrid CDN link directly
+    # instead of an addon URL that redirects to it.  Accept a direct link when
+    # its host is a trusted debrid host, so it does not fail the origin
+    # allowlist check for provider endpoints.
+    def direct_debrid_source(value)
+      source = ResolvedSource.new(url: value)
+      source if source.service.present?
+    rescue ResolvedSource::Invalid
+      nil
+    end
+
+    def resolve_url(resolve_url, provider: nil)
+      direct = direct_debrid_source(resolve_url)
+      return direct if direct
       return unless allowed_resolve_url?(resolve_url)
 
-      response = with_retries { connection_for(resolve_url).get(resolve_url) }
+      # Only the status and redirect target matter, and AIOStreams can proxy media
+      # through this URL, so ask for one byte instead of buffering a whole film.
+      response = with_retries do
+        connection_for(resolve_url, provider: provider).get(resolve_url) { |request| request.headers["Range"] = "bytes=0-1" }
+      end
       return unless response
 
       source_url = if [ 301, 302, 303, 307, 308 ].include?(response.status)
@@ -183,7 +211,7 @@ module Streams
       candidate = resolved.fetch(:stream)
       source = resolved.fetch(:source)
       filename = candidate.filename.presence || source.filename
-      source = ResolvedSource.new(url: source.url, filename: filename)
+      source = ResolvedSource.new(url: source.url, filename: filename, service: source.service)
       ServiceResult.success({
         source: source,
         stream: candidate.merge(filename: filename),
@@ -220,15 +248,53 @@ module Streams
       end.uniq { |uri| [ uri.scheme, uri.host, uri.port ] }
     end
 
-    def connection_for(resolve_url)
-      return direct_connection if CometService.comet_url.present? && resolve_url.start_with?(CometService.comet_url)
+    # Which configured provider answers a URL.  The candidate's own provider decides
+    # when both are configured, then the install-path prefix, then the origin: a
+    # shared origin with no hint would be a guess, so the default proxy is kept.
+    # Provider base URLs embed their install path (AIOStreams: /stremio/<uuid>)
+    # while their proxy links live on other paths of the same host.
+    def serving_provider(resolve_url, provider)
+      hint = provider.to_s
+      return :aiostreams if hint.include?("AioStreams") && aiostreams_configured?
+      return :comet if hint.include?("Comet") && comet_configured?
 
-      @proxy_connection ||= Faraday.new do |faraday|
-        faraday.adapter Faraday.default_adapter
-        faraday.options.timeout = 15
-        faraday.options.open_timeout = 5
-        faraday.proxy = ENV["TORRENTIO_PROXY"] if ENV["TORRENTIO_PROXY"].present?
+      return :comet if comet_configured? && resolve_url.start_with?(CometService.comet_url)
+      return :aiostreams if aiostreams_configured? && resolve_url.start_with?(Streams::AioStreamsProvider.base_url)
+
+      origins = []
+      origins << :comet if comet_configured? && same_origin?(resolve_url, CometService.comet_url)
+      origins << :aiostreams if aiostreams_configured? && same_origin?(resolve_url, Streams::AioStreamsProvider.base_url)
+      origins.one? ? origins.first : nil
+    end
+
+    def connection_for(resolve_url, provider: nil)
+      case serving_provider(resolve_url, provider)
+      when :aiostreams then aiostreams_connection
+      when :comet then direct_connection
+      else
+        @proxy_connection ||= Faraday.new do |faraday|
+          faraday.adapter Faraday.default_adapter
+          faraday.options.timeout = 15
+          faraday.options.open_timeout = 5
+          faraday.proxy = ENV["TORRENTIO_PROXY"] if ENV["TORRENTIO_PROXY"].present?
+        end
       end
+    end
+
+    def aiostreams_configured?
+      Streams::AioStreamsProvider.configured?
+    end
+
+    def comet_configured?
+      CometService.comet_url.present?
+    end
+
+    def same_origin?(value, base)
+      candidate = URI.parse(value.to_s)
+      origin = URI.parse(base.to_s)
+      candidate.scheme == origin.scheme && candidate.host == origin.host && candidate.port == origin.port
+    rescue URI::InvalidURIError
+      false
     end
 
     def direct_connection
@@ -236,6 +302,15 @@ module Streams
         faraday.adapter Faraday.default_adapter
         faraday.options.timeout = 15
         faraday.options.open_timeout = 5
+      end
+    end
+
+    def aiostreams_connection
+      @aiostreams_connection ||= Faraday.new do |faraday|
+        faraday.adapter Faraday.default_adapter
+        faraday.options.timeout = 15
+        faraday.options.open_timeout = 5
+        faraday.proxy = Streams::AioStreamsProvider.proxy_url if Streams::AioStreamsProvider.proxy_url.present?
       end
     end
   end

@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Your own cinema, in a browser tab.</strong><br>
-  Self-hosted movies and TV with direct play, smart transcoding, and no media library to store.
+  Self-hosted movies and TV with direct play, smart transcoding, and no media library to store. Bring RealDebrid, TorBox, or an AIOStreams install.
 </p>
 
 <p align="center">
@@ -42,10 +42,11 @@
 Most media setups ask you to choose between a pile of moving parts and a client app on every device. StreamVault is one Docker stack and one URL.
 
 - **Nothing to download, nothing to store.** Streams are resolved on demand. No terabytes of media, no download queue, no files to rename or deduplicate.
+- **Your debrid account, your choice.** RealDebrid, TorBox, or both. With two keys, streams from each are queried together and merged. AIOStreams can aggregate the sources and debrid services you already run.
 - **One URL for every screen.** Phone, tablet, laptop, TV browser. No app to install, no addon to configure per device, no platform support matrix.
-- **It picks the cheapest way to play.** Direct play when the browser can handle the source, a low-cost remux when it nearly can, and a full transcode only when it cannot. Older hardware plays modern files.
+- **It picks the cheapest way to play.** Direct play if the browser can handle the source, a low-cost remux if it nearly can, and a full transcode only if it cannot. Older hardware plays modern files.
 - **A real household setup.** Separate accounts with their own library, history, wishlist, and language preferences. Child accounts with age limits and a lock password.
-- **Private by design.** Your RealDebrid key is encrypted at rest, never written to logs, and never sent to the browser. No analytics, no third-party telemetry.
+- **Private by design.** Your RealDebrid and TorBox keys are encrypted at rest, never written to logs, and never sent to the browser. No analytics, no third-party telemetry.
 - **Open source, MIT.** Read it, change it, self-host it. There is no account with the author and no feature held back for a paid plan.
 
 ## How it compares
@@ -54,13 +55,14 @@ Most media setups ask you to choose between a pile of moving parts and a client 
 |---|---|---|---|
 | **Time to first movie** | One Compose stack, about ten minutes | Hours: indexers, download client, paths, naming, storage | Install the app, then add sources |
 | **Media storage** | None. Streamed on demand | Full copies, often several terabytes | None |
+| **Debrid and sources** | RealDebrid, TorBox, or AIOStreams | Your own downloads | Addons and debrid |
 | **Software to install** | A browser | Plex app on every platform | Stremio app on every platform |
 | **Transcoding** | Built in, automatic, per stream | Plex Pass for hardware transcoding | Depends on the device's codec support |
 | **Accounts** | Per-user library, history, and languages | Managed users | One library per account |
 | **Child controls** | Age caps, fail-closed, lock password | Rating limits per managed user | Not built in |
-| **Running cost** | Server plus RealDebrid | Server, disk, Plex Pass, indexers, VPN | RealDebrid only |
+| **Running cost** | Server plus RealDebrid or TorBox | Server, disk, Plex Pass, indexers, VPN | Debrid service optional |
 
-Different tools for different jobs. If you want a permanent offline library, a download stack is the right choice. StreamVault is for watching now, in a browser, with as little machinery as possible.
+Different tools for different jobs. If you want a permanent offline library, a download stack is the better fit. StreamVault is for watching now, in a browser, with as little machinery as possible.
 
 ## Screenshots
 
@@ -116,7 +118,9 @@ Different tools for different jobs. If you want a permanent offline library, a d
 ### Built to be left alone
 
 - **One Compose stack**: Rails, PostgreSQL, and Solid Queue in a single deployment.
-- **Encrypted secrets**: RealDebrid keys are encrypted at rest with Active Record Encryption.
+- **Encrypted secrets**: RealDebrid and TorBox keys are encrypted at rest with Active Record Encryption.
+- **Your choice of debrid service**: RealDebrid and TorBox are both supported. Configure one or both; with both keys, streams from each are queried and merged. Each account can use its own key or share an administrator's team key.
+- **AIOStreams for aggregation**: point StreamVault at an AIOStreams install and it serves the sources and debrid services configured there, with no per-account key needed.
 - **Health endpoint** at `/up` for uptime checks.
 - **No analytics and no call-home.** The only outbound requests are to the metadata, stream, and subtitle services listed above.
 - **MIT licensed**, with no telemetry and no paid edition.
@@ -129,8 +133,8 @@ Browser
   ▼
 StreamVault (Rails)
   ├──► Cinemeta / OMDB   metadata, artwork, ratings
-  ├──► Torrentio / Comet available streams
-  ├──► RealDebrid        resolves the selected stream
+  ├──► Torrentio / Comet / AIOStreams   stream providers
+  ├──► RealDebrid / TorBox              debrid resolution
   └──► Playback
        ├── direct proxy  compatible media, no encoder
        └── FFmpeg        remux or transcode, subtitle burn-in, HLS
@@ -138,26 +142,30 @@ StreamVault (Rails)
 
 1. **Search.** StreamVault queries metadata catalogues and returns matching titles with posters, ratings, and plots.
 2. **Pick a source.** Each title lists available streams with quality, size, and audio languages, sorted by your preferences.
-3. **Press play.** StreamVault resolves the source through RealDebrid, probes its tracks, and chooses direct play, remux, or transcode.
+3. **Press play.** StreamVault resolves the source through RealDebrid or TorBox, or follows an AIOStreams link, probes its tracks, and chooses direct play, remux, or transcode.
 4. **Keep watching.** Progress is saved as you watch, so the same title resumes on any device you sign in from.
 
 StreamVault does not ship a catalogue and does not keep a media library. Bytes pass through the server on demand and may be buffered while proxied or transcoded.
 
 ## What it connects to
 
+A debrid path means a RealDebrid account, a TorBox account, or a configured AIOStreams instance. With both debrid keys set, both pools are queried.
+
 | Service | Role | Needed |
 |---|---|---|
-| [RealDebrid](https://real-debrid.com) | Resolves the selected stream into a direct link | Required |
+| [RealDebrid](https://real-debrid.com) | Resolves the selected stream into a direct link | One debrid path |
+| [TorBox](https://torbox.app) | Alternative debrid resolver, queried alongside RealDebrid | One debrid path |
 | [OMDB](https://www.omdbapi.com/apikey.aspx) | IMDb, Rotten Tomatoes, and Metacritic ratings | Required, free key |
 | [Torrentio](https://torrentio.strem.fun) | Finds available streams | Default provider |
 | [Comet](proxy/comet) | Self-hosted alternative stream provider | Optional |
+| [AIOStreams](https://github.com/Viren070/AIOStreams) | Aggregating stream provider over your own sources and debrid services | Optional; can supply its own debrid |
 | [Cinemeta](https://v3-cinemeta.strem.io) | Titles, posters, plots, episodes | Built in, no key |
 | [TMDB](https://www.themoviedb.org/settings/api) | Recommendations from your watch history | Optional, free key |
-| [SubDL](https://subdl.com/panel/api) | External subtitles when none are embedded | Optional, free key |
+| [SubDL](https://subdl.com/panel/api) | External subtitles for titles without embedded tracks | Optional, free key |
 
 ## Quick start
 
-**You need:** a Linux server or VPS with Docker and Docker Compose, a [RealDebrid](https://real-debrid.com) account, and a free [OMDB API key](https://www.omdbapi.com/apikey.aspx). A 2-core, 2 GB machine is enough for direct play; 4 cores and 4 GB or more keeps transcoding comfortable.
+**You need:** a Linux server or VPS with Docker and Docker Compose, one debrid path (a [RealDebrid](https://real-debrid.com) or [TorBox](https://torbox.app) account, or a configured [AIOStreams](https://github.com/Viren070/AIOStreams) install), and a free [OMDB API key](https://www.omdbapi.com/apikey.aspx). A 2-core, 2 GB machine is enough for direct play; 4 cores and 4 GB or more keeps transcoding comfortable.
 
 ```bash
 git clone https://github.com/vitobotta/streamvault.git
@@ -184,9 +192,19 @@ docker compose exec web bin/rails c
 
 Save the password, sign in, and change it from Settings if you like. To allow self-registration, set `ENABLE_SIGNUPS=true` and restart.
 
-### Add your RealDebrid key
+Then give that account the administrator role, which unlocks the **Team** page (`/admin/settings`) where installation-wide debrid keys are set:
 
-Open **Settings**, paste your RealDebrid API key from [real-debrid.com/apitoken](https://real-debrid.com/apitoken), and save. StreamVault verifies it immediately. The key is encrypted at rest and never appears in logs.
+```bash
+docker compose exec web bin/rails "admin:promote[you@example.com]"
+```
+
+Without an email it promotes the oldest account. Only administrators can open `/admin/settings`; everyone else is redirected.
+
+### Add a debrid key
+
+Open **Settings** and paste a RealDebrid key from [real-debrid.com/apitoken](https://real-debrid.com/apitoken) or a TorBox key from your TorBox account settings. Save; StreamVault verifies the key immediately. Add both if you have both, and streams from each are merged. Keys are encrypted at rest and never appear in logs.
+
+Using AIOStreams instead? Set `STREAM_PROVIDER=aiostreams` and `AIOSTREAMS_URL` in `.env`, then restart. AIOStreams keeps its own source and debrid configuration, so accounts served by it need no key here.
 
 ### Updating
 
@@ -213,9 +231,16 @@ docker compose exec web bin/rails series:backfill_totals
 | `OMDB_API_KEY` | Ratings metadata; one of OMDB/TMDB is required for child accounts capped below 18 | required |
 | `APP_DOMAIN` | Public host name | empty |
 | `ENABLE_SIGNUPS` | Allow self-registration | `false` |
-| `STREAM_PROVIDER` | `torrentio`, `comet`, or `auto` | `torrentio` |
+| `STREAM_PROVIDER` | `torrentio`, `comet`, `aiostreams`, or `auto` | `torrentio` |
 | `TMDB_READ_ACCESS_TOKEN` | Recommendations and the fallback certification source for child accounts | empty |
 | `SUBDL_API_KEY` | External subtitle fallback | empty |
+| `REALDEBRID_API_KEY` | Installation-wide RealDebrid key used when no team key is set | empty |
+| `TORBOX_API_KEY` | Installation-wide TorBox key used when no team key is set | empty |
+| `AIOSTREAMS_URL` | AIOStreams install/manifest URL for the `aiostreams` provider | empty |
+| `AIOSTREAMS_PROXY` | Forward proxy for AIOStreams requests | empty |
+| `TORBOX_API_BASE_URL` | TorBox API base URL | `https://api.torbox.app/v1/api` |
+| `STREAM_SOURCE_HOSTS` | Comma-separated hosts AIOStreams may resolve through | empty |
+| `FFMPEG_ENCODER` | Transcode encoder; `auto` picks a verified hardware encoder, unset keeps libx264 | unset |
 | `FORCE_SSL` | Redirect to HTTPS and mark cookies Secure; `false` for plain HTTP on a trusted network | `true` |
 | `ASSUME_SSL` | Trust `X-Forwarded-Proto` from a TLS-terminating proxy; `false` when Rails is reached directly | `true` |
 | `SOLID_QUEUE_IN_PUMA` | Run jobs inside the web process instead of the `worker` service | unset |
@@ -249,8 +274,8 @@ More in [docs/CONFIGURATION.md](docs/CONFIGURATION.md#troubleshooting).
 StreamVault is one person's work, built in the evenings and at weekends. Sponsorship pays for the time that goes into it:
 
 - **Fixes land sooner.** Playback bugs, device quirks, and provider changes are worked through in order of impact.
-- **The app keeps up.** RealDebrid, Torrentio, Cinemeta, and the metadata APIs change without warning. Keeping up is ongoing work, not a one-off.
-- **No lock-in stays possible.** MIT license, self-hosted, no account with the author. Sponsorship is what makes that sustainable instead of a paid tier.
+- **The app keeps up.** RealDebrid, TorBox, Torrentio, Cinemeta, AIOStreams, and the metadata APIs change without warning. Keeping up is ongoing work, not a one-off.
+- **No lock-in stays possible.** MIT license, self-hosted, no account with the author. Sponsorship keeps that sustainable instead of a paid tier.
 
 <a href="https://github.com/sponsors/vitobotta"><img src="https://img.shields.io/badge/Become%20a%20sponsor-%E2%9D%A4-ea4aaa?style=for-the-badge&amp;logo=github" alt="Sponsor on GitHub"></a>
 

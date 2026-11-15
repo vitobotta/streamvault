@@ -29,7 +29,8 @@ class HlsController < ApplicationController
       audio_stream: params[:audio_stream],
       subtitle_stream: params[:subtitle_stream],
       default_language: current_user.default_stream_language,
-      preferred_languages: current_user.preferred_stream_languages
+      preferred_languages: current_user.preferred_stream_languages,
+      quality: params[:quality]
     )
     playback_id = params[:playback_id].to_s.gsub(/[^a-zA-Z0-9_-]/, "").first(80).presence || "unknown"
     Rails.logger.info("[HLS] playback_id=#{playback_id} session_id=#{session.session_id} started")

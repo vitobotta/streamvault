@@ -268,9 +268,9 @@
         <% else %>
           <div class="panel panel-pad text-center">
             <p class="text-sm text-ink-200">No releases found for this title.</p>
-            <% unless current_user.has_realdebrid_key? %>
+            <% unless current_user.debrid_configured? %>
               <p class="mt-1.5 text-xs text-ink-400">
-                Add your RealDebrid API key in <%= link_to "Settings", settings_path, class: "text-iris-300 underline underline-offset-2" %> to enable streaming.
+                Add a RealDebrid or TorBox API key in <%= link_to "Settings", settings_path, class: "text-iris-300 underline underline-offset-2" %> to enable streaming.
               </p>
             <% end %>
           </div>

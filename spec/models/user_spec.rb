@@ -18,6 +18,17 @@ RSpec.describe User, type: :model do
       )
       expect(raw_value).not_to eq("test_api_key_123")
     end
+
+    it "encrypts torbox_api_key" do
+      user = create(:user, torbox_api_key: "torbox_secret_123")
+      user.reload
+
+      expect(user.torbox_api_key).to eq("torbox_secret_123")
+      raw_value = User.connection.select_value(
+        "SELECT torbox_api_key FROM users WHERE id = #{user.id}"
+      )
+      expect(raw_value).not_to eq("torbox_secret_123")
+    end
   end
 
   describe "language defaults" do
@@ -37,20 +48,76 @@ RSpec.describe User, type: :model do
     end
   end
 
-  describe "#has_realdebrid_key?" do
-    it "returns true when key is present" do
-      user = build(:user, realdebrid_api_key: "some_key")
-      expect(user.has_realdebrid_key?).to be true
+  describe "debrid credentials" do
+    around do |example|
+      previous = { "REALDEBRID_API_KEY" => ENV["REALDEBRID_API_KEY"], "TORBOX_API_KEY" => ENV["TORBOX_API_KEY"] }
+      ENV.delete("REALDEBRID_API_KEY")
+      ENV.delete("TORBOX_API_KEY")
+      example.run
+    ensure
+      previous.each { |key, value| value.nil? ? ENV.delete(key) : ENV[key] = value }
+      AppSetting.delete_all
     end
 
-    it "returns false when key is nil" do
+    it "returns true when the account has its own key" do
+      user = build(:user, realdebrid_api_key: "some_key")
+      expect(user.has_realdebrid_key?).to be true
+      expect(user.debrid_key_source).to eq(:user)
+    end
+
+    it "returns false when no key is configured" do
+      AppSetting.delete_all
       user = build(:user, realdebrid_api_key: nil)
       expect(user.has_realdebrid_key?).to be false
     end
 
-    it "returns false when key is blank" do
-      user = build(:user, realdebrid_api_key: "")
-      expect(user.has_realdebrid_key?).to be false
+    it "falls back to the administrator's team key" do
+      AppSetting.current.update!(realdebrid_api_key: "team_rd_key")
+      user = build(:user, realdebrid_api_key: nil)
+
+      expect(user.effective_realdebrid_api_key).to eq("team_rd_key")
+      expect(user.has_realdebrid_key?).to be true
+      expect(user.debrid_key_source).to eq(:global)
+    end
+
+    it "falls back to the environment when no team key is set" do
+      ENV["REALDEBRID_API_KEY"] = "env_rd_key"
+      user = build(:user, realdebrid_api_key: nil)
+
+      expect(user.effective_realdebrid_api_key).to eq("env_rd_key")
+      expect(user.debrid_key_source).to eq(:environment)
+    end
+
+    it "prefers the account key over the team and environment keys" do
+      AppSetting.current.update!(realdebrid_api_key: "team_rd_key")
+      ENV["REALDEBRID_API_KEY"] = "env_rd_key"
+      user = build(:user, realdebrid_api_key: "own_key")
+
+      expect(user.effective_realdebrid_api_key).to eq("own_key")
+    end
+
+    it "uses the TorBox key when TorBox is selected" do
+      AppSetting.current.update!(torbox_api_key: "team_tb_key")
+      user = build(:user, debrid_service: "torbox", torbox_api_key: nil)
+
+      expect(user.effective_debrid_service).to eq("torbox")
+      expect(user.effective_debrid_api_key).to eq("team_tb_key")
+      expect(user.debrid_configured?).to be true
+    end
+
+    it "uses both keys and lists the selected service first" do
+      user = build(:user, debrid_service: "torbox", realdebrid_api_key: "own_rd_key", torbox_api_key: "own_tb_key")
+
+      expect(user.debrid_configured?).to be true
+      expect(user.debrid_credentials).to eq([ [ "torbox", "own_tb_key" ], [ "realdebrid", "own_rd_key" ] ])
+    end
+
+    it "uses a key for the other service when the selected one has none" do
+      user = build(:user, debrid_service: "torbox", realdebrid_api_key: "own_rd_key")
+
+      expect(user.has_realdebrid_key?).to be true
+      expect(user.debrid_configured?).to be true
+      expect(user.debrid_credentials).to eq([ [ "realdebrid", "own_rd_key" ] ])
     end
   end
 

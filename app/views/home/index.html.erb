@@ -25,12 +25,12 @@
   </section>
 <% end %>
 
-<% unless current_user.has_realdebrid_key? %>
+<% if current_user.debrid_credentials.empty? %>
   <div class="notice-bar mb-8">
     <%= icon :lock, css: "w-4 h-4 shrink-0 text-iris-300" %>
     <p>
-      Streaming needs your RealDebrid API key.
-      <%= link_to "Add it in Settings", settings_path %> to enable playback.
+      Streaming needs a debrid API key, RealDebrid or TorBox.
+      <%= link_to "Add it in Settings", settings_path %> to enable playback, or ask an administrator for a team key.
     </p>
   </div>
 <% end %>
