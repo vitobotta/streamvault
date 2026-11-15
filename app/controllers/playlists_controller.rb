@@ -7,11 +7,7 @@ class PlaylistsController < ApplicationController
   def index
     @playlists = playlists_for_index
     @playlist = current_user.playlists.new
-    @item_counts = @playlists.index_with do |playlist|
-      items = playlist.playlist_items.to_a
-      visible = parental_content_policy.filter(items).size
-      { visible: visible, hidden: items.size - visible }
-    end
+    build_item_counts
   end
 
   def show
@@ -38,6 +34,7 @@ class PlaylistsController < ApplicationController
     redirect_to playlist_path(@playlist), notice: "Playlist created."
   rescue ActiveRecord::RecordInvalid => e
     @playlists = playlists_for_index
+    build_item_counts
     flash.now[:alert] = e.record.errors.full_messages.to_sentence
     render :index, status: :unprocessable_entity
   end
@@ -65,6 +62,17 @@ class PlaylistsController < ApplicationController
 
   def playlists_for_index
     current_user.playlists.includes(:playlist_items).order(updated_at: :desc)
+  end
+
+  # :index is rendered from both index and the create failure path, which
+  # runs with playlists already on the account, so the counts have to be
+  # built there too or the view fetches from nil.
+  def build_item_counts
+    @item_counts = @playlists.index_with do |playlist|
+      items = playlist.playlist_items.to_a
+      visible = parental_content_policy.filter(items).size
+      { visible: visible, hidden: items.size - visible }
+    end
   end
 
   def playlist_params

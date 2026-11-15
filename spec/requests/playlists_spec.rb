@@ -55,6 +55,15 @@ RSpec.describe "Playlists", type: :request do
 
       expect(response).to have_http_status(:unprocessable_entity)
     end
+
+    it "renders the index when the name is blank and the account already has playlists" do
+      create(:playlist, user: user, name: "EXISTING ONE")
+
+      post playlists_path, params: { playlist: { name: "" } }
+
+      expect(response).to have_http_status(:unprocessable_entity)
+      expect(response.body).to include("EXISTING ONE")
+    end
   end
 
   describe "playlist membership" do

@@ -42,5 +42,17 @@ RSpec.describe PlaylistItem do
 
     expect(first.move!("up")).to be false
     expect(last.move!("down")).to be false
+  end
+  it "keeps the first year of a Cinemeta range" do
+    item = build(:playlist_item, playlist: playlist, year: "2008–2013")
+
+    expect(item).to be_valid
+    expect(item.year).to eq(2008)
+  end
+
+  it "does not truncate a malformed year" do
+    item = build(:playlist_item, playlist: playlist, year: "20100")
+
+    expect(item.year).to eq(20100)
   end
 end

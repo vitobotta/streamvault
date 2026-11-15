@@ -38,15 +38,18 @@ class PlaylistItem < ApplicationRecord
 
   private
 
-  # Cinemeta reports a series year as a range, and numericality validates the
-  # value before it is cast to an integer, so a range rejects the whole row.
-  # Keep the first year from anything that carries one.
+  # Cinemeta reports a series year as a range ("2008–2013"), and numericality
+  # validates the value before it is cast to an integer, so the range rejects
+  # the whole row. Accept a single four-digit year or a range of two and keep
+  # the first; anything else is left alone for numericality to reject.
+  YEAR_PATTERN = /\A(\d{4})(?:\s*[–—-]\s*\d{4})?\z/
+
   def normalize_year
     raw = read_attribute_before_type_cast(:year)
     return if raw.nil? || raw.is_a?(Integer)
 
-    digits = raw.to_s[/\d{4}/]
-    self.year = digits if digits
+    match = raw.to_s.strip.match(YEAR_PATTERN)
+    self.year = match[1] if match
   end
 
   def assign_position
