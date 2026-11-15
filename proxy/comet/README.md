@@ -13,7 +13,7 @@ Torrentio (the public instance at `torrentio.strem.fun`) is frequently down, Clo
 | Peak-hour congestion | Evening slowdowns (8 PM CET) | No shared load |
 | Torrentio API dependency | Single point of failure | Independent — doesn't use Torrentio at all |
 
-StreamVault uses Comet as the primary stream source with Torrentio as fallback. When both are configured, streams from both providers are queried in parallel and the best one wins — if Comet is down, Torrentio fills in, and vice versa.
+With `STREAM_PROVIDER=comet`, StreamVault uses Comet as the primary stream source with Torrentio as fallback. With `auto`, AIOStreams and Comet are queried in parallel first, then Torrentio. Streams from every configured provider are merged and ranked.
 
 ## How it works
 
