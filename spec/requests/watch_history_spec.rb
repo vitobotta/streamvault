@@ -18,6 +18,16 @@ RSpec.describe "WatchHistory", type: :request do
         get watch_history_index_path
         expect(response).to have_http_status(:ok)
       end
+
+      it "renders a watched toggle for each history row" do
+        create(:playback_progress, :movie, user: user, title: "Inception", completed: true)
+        create(:playback_progress, :episode, user: user, title: "Pilot", imdb_id: "tt0903747")
+
+        get watch_history_index_path
+
+        expect(response.body).to include("Mark Inception unwatched")
+        expect(response.body).to include("Mark Pilot watched")
+      end
     end
   end
 

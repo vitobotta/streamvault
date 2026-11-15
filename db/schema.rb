@@ -26,6 +26,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_05_090000) do
     t.string "imdb_id", null: false
     t.integer "list_state", default: 1, null: false
     t.string "poster_url"
+    t.integer "series_total_episodes"
+    t.datetime "series_total_episodes_synced_at"
     t.string "title", null: false
     t.datetime "updated_at", null: false
     t.integer "user_id", null: false
@@ -48,6 +50,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_05_090000) do
   end
 
   create_table "playback_progresses", force: :cascade do |t|
+    t.boolean "completed", default: false, null: false
     t.integer "content_type", default: 0, null: false
     t.datetime "created_at", null: false
     t.integer "duration_seconds", default: 0, null: false

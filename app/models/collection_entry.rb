@@ -9,6 +9,7 @@ class CollectionEntry < ApplicationRecord
 
   validates :imdb_id, :title, presence: true
   validates :imdb_id, uniqueness: { scope: :user_id, message: "already in your collection" }
+  validates :series_total_episodes, numericality: { greater_than_or_equal_to: 0 }, allow_nil: true
   validates :year, numericality: { greater_than: 1800, less_than: 2100 }, allow_nil: true
 
   scope :by_type, ->(type) { where(content_type: type) }

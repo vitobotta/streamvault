@@ -25,7 +25,11 @@ module Playback
         poster_url: poster_url.presence || stored_poster(content_ref),
         watched_at: Time.current,
         progress_seconds: progress,
-        duration_seconds: duration
+        duration_seconds: duration,
+        # Real playback supersedes a manual "mark watched" flag. Completion is
+        # still derived from the saved percentage, so finishing the file keeps
+        # the title watched without leaving a stale manual flag behind.
+        completed: false
       )
       entry.save!
       RefreshRecommendationsJob.enqueue_debounced(@user.id) if is_new
