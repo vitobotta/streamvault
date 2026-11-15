@@ -10,18 +10,19 @@ module HlsCleanup
   LOCK_PATH = "tmp/hls-cleanup.lock"
 
   class << self
+    # Called from config/puma.rb's on_booted hook, so only the web server
+    # process starts a loop: bin/jobs, the console and rake tasks never load
+    # that config, and a phased restart cannot start a second one.
     def start
+      return if @thread
       return unless Rails.env.production?
       return if ENV["HLS_CLEANUP_IN_WEB"].to_s.strip.downcase == "false"
-      # Puma is loaded only by the web server, so bin/jobs, the console and the
-      # release task never start a second loop.
-      return unless defined?(Puma)
 
       lock = File.open(Rails.root.join(LOCK_PATH), File::RDWR | File::CREAT, 0o644)
       @lock = lock
       Rails.logger.info("[HlsSessionCleanup] starting web-side HLS cleanup loop")
 
-      Thread.new do
+      @thread = Thread.new do
         loop do
           run_once(lock)
           sleep INTERVAL

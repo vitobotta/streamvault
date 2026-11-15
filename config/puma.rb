@@ -44,3 +44,8 @@ plugin :solid_queue if solid_queue_in_puma.present? && !%w[0 false no off].inclu
 # Specify the PID file. Defaults to tmp/pids/server.pid in development.
 # In other environments, only set the PID file if requested.
 pidfile ENV["PIDFILE"] if ENV["PIDFILE"]
+
+# HLS sessions belong to this process: their rows carry PIDs and tmp/hls
+# paths that exist only here, so the cleanup loop starts with the web
+# server and never in a worker, console or rake task.
+on_booted { HlsCleanup.start }
