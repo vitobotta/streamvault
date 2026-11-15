@@ -49,4 +49,3 @@ module HlsCleanup
   end
 end
 
-Rails.application.config.after_initialize { HlsCleanup.start }
