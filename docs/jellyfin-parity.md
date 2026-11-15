@@ -21,7 +21,7 @@ Status: ✅ done · 🟡 partial · ⬜ missing
 | 6 | Library | Collections | ⬜ | User-curated groups distinct from playlists; reuse playlist item shape |
 | 7 | Library | Playlists | ✅ | Implemented in this branch: create, add, remove, reorder, delete |
 | 8 | Library | Favourites | 🟡 | Wishlist covers "save for later"; add a distinct favourite flag and filter |
-| 9 | Library | Mark played / unplayed | ⬜ | Manual progress toggle for movies and episodes |
+| 9 | Library | Mark played / unplayed | ✅ | Detail, library, history, season and series actions; series progress stays in sync |
 | 10 | Library | Watched state and progress | ✅ | ProgressWriter, resume, continue watching, history |
 | 11 | Library | Next Up | ✅ | Continue Watching and next-episode prompt |
 | 12 | Library | Genres, studios, people pages | 🟡 | Metadata shows genres/cast; no browse-by-genre or person pages |
@@ -77,8 +77,8 @@ Status: ✅ done · 🟡 partial · ⬜ missing
 Each item below is intended to be its own PR, in this order, so a regression in
 one area cannot block the rest:
 
-1. **Playlists** — this branch.
-2. **Watched/unplayed toggles** — small, high-use library control.
+1. **Playlists**: shipped.
+2. **Watched/unplayed toggles**: shipped.
 3. **Playback quality and bitrate cap** — settings plus source selection.
 4. **Hardware transcoding and tone mapping** — feature-detected, with software fallback.
 5. **Subtitle search and download** — provider abstraction around SubDL.

@@ -104,6 +104,7 @@ Different tools for different jobs. If you want a permanent offline library, a d
 ### Watch TV like TV
 
 - **Season and episode browser** with air dates, overviews, and per-episode progress.
+- **Manual watched state** for a movie, episode, season, or series, with season tabs and library progress kept in sync.
 - **Auto-advance** to the next episode when one finishes.
 - **Skip to the next episode** at a closing-credits chapter, or in the final seconds when no chapter exists. It is offered, never forced: no countdown, no automatic skip.
 
