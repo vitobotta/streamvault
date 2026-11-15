@@ -38,6 +38,18 @@ RSpec.describe CometService do
     }
   end
 
+  it "never logs the encoded debrid config" do
+    allow(Rails.logger).to receive(:error)
+    stub_request(:get, %r{comet\.example\.com/.+/stream/movie/tt1375666\.json})
+      .to_return(status: 500)
+
+    service.streams("tt1375666", "movie")
+
+    expect(Rails.logger).to have_received(:error).with(a_string_including("/[config]/stream/"))
+    expect(Rails.logger).not_to have_received(:error)
+      .with(a_string_including(Base64.urlsafe_encode64("test_rd_key_123")))
+  end
+
   around do |ex|
     original_comet = ENV["COMET_URL"]
     ENV["COMET_URL"] = "http://comet.example.com"

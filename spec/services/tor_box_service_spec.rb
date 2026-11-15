@@ -29,11 +29,20 @@ RSpec.describe TorBoxService do
   end
 
   it "reports a timeout" do
-    stub_request(:get, user_url).to_timeout
+    stub_request(:get, user_url).to_raise(Faraday::TimeoutError.new("timed out"))
 
     result = service.verify_key
 
     expect(result).to be_failure
     expect(result.error_message).to include("timed out")
+  end
+
+  it "reports a connection failure" do
+    stub_request(:get, user_url).to_raise(Faraday::ConnectionFailed.new("execution expired"))
+
+    result = service.verify_key
+
+    expect(result).to be_failure
+    expect(result.error_message).to eq("Could not connect to TorBox")
   end
 end

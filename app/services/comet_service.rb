@@ -63,11 +63,11 @@ class CometService
     elsif response.status == 404
       ServiceResult.success([])
     else
-      Rails.logger.error("[CometService] streams request failed: HTTP #{response.status} for #{path}")
+      Rails.logger.error("[CometService] streams request failed: HTTP #{response.status} for #{redacted_path(path)}")
       ServiceResult.failure("Failed to fetch streams from Comet (HTTP #{response.status})")
     end
   rescue Faraday::TimeoutError
-    Rails.logger.error("[CometService] streams request timed out for #{path}")
+    Rails.logger.error("[CometService] streams request timed out for #{redacted_path(path)}")
     ServiceResult.failure("Comet stream request timed out")
   rescue Faraday::ConnectionFailed => e
     Rails.logger.error("[CometService] streams connection failed: #{e.message}")
@@ -96,6 +96,12 @@ class CometService
     end
 
     "#{prefix}/stream/#{episode_path}.json"
+  end
+
+  # The config segment is base64 of a JSON blob holding the debrid key, and
+  # base64 is reversible, so only its presence may reach the logs.
+  def redacted_path(path)
+    path.to_s.sub(%r{/[\w\-=]{16,}/stream/}, "/[config]/stream/")
   end
 
   # Build the base64-encoded config path segment.  When the RD key is

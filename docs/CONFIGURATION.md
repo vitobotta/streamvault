@@ -11,7 +11,7 @@ Every setting is read from `.env` at boot. Copy `.env.example` to `.env`, fill i
 | `ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY` | Deterministic encryption key | `openssl rand -hex 32` |
 | `ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT` | Key derivation salt | `openssl rand -hex 32` |
 | `POSTGRES_PASSWORD` | Password for the bundled Postgres container | `openssl rand -hex 16` |
-| `OMDB_API_KEY` | Ratings metadata (IMDb, Rotten Tomatoes, Metacritic) | Free key at [omdbapi.com/apikey.aspx](https://www.omdbapi.com/apikey.aspx) |
+| `OMDB_API_KEY` | Ratings metadata (IMDb, Rotten Tomatoes, Metacritic); with `TMDB_READ_ACCESS_TOKEN`, one of the two is required for child accounts capped below 18 | Free key at [omdbapi.com/apikey.aspx](https://www.omdbapi.com/apikey.aspx) |
 
 Generate each encryption value separately. If you rotate the Active Record Encryption keys after users have saved RealDebrid keys, previously stored keys cannot be decrypted.
 
@@ -32,6 +32,10 @@ Generate each encryption value separately. If you rotate the Active Record Encry
 | `AIOSTREAMS_URL` | AIOStreams install/manifest URL; the `/manifest.json` suffix is optional | empty |
 | `AIOSTREAMS_PROXY` | Forward proxy URL for AIOStreams requests | empty |
 | `REALDEBRID_API_BASE_URL` | RealDebrid API base URL | `https://api.real-debrid.com/rest/1.0` |
+| `REALDEBRID_API_KEY` | Installation-wide RealDebrid key; a team key from Admin settings wins | empty |
+| `TORBOX_API_KEY` | Installation-wide TorBox key; a team key from Admin settings wins | empty |
+| `STREAM_SOURCE_HOSTS` | Comma-separated host allowlist for AIOStreams source resolution | empty |
+| `FFMPEG_ENCODER` | Encoder args (e.g. `h264_nvenc -b:v 5000k`); `auto` uses a verified hardware encoder, unset keeps libx264 CRF 23 | unset |
 | `TORBOX_API_BASE_URL` | TorBox API base URL | `https://api.torbox.app/v1/api` |
 | `TMDB_READ_ACCESS_TOKEN` | TMDB v4 bearer token for recommendations | empty |
 | `SUBDL_API_KEY` | SubDL API key for external subtitle fallback | empty |

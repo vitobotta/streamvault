@@ -44,7 +44,7 @@ class Media::Transcoder
   KEYFRAME_INTERVAL_SECONDS = 2
   HLS_READ_RATE = "1.0"
   HLS_INITIAL_BURST_SECONDS = 30
-  FMP4_READ_RATE = "1.25"
+  FMP4_READ_RATE = "1.0"
   FMP4_INITIAL_BURST_SECONDS = 30
   REMUX_READ_RATE = "1.05"
   REMUX_INITIAL_BURST_SECONDS = 5
@@ -846,11 +846,13 @@ class Media::Transcoder
       # blockage that makes the CDN close an idle response.
       cmd += [ "-readrate", REMUX_READ_RATE, "-readrate_initial_burst", REMUX_INITIAL_BURST_SECONDS.to_s ]
     else
-      # MSE stops reading at its forward-buffer high-water mark. Unpaced
-      # encoding then fills the HTTP socket and 32 MiB queue, blocks ffmpeg
-      # stdout, and eventually stops consuming the CDN response. Pace modestly
-      # above realtime: enough to rebuild buffer, but bounded enough that the
-      # queue absorbs a complete 45s→30s browser backpressure interval.
+      # Pace at realtime. The browser's 45s→42s band absorbs an encoder
+      # that falls behind for a moment, while a producer running above
+      # realtime only builds a standing surplus between Puma and the
+      # browser. That surplus is what filled the socket and let Puma's
+      # 10s write timeout kill the response mid-film. ffmpeg's -readrate
+      # sleeps only while ahead of schedule and catches up at full speed
+      # when behind, and the 30s initial burst still front-loads startup.
       cmd += [ "-readrate", FMP4_READ_RATE, "-readrate_initial_burst", FMP4_INITIAL_BURST_SECONDS.to_s ]
     end
     cmd << "-noaccurate_seek" if effective_remux && seek_start_seconds.positive?
@@ -918,16 +920,20 @@ class Media::Transcoder
   # Return the best available H.264 encoder args.  Order of precedence:
   #   1. FFMPEG_ENCODER env var (for Docker/cloud with a hardware encoder)
   #   2. VideoToolbox auto-detection (macOS)
-  #   3. libx264 ultrafast with -threads auto (software, works everywhere)
+  #   3. FFMPEG_ENCODER=auto: the first hardware encoder that passes a test
+  #      encode
+  #   4. libx264 ultrafast with -threads auto (software, works everywhere)
   #
-  # For a production Linux server with Intel QuickSync (VAAPI):
-  #   FFMPEG_ENCODER="h264_vaapi -b:v 5000k -global_quality 23"
-  #
-  # For NVIDIA GPU (NVENC):
+  # Linux hardware encoders are opt-in because their arg lists carry no rate
+  # control: "auto" quality would use the encoder default instead of the
+  # CRF 23 software encode.  Name one explicitly when it has rate control:
   #   FFMPEG_ENCODER="h264_nvenc -preset p7 -b:v 5000k -rc vbr"
+  # or let detection pick one with the same caveat:
+  #   FFMPEG_ENCODER=auto
   def self.transcode_args
     env = ENV["FFMPEG_ENCODER"].to_s.strip
-    if env.present?
+    auto = env.casecmp("auto").zero?
+    if env.present? && !auto
       args = Shellwords.split(env)
       return args if args.include?("-c:v")
 
@@ -936,8 +942,10 @@ class Media::Transcoder
 
     return VIDEOTOOLBOX_TRANSCODE_ARGS if videotoolbox_available?
 
-    detected = detect_hardware_encoder
-    return detected[:args] if detected
+    if auto
+      detected = detect_hardware_encoder
+      return detected[:args] if detected
+    end
 
     VIDEO_TRANSCODE_ARGS
   end

@@ -34,7 +34,7 @@ class PlaybackStartService
       playback_descriptor(
         stream: stream_result.data,
         content_ref: content_ref,
-        title: title,
+        title: canonical_title(content_ref, title),
         poster_url: poster_url,
         resume_at: progress_entry&.progress_seconds,
         duration: duration
@@ -61,7 +61,7 @@ class PlaybackStartService
       playback_descriptor(
         stream: stream_result.data,
         content_ref: content_ref,
-        title: target[:title],
+        title: canonical_title(content_ref, target[:title]),
         poster_url: target[:poster_url],
         resume_at: target[:resume_at],
         duration: target[:duration_seconds]
@@ -84,6 +84,41 @@ class PlaybackStartService
   end
 
   private
+
+  # The player label is server-owned.  Any entry point that forgets to send a
+  # title, or that still carries the previous episode's title (auto-advance),
+  # gets the catalogue label for the episode actually being played.
+  def canonical_title(content_ref, requested_title)
+    requested = requested_title.to_s.presence
+    return requested unless content_ref.show?
+
+    # A label that already carries this episode's position is the one a
+    # previous lookup produced — trust it so auto-advance stays off the
+    # metadata path entirely.  Only blank or bare show titles are resolved,
+    # which is how episode rows written before this change reach the player.
+    position = Playback::EpisodeLabel.position(content_ref.season, content_ref.episode)
+    return requested if position && requested&.include?(position)
+
+    context = episode_context(content_ref)
+    return requested unless context.success?
+
+    context.data[:label].presence || requested
+  end
+
+  # One catalogue lookup per episode, shared by the label and the fallback
+  # duration.  A start used to resolve metadata twice, so a cold cache or a
+  # metadata outage could block for two full timeouts instead of one.
+  def episode_context(content_ref)
+    @episode_contexts ||= {}
+    key = [ content_ref.imdb_id, content_ref.season, content_ref.episode ]
+    return @episode_contexts[key] if @episode_contexts.key?(key)
+
+    @episode_contexts[key] = Playback::EpisodeContext.new(catalog: @catalog).call(
+      imdb_id: content_ref.imdb_id,
+      season: content_ref.season,
+      episode: content_ref.episode
+    )
+  end
 
   # Child accounts may never start playback of titles above their rating
   # limit, whatever entry point (start/resume) requested it.  Returns a
@@ -140,6 +175,13 @@ class PlaybackStartService
 
     requested = normalized_duration_seconds(requested_duration)
     return requested if requested.positive?
+
+    # A show resolves its episode list once.  When that lookup failed the
+    # duration is unknown, and asking again would only repeat the same timeout.
+    if type == "show" && season.present? && episode.present?
+      context = episode_context(ContentRef.new(imdb_id: imdb_id, type: type, season: season, episode: episode))
+      return context.success? ? normalized_duration_seconds(context.data[:duration_seconds]) : 0
+    end
 
     metadata_duration_seconds(imdb_id, type, season, episode)
   end

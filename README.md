@@ -186,6 +186,14 @@ docker compose exec web bin/rails c
 
 Save the password, sign in, and change it from Settings if you like. To allow self-registration, set `ENABLE_SIGNUPS=true` and restart.
 
+Then give that account the administrator role, which unlocks the **Team** page (`/admin/settings`) where installation-wide debrid keys are set:
+
+```bash
+docker compose exec web bin/rails "admin:promote[you@example.com]"
+```
+
+Without an email it promotes the oldest account. Only administrators can open `/admin/settings`; everyone else is redirected.
+
 ### Add your RealDebrid key
 
 Open **Settings**, paste your RealDebrid API key from [real-debrid.com/apitoken](https://real-debrid.com/apitoken), and save. StreamVault verifies it immediately. The key is encrypted at rest and never appears in logs.
@@ -206,12 +214,19 @@ The database lives in `./data` and survives rebuilds. Containers restart on cras
 | `SECRET_KEY_BASE` | Session cookies | required |
 | `ACTIVE_RECORD_ENCRYPTION_*` | Encrypt stored API keys | required |
 | `POSTGRES_PASSWORD` | Database password | required |
-| `OMDB_API_KEY` | Ratings metadata | required |
+| `OMDB_API_KEY` | Ratings metadata; one of OMDB/TMDB is required for child accounts capped below 18 | required |
 | `APP_DOMAIN` | Public host name | empty |
 | `ENABLE_SIGNUPS` | Allow self-registration | `false` |
 | `STREAM_PROVIDER` | `torrentio`, `comet`, `aiostreams`, or `auto` | `torrentio` |
-| `TMDB_READ_ACCESS_TOKEN` | Recommendations | empty |
+| `TMDB_READ_ACCESS_TOKEN` | Recommendations and the fallback certification source for child accounts | empty |
 | `SUBDL_API_KEY` | External subtitle fallback | empty |
+| `REALDEBRID_API_KEY` | Installation-wide RealDebrid key used when no team key is set | empty |
+| `TORBOX_API_KEY` | Installation-wide TorBox key used when no team key is set | empty |
+| `AIOSTREAMS_URL` | AIOStreams install/manifest URL for the `aiostreams` provider | empty |
+| `AIOSTREAMS_PROXY` | Forward proxy for AIOStreams requests | empty |
+| `TORBOX_API_BASE_URL` | TorBox API base URL | `https://api.torbox.app/v1/api` |
+| `STREAM_SOURCE_HOSTS` | Comma-separated hosts AIOStreams may resolve through | empty |
+| `FFMPEG_ENCODER` | Transcode encoder; `auto` picks a verified hardware encoder, unset keeps libx264 | unset |
 
 The full list, provider modes, Cloudflare proxy setups, and reverse proxy notes are in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 

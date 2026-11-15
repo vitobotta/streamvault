@@ -202,8 +202,12 @@ export class PlaybackRecoveryMonitor {
     player.restartHlsSession(targetSeconds)
   }
 
-  handlePrematureEnd() {
+  handlePrematureEnd(reason = "premature_end") {
     this.player.mseFetchEnded = true
+    // The join guard measures its gap from the moment the body died, not
+    // from the moment the replacement request was allowed to start.
+    this.player.continuationFailureAt = Date.now()
+    this.player.mseEndReason = reason
     this.player.finishOrRecoverMseEnd()
   }
 
@@ -241,6 +245,8 @@ export class PlaybackRecoveryMonitor {
       return
     }
 
+    const reason = player.mseEndReason || "premature_end"
+    player.mseEndReason = null
     const bufferedAhead = player.bufferedAheadOfCurrent()
     if (bufferedAhead <= PREMATURE_END_BUFFER_SECONDS) {
       console.warn(`Stream fetch ended early with ${bufferedAhead.toFixed(1)}s buffer — reconnecting.`)
@@ -248,30 +254,20 @@ export class PlaybackRecoveryMonitor {
       return
     }
 
-    console.warn(`Stream fetch ended early with ${bufferedAhead.toFixed(1)}s buffer — retaining cushion.`)
-    player.schedulePrematureEndRecovery()
-  }
-
-  schedulePrematureEndRecovery() {
-    const player = this.player
-    clearTimeout(player.prematureEndRecoveryTimer)
-    const check = () => {
-      player.prematureEndRecoveryTimer = null
-      if (player.videoTarget.ended || player.isSeeking) return
-      if (player.userPaused) {
-        player.prematureEndRecoveryTimer = setTimeout(check, 1000)
-        return
-      }
-
-      const bufferedAhead = player.bufferedAheadOfCurrent()
-      if (bufferedAhead > PREMATURE_END_BUFFER_SECONDS) {
-        const delay = Math.min(1000, Math.max(250, (bufferedAhead - PREMATURE_END_BUFFER_SECONDS) * 1000))
-        player.prematureEndRecoveryTimer = setTimeout(check, delay)
-        return
-      }
-      player.handleStreamStall("premature_end")
+    // A healthy cushion and a live SourceBuffer are all a continuation
+    // needs: the replacement response is appended into the same buffer, so
+    // there is no black frame and no startup wait. Anything that makes
+    // that unsafe (no session, too little cushion, two failed attempts)
+    // keeps the MediaSource swap as the fallback.
+    const blocked = player.mseContinuationBlockReason?.()
+    if (!blocked && typeof player.continueMseStream === "function") {
+      console.warn(`Stream fetch ended with ${bufferedAhead.toFixed(1)}s buffer — continuing in the same source buffer.`)
+      Promise.resolve(player.continueMseStream(reason)).catch(() => player.handleStreamStall("premature_end"))
+      return
     }
-    player.prematureEndRecoveryTimer = setTimeout(check, 250)
+
+    console.warn(`Stream fetch ended early with ${bufferedAhead.toFixed(1)}s buffer — reconnecting.`)
+    player.handleStreamStall("premature_end")
   }
 
   bufferedAhead() {
@@ -330,6 +326,12 @@ export class PlaybackRecoveryMonitor {
       evictions_count: player.evictionCount || 0,
       evicted_seconds_total: Math.round((player.evictedSecondsTotal || 0) * 10) / 10,
       last_eviction_age_ms: player.lastEvictionAt ? Math.max(0, Date.now() - player.lastEvictionAt) : -1,
+      max_park_ms: Math.round(player.maxParkMs || 0),
+      // Seamless continuation: how often it fired, how long the join cost,
+      // and where in the session timeline the new response started.
+      continuation_count: player.continuationCount || 0,
+      continuation_gap_ms: player.continuationGapMs ?? -1,
+      resume_offset_seconds: Math.round((player.lastResumeOffsetSeconds ?? 0) * 1000) / 1000,
       ...details
     })
 

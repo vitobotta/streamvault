@@ -395,7 +395,7 @@ RSpec.describe Media::Transcoder do
         remux: true
       )
       expect(argument_pairs(standard)).to include(
-        [ "-readrate", "1.25" ],
+        [ "-readrate", "1.0" ],
         [ "-readrate_initial_burst", "30" ]
       )
       expect(argument_pairs(remux)).to include(
@@ -678,6 +678,49 @@ RSpec.describe Media::Transcoder do
         [ "-profile:v", "high" ],
         [ "-level:v", "4.0" ]
       )
+    end
+
+    it "ignores a detected hardware encoder unless FFMPEG_ENCODER=auto" do
+      output = {
+        "streams" => [
+          { "codec_name" => "hevc", "width" => 1920, "height" => 1080, "pix_fmt" => "yuv420p10le" }
+        ]
+      }.to_json
+      allow(described_class).to receive(:capture_command).and_return(capture_result(output))
+      allow(described_class).to receive(:detect_hardware_encoder).and_return(
+        { name: "h264_nvenc", hwaccel: [], args: [ "-c:v", "h264_nvenc" ] }
+      )
+
+      command = described_class.send(:build_ffmpeg_command,
+        "https://example.test/video-hevc.mkv",
+        headers: {},
+        start_seconds: 0
+      )
+
+      expect(argument_pairs(command)).to include([ "-c:v", "libx264" ])
+      expect(argument_pairs(command)).not_to include([ "-c:v", "h264_nvenc" ])
+    end
+
+    it "uses a detected hardware encoder when FFMPEG_ENCODER=auto" do
+      output = {
+        "streams" => [
+          { "codec_name" => "hevc", "width" => 1920, "height" => 1080, "pix_fmt" => "yuv420p10le" }
+        ]
+      }.to_json
+      allow(described_class).to receive(:capture_command).and_return(capture_result(output))
+      allow(described_class).to receive(:detect_hardware_encoder).and_return(
+        { name: "h264_nvenc", hwaccel: [], args: [ "-c:v", "h264_nvenc" ] }
+      )
+      allow(ENV).to receive(:[]).and_call_original
+      allow(ENV).to receive(:[]).with("FFMPEG_ENCODER").and_return("auto")
+
+      command = described_class.send(:build_ffmpeg_command,
+        "https://example.test/video-hevc.mkv",
+        headers: {},
+        start_seconds: 0
+      )
+
+      expect(argument_pairs(command)).to include([ "-c:v", "h264_nvenc" ])
     end
   end
 
