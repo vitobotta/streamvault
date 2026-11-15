@@ -203,11 +203,11 @@ The database lives in `./data` and survives rebuilds. Containers restart on cras
 | `SECRET_KEY_BASE` | Session cookies | required |
 | `ACTIVE_RECORD_ENCRYPTION_*` | Encrypt stored API keys | required |
 | `POSTGRES_PASSWORD` | Database password | required |
-| `OMDB_API_KEY` | Ratings metadata | required |
+| `OMDB_API_KEY` | Ratings metadata; one of OMDB/TMDB is required for child accounts capped below 18 | required |
 | `APP_DOMAIN` | Public host name | empty |
 | `ENABLE_SIGNUPS` | Allow self-registration | `false` |
 | `STREAM_PROVIDER` | `torrentio`, `comet`, or `auto` | `torrentio` |
-| `TMDB_READ_ACCESS_TOKEN` | Recommendations | empty |
+| `TMDB_READ_ACCESS_TOKEN` | Recommendations and the fallback certification source for child accounts | empty |
 | `SUBDL_API_KEY` | External subtitle fallback | empty |
 | `FORCE_SSL` | Redirect to HTTPS and mark cookies Secure; `false` for plain HTTP on a trusted network | `true` |
 | `ASSUME_SSL` | Trust `X-Forwarded-Proto` from a TLS-terminating proxy; `false` when Rails is reached directly | `true` |

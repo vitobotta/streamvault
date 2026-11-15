@@ -12,7 +12,6 @@ export default class extends Controller {
     const button = event.currentTarget
     const season = button.dataset.season
     const episode = button.dataset.episode
-    const episodeTitle = button.dataset.title || `Episode ${episode}`
     const index = this.episodeTargets.findIndex(el => el.contains(button))
     const episodeEl = this.episodeTargets[index]
     const drawer = this.drawerTargets[index]

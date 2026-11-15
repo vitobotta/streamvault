@@ -22,6 +22,15 @@ module ParentalControls
     # resolved ages (cached for up to a week) cannot outlive a fix.
     CACHE_VERSION = 2
 
+    # True when at least one certification source is configured.  Without one,
+    # unrated titles resolve to UNKNOWN_AGE and a child account below 18 sees
+    # an empty catalogue, which looks like a bug rather than a configuration
+    # gap.  A configured but revoked token cannot be detected without an API
+    # call, so this answers "is a source set up", which is what the notice says.
+    def self.sources_configured?
+      Catalog::OmdbClient.new.configured? || ENV["TMDB_READ_ACCESS_TOKEN"].present?
+    end
+
     def initialize(omdb: Catalog::OmdbClient.new, tmdb: :auto, cache: Rails.cache, logger: Rails.logger)
       @omdb = omdb
       @tmdb = tmdb == :auto ? build_tmdb_service : tmdb
@@ -67,6 +76,8 @@ module ParentalControls
       nil
     end
 
+    # A blank token means there is nothing to build; a token that is present but
+    # rejected fails at lookup time, where from_tmdb already rescues it.
     def build_tmdb_service
       return nil if ENV["TMDB_READ_ACCESS_TOKEN"].blank?
 
