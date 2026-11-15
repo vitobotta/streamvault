@@ -4,15 +4,16 @@ require "shellwords"
 require "tmpdir"
 
 RSpec.describe "production process configuration" do
-  it "runs Solid Queue inside the Procfile Puma process" do
+  it "runs Solid Queue in the dedicated Procfile worker" do
     procfile = Rails.root.join("Procfile").read
     web_process = procfile.lines.find { |line| line.start_with?("web:") }
+    worker_process = procfile.lines.find { |line| line.start_with?("worker:") }
 
-    expect(web_process).to include("SOLID_QUEUE_IN_PUMA=true")
-    expect(procfile).not_to match(/^worker:/)
+    expect(web_process).to include("SOLID_QUEUE_IN_PUMA=false")
+    expect(worker_process).to include("bin/jobs")
   end
 
-  it "executes the web command through the Docker entrypoint with Solid Queue enabled" do
+  it "executes the web command through the Docker entrypoint with Solid Queue disabled" do
     web_process = Rails.root.join("Procfile").read.lines.find { |line| line.start_with?("web:") }
     command = Shellwords.split(web_process.delete_prefix("web:"))
 
@@ -28,7 +29,7 @@ RSpec.describe "production process configuration" do
 
       expect(status.success?).to be(true), error
       expect(output.lines.map(&:chomp)).to eq(
-        %w[true exec puma -t 5:5 -p 5000 -e production]
+        %w[false exec puma -t 5:5 -p 5000 -e production]
       )
     end
   end
