@@ -104,4 +104,46 @@ RSpec.describe PlaybackTelemetryService do
       eviction_kind: "back"
     )
   end
+
+  it "keeps and bounds the park and continuation counters" do
+    payload = service.record(
+      user_id: 9,
+      attributes: {
+        event: "stream_continue_ok",
+        max_park_ms: "4321",
+        continuation_count: "3",
+        continuation_gap_ms: "1850",
+        continuation_gap_seconds: "0.42",
+        continuation_reason: "stream\nerror",
+        resume_offset_seconds: "103.456",
+        unknown_field: "dropped"
+      }
+    )
+
+    expect(payload).to include(
+      max_park_ms: 4_321,
+      continuation_count: 3,
+      continuation_gap_ms: 1_850,
+      continuation_gap_seconds: 0.42,
+      continuation_reason: "stream error",
+      resume_offset_seconds: 103.46
+    )
+    expect(payload).not_to have_key(:unknown_field)
+
+    bounded = service.record(
+      user_id: 9,
+      attributes: {
+        max_park_ms: -5,
+        continuation_count: -1,
+        continuation_gap_ms: -400,
+        resume_offset_seconds: "NaN"
+      }
+    )
+    expect(bounded).to include(
+      max_park_ms: 0,
+      continuation_count: 0,
+      continuation_gap_ms: -1,
+      resume_offset_seconds: 0
+    )
+  end
 end
