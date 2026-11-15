@@ -38,8 +38,12 @@ plugin :tmp_restart
 # Opt in by setting the variable; every string is truthy, so the value is also
 # compared against falsey spellings to let a two-container deployment turn the
 # supervisor off while a separate worker owns job execution.
+# ActiveSupport is not loaded when Puma reads this file, so test the string
+# directly instead of relying on #present?.
 solid_queue_in_puma = ENV["SOLID_QUEUE_IN_PUMA"].to_s.strip.downcase
-plugin :solid_queue if solid_queue_in_puma.present? && !%w[0 false no off].include?(solid_queue_in_puma)
+unless solid_queue_in_puma.empty? || %w[0 false no off].include?(solid_queue_in_puma)
+  plugin :solid_queue
+end
 
 # Specify the PID file. Defaults to tmp/pids/server.pid in development.
 # In other environments, only set the PID file if requested.
