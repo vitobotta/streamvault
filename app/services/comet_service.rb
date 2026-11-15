@@ -30,8 +30,10 @@ class CometService
     ENV.fetch("COMET_PROXY", "")
   end
 
-  def initialize(rd_api_key: nil)
-    @rd_api_key = rd_api_key
+  def initialize(rd_api_key: nil, api_key: nil, debrid_service: "realdebrid")
+    @api_key = api_key.presence || rd_api_key
+    @rd_api_key = @api_key
+    @debrid_service = debrid_service.to_s.presence || "realdebrid"
     @parser = Streams::ReleaseParser.new
     @comet = Faraday.new(url: self.class.comet_url) do |f|
       f.request :json
@@ -61,11 +63,11 @@ class CometService
     elsif response.status == 404
       ServiceResult.success([])
     else
-      Rails.logger.error("[CometService] streams request failed: HTTP #{response.status} for #{path}")
+      Rails.logger.error("[CometService] streams request failed: HTTP #{response.status} for #{redacted_path(path)}")
       ServiceResult.failure("Failed to fetch streams from Comet (HTTP #{response.status})")
     end
   rescue Faraday::TimeoutError
-    Rails.logger.error("[CometService] streams request timed out for #{path}")
+    Rails.logger.error("[CometService] streams request timed out for #{redacted_path(path)}")
     ServiceResult.failure("Comet stream request timed out")
   rescue Faraday::ConnectionFailed => e
     Rails.logger.error("[CometService] streams connection failed: #{e.message}")
@@ -96,14 +98,20 @@ class CometService
     "#{prefix}/stream/#{episode_path}.json"
   end
 
+  # The config segment is base64 of a JSON blob holding the debrid key, and
+  # base64 is reversible, so only its presence may reach the logs.
+  def redacted_path(path)
+    path.to_s.sub(%r{/[\w\-=]{16,}/stream/}, "/[config]/stream/")
+  end
+
   # Build the base64-encoded config path segment.  When the RD key is
   # absent, return nil so Comet serves at the default (no-config) path.
   def build_config
-    return nil if @rd_api_key.blank?
+    return nil if @api_key.blank?
 
     config = {
-      "debridService" => "realdebrid",
-      "debridApiKey" => @rd_api_key,
+      "debridService" => @debrid_service,
+      "debridApiKey" => @api_key,
       "cachedOnly" => true,
       "enableTorrent" => false,
       "scrapeDebridAccountTorrents" => true

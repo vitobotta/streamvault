@@ -21,7 +21,7 @@ class HlsSessionManager
   @processes = {}
   @mutex = Mutex.new
 
-  def self.create(user_id:, input_url:, headers:, start_seconds:, audio_stream:, subtitle_stream:, default_language:, preferred_languages:)
+  def self.create(user_id:, input_url:, headers:, start_seconds:, audio_stream:, subtitle_stream:, default_language:, preferred_languages:, quality: nil)
     session_id = SecureRandom.hex(16)
     record = HlsSession.create!(user_id: user_id, session_id: session_id)
     dir = record.storage_path
@@ -35,7 +35,8 @@ class HlsSessionManager
       default_language: default_language,
       preferred_languages: preferred_languages,
       wait_for_first_segment: false,
-      telemetry_id: session_id
+      telemetry_id: session_id,
+      quality: quality
     )
 
     @mutex.synchronize { @processes[session_id] = process }

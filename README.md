@@ -116,7 +116,8 @@ Different tools for different jobs. If you want a permanent offline library, a d
 ### Built to be left alone
 
 - **One Compose stack**: Rails, PostgreSQL, and Solid Queue in a single deployment.
-- **Encrypted secrets**: RealDebrid keys are encrypted at rest with Active Record Encryption.
+- **Encrypted secrets**: RealDebrid and TorBox keys are encrypted at rest with Active Record Encryption.
+- **Multiple debrid accounts**: RealDebrid and TorBox can both be configured. When both have keys, streams from both are queried and merged, and each account can use its own key or share an administrator's team key.
 - **Health endpoint** at `/up` for uptime checks.
 - **No analytics and no call-home.** The only outbound requests are to the metadata, stream, and subtitle services listed above.
 - **MIT licensed**, with no telemetry and no paid edition.
@@ -147,10 +148,12 @@ StreamVault does not ship a catalogue and does not keep a media library. Bytes p
 
 | Service | Role | Needed |
 |---|---|---|
-| [RealDebrid](https://real-debrid.com) | Resolves the selected stream into a direct link | Required |
+| [RealDebrid](https://real-debrid.com) | Resolves the selected stream into a direct link | One of RealDebrid or TorBox |
+| [TorBox](https://torbox.app) | Alternative debrid resolver; used alongside RealDebrid when both keys are set | One of RealDebrid or TorBox |
 | [OMDB](https://www.omdbapi.com/apikey.aspx) | IMDb, Rotten Tomatoes, and Metacritic ratings | Required, free key |
 | [Torrentio](https://torrentio.strem.fun) | Finds available streams | Default provider |
 | [Comet](proxy/comet) | Self-hosted alternative stream provider | Optional |
+| [AIOStreams](https://github.com/Viren070/AIOStreams) | Aggregating stream provider over your own sources and debrid services | Optional |
 | [Cinemeta](https://v3-cinemeta.strem.io) | Titles, posters, plots, episodes | Built in, no key |
 | [TMDB](https://www.themoviedb.org/settings/api) | Recommendations from your watch history | Optional, free key |
 | [SubDL](https://subdl.com/panel/api) | External subtitles when none are embedded | Optional, free key |
@@ -184,6 +187,14 @@ docker compose exec web bin/rails c
 
 Save the password, sign in, and change it from Settings if you like. To allow self-registration, set `ENABLE_SIGNUPS=true` and restart.
 
+Then give that account the administrator role, which unlocks the **Team** page (`/admin/settings`) where installation-wide debrid keys are set:
+
+```bash
+docker compose exec web bin/rails "admin:promote[you@example.com]"
+```
+
+Without an email it promotes the oldest account. Only administrators can open `/admin/settings`; everyone else is redirected.
+
 ### Add your RealDebrid key
 
 Open **Settings**, paste your RealDebrid API key from [real-debrid.com/apitoken](https://real-debrid.com/apitoken), and save. StreamVault verifies it immediately. The key is encrypted at rest and never appears in logs.
@@ -207,9 +218,16 @@ The database lives in `./data` and survives rebuilds. Containers restart on cras
 | `OMDB_API_KEY` | Ratings metadata; one of OMDB/TMDB is required for child accounts capped below 18 | required |
 | `APP_DOMAIN` | Public host name | empty |
 | `ENABLE_SIGNUPS` | Allow self-registration | `false` |
-| `STREAM_PROVIDER` | `torrentio`, `comet`, or `auto` | `torrentio` |
+| `STREAM_PROVIDER` | `torrentio`, `comet`, `aiostreams`, or `auto` | `torrentio` |
 | `TMDB_READ_ACCESS_TOKEN` | Recommendations and the fallback certification source for child accounts | empty |
 | `SUBDL_API_KEY` | External subtitle fallback | empty |
+| `REALDEBRID_API_KEY` | Installation-wide RealDebrid key used when no team key is set | empty |
+| `TORBOX_API_KEY` | Installation-wide TorBox key used when no team key is set | empty |
+| `AIOSTREAMS_URL` | AIOStreams install/manifest URL for the `aiostreams` provider | empty |
+| `AIOSTREAMS_PROXY` | Forward proxy for AIOStreams requests | empty |
+| `TORBOX_API_BASE_URL` | TorBox API base URL | `https://api.torbox.app/v1/api` |
+| `STREAM_SOURCE_HOSTS` | Comma-separated hosts AIOStreams may resolve through | empty |
+| `FFMPEG_ENCODER` | Transcode encoder; `auto` picks a verified hardware encoder, unset keeps libx264 | unset |
 | `FORCE_SSL` | Redirect to HTTPS and mark cookies Secure; `false` for plain HTTP on a trusted network | `true` |
 | `ASSUME_SSL` | Trust `X-Forwarded-Proto` from a TLS-terminating proxy; `false` when Rails is reached directly | `true` |
 | `SOLID_QUEUE_IN_PUMA` | Run jobs inside the web process instead of the `worker` service | unset |

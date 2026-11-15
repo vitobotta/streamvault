@@ -10,7 +10,16 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_30_130000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_05_090000) do
+  create_table "app_settings", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.text "realdebrid_api_key"
+    t.boolean "singleton", default: true, null: false
+    t.text "torbox_api_key"
+    t.datetime "updated_at", null: false
+    t.index ["singleton"], name: "index_app_settings_on_singleton", unique: true
+  end
+
   create_table "collection_entries", force: :cascade do |t|
     t.integer "content_type", default: 0, null: false
     t.datetime "created_at", null: false
@@ -215,9 +224,11 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_30_130000) do
   end
 
   create_table "users", force: :cascade do |t|
+    t.boolean "admin", default: false, null: false
     t.boolean "child_account", default: false, null: false
     t.string "child_lock_password_digest"
     t.datetime "created_at", null: false
+    t.string "debrid_service", default: "realdebrid", null: false
     t.string "default_language"
     t.string "display_name"
     t.string "email", default: "", null: false
@@ -228,6 +239,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_30_130000) do
     t.datetime "remember_created_at"
     t.datetime "reset_password_sent_at"
     t.string "reset_password_token"
+    t.text "torbox_api_key"
     t.datetime "updated_at", null: false
     t.index ["email"], name: "index_users_on_email", unique: true
     t.index ["reset_password_token"], name: "index_users_on_reset_password_token", unique: true

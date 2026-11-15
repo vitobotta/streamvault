@@ -27,7 +27,7 @@ class MsePath {
   eligible() { return true }
   start() {
     this.player.primedDirectPlayUrl = null
-    this.player.setupMseSource(this.player.streamingUrlValue)
+    this.player.setupMseSource(this.player.transcodeUrlWithQuality(this.player.streamingUrlValue))
   }
 }
 
@@ -50,11 +50,18 @@ export class PlaybackPaths {
 
     if (!this.player.mseSupported && !this.player.isSafari()) return this.mse.start()
 
+    // A fixed quality rung has to be encoded by ffmpeg, so direct play and
+    // remux (which copy the source bytes as-is) are skipped on the first load.
+    const fixedQuality = this.player.fixedQuality()
+
     const tracks = this.player.loadMediaTracks()
-    if (this.player.directPlayHintValue) this.player.primeDirectPlay()
+    if (!fixedQuality && this.player.directPlayHintValue) this.player.primeDirectPlay()
     await tracks
 
-    const path = [ this.native, this.hls, this.remux, this.mse ].find((candidate) => candidate.eligible())
+    const candidates = fixedQuality
+      ? [ this.hls, this.mse ]
+      : [ this.native, this.hls, this.remux, this.mse ]
+    const path = candidates.find((candidate) => candidate.eligible())
     path.start()
   }
 }

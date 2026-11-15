@@ -8,7 +8,7 @@
   <nav class="hidden lg:block" aria-label="Settings sections" data-controller="settings-nav">
     <div class="sticky top-8 space-y-0.5">
       <a href="#account" class="settings-nav" data-settings-nav-target="link" data-section="account">Account</a>
-      <a href="#streaming" class="settings-nav" data-settings-nav-target="link" data-section="streaming">RealDebrid</a>
+      <a href="#streaming" class="settings-nav" data-settings-nav-target="link" data-section="streaming">Debrid</a>
       <a href="#child" class="settings-nav" data-settings-nav-target="link" data-section="child">Child account</a>
       <a href="#languages" class="settings-nav" data-settings-nav-target="link" data-section="languages">Languages</a>
     </div>
@@ -60,23 +60,81 @@
       <section id="streaming" class="panel panel-pad anchor-offset">
         <div class="flex flex-wrap items-start justify-between gap-3 mb-6">
           <div>
-            <h2 class="t-section mb-1.5">RealDebrid</h2>
-            <p class="text-xs text-ink-400">Streams are resolved through your own RealDebrid account.</p>
+            <h2 class="t-section mb-1.5">Debrid</h2>
+            <p class="text-xs text-ink-400">Pick the debrid service you prefer; its streams are listed first. When keys for both services are available, both are queried and their streams merged, so you get more results to choose from. Your own API key takes precedence; if you leave it blank, the team key set by an administrator (or in the environment) is used.</p>
           </div>
-          <% if @user.has_realdebrid_key? %>
+          <% if @user.debrid_credentials.any? %>
             <span class="chip chip--sage"><%= icon :check, css: "w-3 h-3" %> Key saved</span>
           <% else %>
             <span class="chip chip--accent">Not configured</span>
           <% end %>
         </div>
 
-        <div>
-          <%= f.label :realdebrid_api_key, "API key", class: "field-label" %>
+        <div class="mb-7 max-w-xs">
+          <%= f.label :debrid_service, "Preferred service", class: "field-label" %>
+          <%= f.select :debrid_service,
+            options_for_select(User::DEBRID_SERVICES.map { |value, label| [ label, value ] }, @user.effective_debrid_service),
+            {},
+            class: "input-field" %>
+        </div>
+
+        <div class="border-t border-white/8 pt-6">
+          <%= f.label :realdebrid_api_key, "RealDebrid API key", class: "field-label" %>
           <%= f.password_field :realdebrid_api_key, class: "input-field", placeholder: @user.has_realdebrid_key? ? "Enter a new key to replace the saved one" : "Paste your RealDebrid API key", value: "" %>
           <p class="field-hint">
             Create a key at
             <a href="https://real-debrid.com/apitoken" target="_blank" rel="noopener" class="text-iris-300 underline underline-offset-2">real-debrid.com/apitoken</a>.
           </p>
+          <% if @user.realdebrid_api_key.present? %>
+            <label class="mt-3 flex items-center gap-2 text-xs text-ink-400">
+              <%= check_box_tag "user[clear_realdebrid_api_key]", "1", false, class: "rounded" %>
+              Remove my key and use the shared key instead
+            </label>
+          <% elsif @user.effective_realdebrid_api_key.present? %>
+            <p class="mt-2 text-xs text-ink-400">Using the team RealDebrid key.</p>
+          <% else %>
+            <p class="mt-2 text-xs text-ink-400">No RealDebrid key configured.</p>
+          <% end %>
+        </div>
+
+        <div class="mt-7 border-t border-white/8 pt-6">
+          <%= f.label :torbox_api_key, "TorBox API key", class: "field-label" %>
+          <%= f.password_field :torbox_api_key, class: "input-field", placeholder: @user.has_torbox_key? ? "Enter a new key to replace the saved one" : "Paste your TorBox API key", value: "" %>
+          <p class="field-hint">
+            Create a key at
+            <a href="https://torbox.app/settings" target="_blank" rel="noopener" class="text-iris-300 underline underline-offset-2">torbox.app/settings</a>.
+          </p>
+          <% if @user.torbox_api_key.present? %>
+            <label class="mt-3 flex items-center gap-2 text-xs text-ink-400">
+              <%= check_box_tag "user[clear_torbox_api_key]", "1", false, class: "rounded" %>
+              Remove my key and use the shared key instead
+            </label>
+          <% elsif @user.effective_torbox_api_key.present? %>
+            <p class="mt-2 text-xs text-ink-400">Using the team TorBox key.</p>
+          <% else %>
+            <p class="mt-2 text-xs text-ink-400">No TorBox key configured.</p>
+          <% end %>
+        </div>
+
+        <div class="mt-7 border-t border-white/8 pt-6 text-xs text-ink-400">
+          Preferred service: <span class="text-ink-100"><%= @user.debrid_service_label %></span>.
+          <% extra = @user.debrid_credentials.map(&:first) - [ @user.effective_debrid_service ] %>
+          <% if extra.any? %>
+            Streams from <%= extra.map { |service| User::DEBRID_SERVICES.fetch(service, service) }.to_sentence %> are merged in.
+          <% end %>
+          <% source = @user.debrid_key_source %>
+          <% if source == :user %>
+            Using your own key.
+          <% elsif source == :global %>
+            Using the administrator's team key.
+          <% elsif source == :environment %>
+            Using the installation key from the environment.
+          <% else %>
+            No key available for this service.
+          <% end %>
+          <% if @user.admin? %>
+            <div class="mt-2"><%= link_to "Manage team keys", admin_settings_path, class: "text-iris-300 underline underline-offset-2" %></div>
+          <% end %>
         </div>
       </section>
 
