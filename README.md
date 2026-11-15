@@ -210,6 +210,11 @@ The database lives in `./data` and survives rebuilds. Containers restart on cras
 | `STREAM_PROVIDER` | `torrentio`, `comet`, or `auto` | `torrentio` |
 | `TMDB_READ_ACCESS_TOKEN` | Recommendations and the fallback certification source for child accounts | empty |
 | `SUBDL_API_KEY` | External subtitle fallback | empty |
+| `FORCE_SSL` | Redirect to HTTPS and mark cookies Secure; `false` for plain HTTP on a trusted network | `true` |
+| `ASSUME_SSL` | Trust `X-Forwarded-Proto` from a TLS-terminating proxy; `false` when Rails is reached directly | `true` |
+| `SOLID_QUEUE_IN_PUMA` | Run jobs inside the web process instead of the `worker` service | unset |
+| `JOB_PROCESSES` | Worker processes started by the `worker` service; each runs three threads | `1` |
+| `HLS_CLEANUP_IN_WEB` | Web process cleans up expired HLS sessions; `false` disables it | `true` |
 
 The full list, provider modes, Cloudflare proxy setups, and reverse proxy notes are in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
@@ -221,12 +226,13 @@ The full list, provider modes, Cloudflare proxy setups, and reverse proxy notes 
 | Playback buffers during transcoding | CPU saturation in the web logs. Try a 1080p H.264 source before 4K, HEVC, or AV1 |
 | A resumed stream is CPU-heavy | Expected: a non-zero seek may re-encode to keep audio and video aligned |
 | Sign-in does not persist behind a proxy | HTTPS on the public URL, and the proxy must forward the original scheme and host |
+| Jobs never run, or recommendations stay stale | The `worker` service is up (`docker compose ps`, `docker compose logs -f worker`); the web container does not execute jobs unless `SOLID_QUEUE_IN_PUMA` is set |
 
 Logs and health:
 
 ```bash
 docker compose ps
-docker compose logs --tail=200 -f web
+docker compose logs --tail=200 -f web worker
 curl -I http://localhost:${PORT:-3000}/up
 ```
 
