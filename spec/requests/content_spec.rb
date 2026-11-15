@@ -135,6 +135,15 @@ RSpec.describe "Content", type: :request do
         expect(entry.reload.series_total_episodes).to eq(62)
       end
 
+      it "keeps a stored series total when a successful catalogue response has no episodes" do
+        entry = create(:collection_entry, :show, user: user, imdb_id: "tt0903747", series_total_episodes: 62)
+        stub_show_metadata(videos: [])
+
+        get content_path(type: "show", imdb_id: "tt0903747")
+
+        expect(entry.reload.series_total_episodes).to eq(62)
+      end
+
       it "shows the watched state for a completed movie" do
         create(:playback_progress, :movie, user: user, imdb_id: "tt1375666", completed: true)
         stub_request(:get, "https://v3-cinemeta.strem.io/meta/movie/tt1375666.json")

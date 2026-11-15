@@ -50,7 +50,10 @@ class ContentController < ApplicationController
       @series_watched_episodes = series_progress.watched_episodes
       @series_total_episodes = series_progress.total_episodes
       @series_progress_percentage = series_progress.percentage
-      persist_series_total(@collection_entry, @series_total_episodes) if meta_result.success?
+      # A successful response with no episodes says nothing about the series
+      # total, so it must not overwrite what is already stored.
+      episodes_known = meta_result.success? && @metadata&.dig(:episodes).present?
+      persist_series_total(@collection_entry, @series_total_episodes) if episodes_known
     else
       @movie_progress = current_user.playback_progresses.movies_only.find_by(imdb_id: @imdb_id)
       @movie_watched = @movie_progress.present? && PlaybackCompletionPolicy.movie_finished?(@movie_progress)
