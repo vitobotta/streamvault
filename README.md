@@ -86,6 +86,7 @@ Different tools for different jobs. If you want a permanent offline library, a d
 - **Popular and trending** rows for films and TV, refreshed from live metadata.
 - **Recommendations** based on what you have watched, using TMDB's collaborative filtering.
 - **Rich title pages** with backdrop, overview, cast, ratings, seasons, and every available source.
+- **Playlists** queue films and shows in your own order: add a title from its detail page, then reorder or remove it later.
 
 ### Play it properly
 
@@ -227,6 +228,11 @@ The database lives in `./data` and survives rebuilds. Containers restart on cras
 | `TORBOX_API_BASE_URL` | TorBox API base URL | `https://api.torbox.app/v1/api` |
 | `STREAM_SOURCE_HOSTS` | Comma-separated hosts AIOStreams may resolve through | empty |
 | `FFMPEG_ENCODER` | Transcode encoder; `auto` picks a verified hardware encoder, unset keeps libx264 | unset |
+| `FORCE_SSL` | Redirect to HTTPS and mark cookies Secure; `false` for plain HTTP on a trusted network | `true` |
+| `ASSUME_SSL` | Trust `X-Forwarded-Proto` from a TLS-terminating proxy; `false` when Rails is reached directly | `true` |
+| `SOLID_QUEUE_IN_PUMA` | Run jobs inside the web process instead of the `worker` service | unset |
+| `JOB_PROCESSES` | Worker processes started by the `worker` service; each runs three threads | `1` |
+| `HLS_CLEANUP_IN_WEB` | Web process cleans up expired HLS sessions; `false` disables it | `true` |
 
 The full list, provider modes, Cloudflare proxy setups, and reverse proxy notes are in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
@@ -238,12 +244,13 @@ The full list, provider modes, Cloudflare proxy setups, and reverse proxy notes 
 | Playback buffers during transcoding | CPU saturation in the web logs. Try a 1080p H.264 source before 4K, HEVC, or AV1 |
 | A resumed stream is CPU-heavy | Expected: a non-zero seek may re-encode to keep audio and video aligned |
 | Sign-in does not persist behind a proxy | HTTPS on the public URL, and the proxy must forward the original scheme and host |
+| Jobs never run, or recommendations stay stale | The `worker` service is up (`docker compose ps`, `docker compose logs -f worker`); the web container does not execute jobs unless `SOLID_QUEUE_IN_PUMA` is set |
 
 Logs and health:
 
 ```bash
 docker compose ps
-docker compose logs --tail=200 -f web
+docker compose logs --tail=200 -f web worker
 curl -I http://localhost:${PORT:-3000}/up
 ```
 
@@ -272,6 +279,8 @@ More at [vitobotta.com](https://vitobotta.com).
 ## Contributing
 
 Contributions are welcome. Development setup, the test suites, architecture notes, CI, and the release process are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+The Jellyfin parity backlog, one feature per pull request, is tracked in [docs/jellyfin-parity.md](docs/jellyfin-parity.md).
 
 For a bug report, include your deployment type, the relevant log lines, and what you were playing. For a playback problem, the server log and the browser console together are worth more than either alone.
 

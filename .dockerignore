@@ -24,6 +24,10 @@
 /tmp/pids/*
 !/tmp/pids/.keep
 
+# Ignore the Postgres bind mount created by the compose db service. It is
+# root-owned, so a rebuild after first boot cannot read the build context.
+/data
+
 # Ignore storage (uploaded files in development and any SQLite databases).
 /storage/*
 !/storage/.keep

@@ -35,8 +35,22 @@ port ENV.fetch("PORT", 3000)
 plugin :tmp_restart
 
 # Run the Solid Queue supervisor inside of Puma for single-server deployments.
-plugin :solid_queue if ENV["SOLID_QUEUE_IN_PUMA"]
+# Opt in by setting the variable; every string is truthy, so the value is also
+# compared against falsey spellings to let a two-container deployment turn the
+# supervisor off while a separate worker owns job execution.
+# ActiveSupport is not loaded when Puma reads this file, so test the string
+# directly instead of relying on #present?.
+solid_queue_in_puma = ENV["SOLID_QUEUE_IN_PUMA"].to_s.strip.downcase
+unless solid_queue_in_puma.empty? || %w[0 false no off].include?(solid_queue_in_puma)
+  plugin :solid_queue
+end
 
 # Specify the PID file. Defaults to tmp/pids/server.pid in development.
 # In other environments, only set the PID file if requested.
 pidfile ENV["PIDFILE"] if ENV["PIDFILE"]
+
+# HLS sessions belong to this process: their rows carry PIDs and tmp/hls
+# paths that exist only here, so the cleanup loop starts with the web
+# server and never in a worker, console or rake task.
+# Puma 8 renamed on_booted to after_booted.
+after_booted { HlsCleanup.start }
