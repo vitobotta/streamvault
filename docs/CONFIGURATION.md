@@ -13,7 +13,7 @@ Every setting is read from `.env` at boot. Copy `.env.example` to `.env`, fill i
 | `POSTGRES_PASSWORD` | Password for the bundled Postgres container | `openssl rand -hex 16` |
 | `OMDB_API_KEY` | Ratings metadata (IMDb, Rotten Tomatoes, Metacritic); with `TMDB_READ_ACCESS_TOKEN`, one of the two is required for child accounts capped below 18 | Free key at [omdbapi.com/apikey.aspx](https://www.omdbapi.com/apikey.aspx) |
 
-Generate each encryption value separately. If you rotate the Active Record Encryption keys after users have saved RealDebrid keys, previously stored keys cannot be decrypted.
+Generate each encryption value separately. If you rotate the Active Record Encryption keys after users have saved debrid keys, previously stored keys cannot be decrypted.
 
 ## Optional values
 
@@ -56,9 +56,17 @@ Generate each encryption value separately. If you rotate the Active Record Encry
 
 Torrentio, Comet, and AIOStreams are stream providers. They search torrent networks and return a list with quality, size, and language information. StreamVault does not bundle an indexer and does not ship a catalogue.
 
+## Debrid accounts
+
+RealDebrid and TorBox are peers. An account can use its own key, an administrator's team key, or an installation-wide environment key. With both keys present, StreamVault queries both services and merges the streams, so one is not a fallback for the other.
+
+AIOStreams is different: it is a stream provider that owns its source and debrid configuration. Point `AIOSTREAMS_URL` at the install link; StreamVault does not need a RealDebrid or TorBox key for accounts served by that instance.
+
+`REALDEBRID_API_KEY` and `TORBOX_API_KEY` set installation-wide defaults. Keys saved in **Team** (`/admin/settings`) take precedence over them. An account with no key can still use a configured AIOStreams instance when `STREAM_PROVIDER` is `aiostreams` or `auto`.
+
 ## Proxies: when you might need one
 
-Some upstream services sit behind Cloudflare, which may block requests from datacentre IP ranges. If you see 403 errors, empty stream lists, or intermittent provider failures, you likely need a proxy.
+Some upstream services sit behind Cloudflare, which may block requests from datacentre IP ranges. On 403 errors, empty stream lists, or intermittent provider failures, a proxy is likely needed.
 
 ### The two-server setup
 
@@ -95,7 +103,7 @@ Set `COMET_URL` and `STREAM_PROVIDER=auto`. Full instructions, including Jackett
 
 ### Tailscale proxy (VPS to home)
 
-If you run StreamVault at home, where the residential IP is not blocked and RealDebrid is happier, but want a public HTTPS URL, put Caddy on a VPS and tunnel traffic to the home machine over Tailscale.
+If you run StreamVault at home, where the residential IP is not blocked and your debrid service is happier, but want a public HTTPS URL, put Caddy on a VPS and tunnel traffic to the home machine over Tailscale.
 
 Full instructions: [`proxy/app/README.md`](../proxy/app/README.md).
 

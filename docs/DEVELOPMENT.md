@@ -37,7 +37,7 @@ bundle exec rspec spec/models/ spec/services/
 Rules that matter:
 
 - **Never run two suites at once.** Every suite opens the same `storage/test.sqlite3`. Two overlapping runs corrupt each other and produce dozens of failures in specs you never touched, with no deadlock message. If that happens, stop the extra run and repeat serially before reading a single failure.
-- **WebMock blocks all network access.** Stub every external host a request path can reach: OMDB, TMDB, Cinemeta, Torrentio, Comet, RealDebrid. An unstubbed lookup inside a filter thread surfaces as a non-`StandardError` and fails the request. Stub fallback sources too, not only the primary.
+- **WebMock blocks all network access.** Stub every external host a request path can reach: OMDB, TMDB, Cinemeta, Torrentio, Comet, AIOStreams, RealDebrid, TorBox. An unstubbed lookup inside a filter thread surfaces as a non-`StandardError` and fails the request. Stub fallback sources too, not only the primary.
 - **SimpleCov enforces 85% line and 50% branch coverage on `app/`.** A focused subset therefore exits non-zero. Judge the run by its `N examples, 0 failures` line, not by the exit code.
 - **Specs that toggle configuration** must blank and restore every key the production predicate reads, and must pass with the repository's real `.env`. Run such a file twice, once normally and once with the keys blanked:
 
@@ -45,7 +45,7 @@ Rules that matter:
 OMDB_API_KEY= TMDB_READ_ACCESS_TOKEN= bundle exec rspec spec/requests/content_spec.rb
 ```
 
-Dotenv never overwrites a key already present in the environment, which is what makes the blank-prefix form work without editing `.env`.
+Dotenv never overwrites a key already present in the environment, which lets the blank-prefix form work without editing `.env`.
 
 ### Player JavaScript tests
 
@@ -85,14 +85,14 @@ app/
 | Boundary | Role |
 |---|---|
 | `Catalog::CinemetaClient` / `Catalog::OmdbClient` | Fetch canonical metadata, catalogs, and ratings |
-| `Streams::TorrentioProvider` / `CometService` | Fetch typed `StreamCandidate` values from configured providers |
-| `AvailableStreamsService` / `Streams::Resolver` | Cache candidates, rank them, resolve a playback-safe RealDebrid source |
+| `Streams::TorrentioProvider` / `CometService` / `Streams::AioStreamsProvider` | Fetch typed `StreamCandidate` values from configured providers |
+| `AvailableStreamsService` / `Streams::Resolver` | Cache candidates, rank them, resolve a playback-safe debrid source |
 | `PlaybackStartService` / `PlaybackResumeService` | Build signed `PlaybackDescriptor` values and choose resume targets |
 | `Playback::ProgressWriter` / `Playback::ContinueWatchingQuery` | Persist unified progress and build Continue Watching |
 | `Media::Probe` / `Media::Subtitles` / `Media::Transcoder` | Probe tracks, extract subtitles, produce fMP4 or HLS output |
 | `HlsSessionManager` | Persist, monitor, expire, and clean up HLS processes |
 | `RecommendationService` / `TmdbService` | Cache personalised TMDB recommendations outside user media state |
-| `RealDebridService` | Verify user API keys |
+| `RealDebridService` / `TorBoxService` | Verify debrid API keys |
 
 ### Playback paths
 
@@ -105,7 +105,7 @@ app/
 
 ### Authorisation
 
-Every user-owned query is scoped through `current_user` associations. Playback and media URLs use signed, expiring, user-bound tokens; raw RealDebrid URLs never cross the server/browser boundary. API keys are encrypted at rest with Active Record Encryption.
+Every user-owned query is scoped through `current_user` associations. Playback and media URLs use signed, expiring, user-bound tokens; raw debrid URLs never cross the server/browser boundary. API keys are encrypted at rest with Active Record Encryption.
 
 ## CI
 
@@ -113,7 +113,7 @@ Every user-owned query is scoped through `current_user` associations. Playback a
 
 There is no test job. A green run says nothing about specs, so run the focused suite before claiming a change is good.
 
-`bin/brakeman` prepends `--ensure-latest`, so it exits 5 with zero findings as soon as a newer Brakeman is published. When `scan_ruby` fails within seconds, read the real exit code (`bin/brakeman --no-pager > log 2>&1; echo exit=$?`), then `bundle update brakeman` and run `bin/bundler-audit` on its own.
+`bin/brakeman` prepends `--ensure-latest`, so it exits 5 with zero findings as soon as a newer Brakeman is published. If `scan_ruby` fails within seconds, read the real exit code (`bin/brakeman --no-pager > log 2>&1; echo exit=$?`), then `bundle update brakeman` and run `bin/bundler-audit` on its own.
 
 ## Releasing
 
