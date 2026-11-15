@@ -42,7 +42,8 @@ RSpec.describe PlaylistItem do
 
     expect(first.move!("up")).to be false
     expect(last.move!("down")).to be false
-  end
+  end
+
   it "keeps the first year of a Cinemeta range" do
     item = build(:playlist_item, playlist: playlist, year: "2008–2013")
 
