@@ -506,7 +506,9 @@ async def schedule_account_snapshot_refresh(
         if not lock_acquired:
             continue
 
-        background_tasks.add_task(
+        # The caller may pass a BackgroundTasks object or a plain adder callable.
+        add_task = getattr(background_tasks, "add_task", background_tasks)
+        add_task(
             _sync_task,
             lock,
             session,
@@ -520,6 +522,9 @@ async def schedule_account_snapshot_refresh(
 async def get_account_torrents_for_media(
     debrid_entries: list[dict],
     media_type: str,
+    # Accepted for caller compatibility: the image passes a MediaScope here,
+    # while this module derives the scope from season and episode.
+    media_scope,
     title: str,
     year: int | None,
     year_end: int | None,
