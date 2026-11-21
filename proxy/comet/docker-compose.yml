@@ -55,10 +55,16 @@ services:
       - .env
     volumes:
       - comet_data:/app/data
+      # Patched copies of Comet source files, pinned to the image version.
+      # A symbol the mounted file imports but the image lacks crashes startup.
+      - ./overrides/torrentsdb.py:/app/comet/scrapers/torrentsdb.py:ro
+      - ./overrides/torrentio.py:/app/comet/scrapers/torrentio.py:ro
+      - ./overrides/debrid_account_scraper.py:/app/comet/services/debrid_account_scraper.py:ro
+      - ./overrides/stremthru.py:/app/comet/debrid/stremthru.py:ro
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
       interval: 5s
-      timeout: 15s
+      timeout: 5s
       retries: 5
       start_period: 30s
     depends_on:

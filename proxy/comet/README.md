@@ -40,8 +40,24 @@ Comet is configured with two independent scrapers — **neither uses the Torrent
 | File | Purpose |
 |------|---------|
 | `docker-compose.yml` | Comet + Postgres + Jackett, healthchecks, persistent volumes |
+| `overrides/` | Patched copies of Comet source files, bind-mounted read-only over the image |
 | `.env.example` | Configuration template — admin password, scraper settings |
 | `Caddyfile` | HTTPS reverse proxy (only needed for Stremio direct install) |
+
+### Overrides
+
+The files in `overrides/` are edited copies of Comet's own modules, mounted over the image at the paths listed in `docker-compose.yml`. Each one adds behaviour the upstream release does not have yet.
+
+- `stremthru.py` scores episode-scoped file indices before filename-only matches.
+- `torrentio.py` keeps the exact file line from the credential-free StremThru Torz source.
+- `torrentsdb.py` keeps episode metadata until the upstream adapter carries it.
+- `debrid_account_scraper.py` merges existing debrid cache state by exact hash before title-level filtering.
+
+They are pinned to the image build. Mounted code that imports a name the image does not export dies at startup with `ImportError`, and `restart: unless-stopped` hides it as a restart loop, so compare every mounted file against the image's own copy after any image upgrade. The checks below catch it before it reaches the VPS:
+
+```bash
+docker run --rm --entrypoint python ghcr.io/g0ldyy/comet:latest -c 'import comet.api.app'
+```
 
 ## Deploy on a VPS
 
